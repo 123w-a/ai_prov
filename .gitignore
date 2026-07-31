@@ -1,0 +1,36 @@
+# 虚拟环境目录，彻底忽略整个文件夹
+.venv/
+venv/
+
+# 密钥环境文件（重中之重）
+.env
+.env.local
+.env.*
+
+# Python字节码缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 日志文件
+*.log
+streamlit*.log
+uvicorn*.log
+
+# SQLite数据库文件
+*.db
+*.db-shm
+*.db-wal
+
+# 上传资源、运行产生的临时文件
+resources/uploads/
+resources/checkpoint*
+
+# UV依赖锁定文件其实可以保留（可选）
+# uv.lock
+# pyproject.toml
+
+# 系统文件
+.DS_Store
+.Thumbs.db
