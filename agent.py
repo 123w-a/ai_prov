@@ -1,4 +1,6 @@
 from pathlib import Path#路径解析
+import base64#把下载到的图片字节转成 data URL（前端可直接显示，不再走海外代理）
+import requests#后端直接下载国内能访问的图片
 from urllib.parse import quote#编码转义
 from langchain.agents.middleware import SummarizationMiddleware
 from model_name import get_langchain_llm#传入模型
@@ -37,19 +39,41 @@ def web_search(query:str)-> str:
             f"摘要：{item.get('content', '')[:200]}"
         )
     images = result.get("images", [])#字典语法拿到图片路径，拿图片
-    # 内部函数：只获取第一张合法http/https图片链接
-    def get_one_image_url(img_list):
+    # 内部函数：过滤国内无法访问的海外图源，并把能成功下载的图片转成 data URL 内嵌
+    # 这样前端不再依赖任何第三方图片代理，图片 100% 能直接显示
+    BLOCKED_DOMAINS = (
+        "instagram.com", "facebook.com", "fbcdn.net", "pinterest.com",
+        "pinimg.com", "t.co", "twitter.com", "x.com", "flickr.com",
+        "imgur.com", "reddit.com", "wixmp.com", "ctcdn.co",
+    )
+    MAX_IMAGE_BYTES = 1_500_000  # 超过 1.5MB 不入对话，避免 base64 撑爆模型上下文
+
+    def to_data_url(img_list):
         for img in img_list:
             img_url = img if isinstance(img, str) else img.get("url", "")#俩种图片返回格式都处理
-            if img_url.startswith(("http://", "https://")):#找到了就返回，一次调用工具返回一张
-                return img_url
+            if not img_url.startswith(("http://", "https://")):#只要合法的 http(s) 链接
+                continue
+            if any(dom in img_url.lower() for dom in BLOCKED_DOMAINS):  # 跳过明显被墙的海外图源，省去无谓超时
+                continue
+            try:
+                resp = requests.get(
+                    img_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+                )
+                content_type = resp.headers.get("Content-Type", "")
+                if resp.status_code != 200 or not content_type.startswith("image/"):
+                    continue
+                if len(resp.content) > MAX_IMAGE_BYTES:  # 太大就放弃，尝试下一张
+                    continue
+                b64 = base64.b64encode(resp.content).decode("ascii")
+                return f"data:{content_type};base64,{b64}"
+            except Exception:
+                continue
         return ""
 
-    one_image_url = get_one_image_url(images)#在提取出的俩种图片格式下返回第一种图片URL
+    data_url = to_data_url(images)#在图片里挑一张国内可下载的，转成 data URL
 
-    if one_image_url:#有图片URL再处理
-        display_url = "https://images.weserv.nl/?url=" + quote(one_image_url, safe="")
-        image_line = f"\n\n唯一成品图：![成品图]({display_url})"
+    if data_url:#成功下载才放入回答
+        image_line = f"\n\n唯一成品图：![成品图]({data_url})"
     else:
         image_line = "\n\n未找到可正常展示的成品图片。"
 

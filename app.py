@@ -1,4 +1,6 @@
+import base64
 import html
+import json
 import os
 import re
 import uuid
@@ -208,6 +210,23 @@ def inject_styles():
             border: 1px solid rgba(255, 112, 67, .16);
             box-shadow: 0 6px 16px rgba(104, 57, 32, .08);
         }
+        .img-wrap {
+            display: block;
+            text-align: center;
+        }
+        .img-fallback {
+            display: none;
+            font-size: 13px;
+            color: #795548;
+            background: #fff3e0;
+            border: 1px dashed rgba(255, 112, 67, .35);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin: .4rem auto;
+            max-width: 420px;
+            text-align: center;
+            line-height: 1.5;
+        }
 
         /* ---------- AI 操作按钮行 ---------- */
         .ai-actions {
@@ -343,12 +362,99 @@ def inject_styles():
 
 
 # --------------------------------------------------------------------------- #
+#  会话持久化（JSON 文件：刷新后恢复，不随机生成新会话）
+# --------------------------------------------------------------------------- #
+SESSIONS_FILE = Path(__file__).with_name("sessions.json")
+
+
+def _serialize_sessions(sessions):
+    """把会话列表转成可 JSON 序列化的结构（图片字节 -> base64）。"""
+    out = []
+    for s in sessions:
+        s_copy = dict(s)
+        msgs = []
+        for m in s.get("messages", []):
+            m_copy = dict(m)
+            img = m_copy.get("image_data")
+            if isinstance(img, dict) and isinstance(img.get("data"), (bytes, bytearray)):
+                m_copy["image_data"] = {
+                    "name": img.get("name"),
+                    "type": img.get("type"),
+                    "data": base64.b64encode(img["data"]).decode("ascii"),
+                }
+            msgs.append(m_copy)
+        s_copy["messages"] = msgs
+        out.append(s_copy)
+    return out
+
+
+def _deserialize_sessions(data):
+    """从 JSON 结构还原会话列表（base64 -> 图片字节）。"""
+    out = []
+    for s in data:
+        s_copy = dict(s)
+        msgs = []
+        for m in s.get("messages", []):
+            m_copy = dict(m)
+            img = m_copy.get("image_data")
+            if isinstance(img, dict) and isinstance(img.get("data"), str):
+                m_copy["image_data"] = {
+                    "name": img.get("name"),
+                    "type": img.get("type"),
+                    "data": base64.b64decode(img["data"]),
+                }
+            msgs.append(m_copy)
+        s_copy["messages"] = msgs
+        out.append(s_copy)
+    return out
+
+
+def save_sessions():
+    """把当前会话列表与当前会话下标写入本地 JSON 文件。"""
+    data = {
+        "current_session_index": st.session_state.get("current_session_index"),
+        "sessions": _serialize_sessions(st.session_state.get("sessions", [])),
+    }
+    try:
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        # 持久化失败不应阻断交互
+        pass
+
+
+def load_sessions():
+    """从本地 JSON 文件读取会话；文件不存在或损坏返回 None。"""
+    if not SESSIONS_FILE.exists():
+        return None
+    try:
+        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- #
 #  状态初始化（会话概念）
 # --------------------------------------------------------------------------- #
 def init_state():
+    # 从本地文件恢复会话，避免刷新时随机生成新会话
+    if "sessions" not in st.session_state:
+        restored = load_sessions()
+        if restored is not None:
+            st.session_state["sessions"] = _deserialize_sessions(restored.get("sessions", []))
+            idx = restored.get("current_session_index")
+            if idx is not None and 0 <= idx < len(st.session_state["sessions"]):
+                st.session_state["current_session_index"] = idx
+            else:
+                st.session_state["current_session_index"] = (
+                    0 if st.session_state["sessions"] else None
+                )
+        else:
+            st.session_state["sessions"] = []
+            st.session_state["current_session_index"] = None
+
     defaults = {
-        "sessions": [],
-        "current_session_index": 0,
         "uploaded_image": None,
         "uploader_version": 0,
         "taste_prefs": [],
@@ -370,10 +476,7 @@ def init_state():
         }
         st.session_state["sessions"] = [session]
         st.session_state["current_session_index"] = 0
-
-    # 保证至少有一个会话
-    if not st.session_state["sessions"]:
-        create_new_session(set_current=True)
+        save_sessions()
 
     if st.session_state.pop("clear_question", False):
         st.session_state["question"] = ""
@@ -389,19 +492,21 @@ def create_new_session(set_current: bool = True):
     st.session_state["sessions"].append(session)
     if set_current:
         st.session_state["current_session_index"] = len(st.session_state["sessions"]) - 1
+    save_sessions()
     return session
 
 
 def get_current_session():
-    idx = st.session_state.get("current_session_index", 0)
+    idx = st.session_state.get("current_session_index")
     sessions = st.session_state.get("sessions", [])
-    if 0 <= idx < len(sessions):
+    if idx is not None and 0 <= idx < len(sessions):
         return sessions[idx]
-    # 兜底
+
     if sessions:
         st.session_state["current_session_index"] = 0
         return sessions[0]
-    return create_new_session(set_current=True)
+
+    return None
 
 
 def switch_session(index: int):
@@ -411,6 +516,7 @@ def switch_session(index: int):
         st.session_state["uploaded_image"] = None
         st.session_state["uploader_version"] += 1
         st.session_state["question"] = ""
+        save_sessions()
         st.rerun()
 
 
@@ -418,18 +524,23 @@ def delete_session(index: int):
     sessions = st.session_state.get("sessions", [])
     if 0 <= index < len(sessions):
         sessions.pop(index)
-        current = st.session_state.get("current_session_index", 0)
-        if current >= len(sessions):
-            st.session_state["current_session_index"] = max(0, len(sessions) - 1)
         if not sessions:
-            create_new_session(set_current=True)
+            st.session_state["current_session_index"] = None
+        else:
+            current = st.session_state.get("current_session_index")
+            if current is None or current >= len(sessions):
+                st.session_state["current_session_index"] = len(sessions) - 1
+        save_sessions()
         st.rerun()
 
 
 def clear_current_session():
     session = get_current_session()
+    if session is None:
+        return
     session["messages"] = []
     session["title"] = "新对话"
+    save_sessions()
     st.rerun()
 
 
@@ -609,9 +720,15 @@ def md_to_html(text: str) -> str:
         def image_to_html(match):
             alt = match.group(1)
             url = match.group(2)
+            safe_alt = html.escape(alt)
             return (
-                f'<img src="{url}" alt="{alt}" '
-                f'class="answer-image">'
+                f'<span class="img-wrap">'
+                f'<img src="{url}" alt="{safe_alt}" class="answer-image" '
+                f'onerror="this.onerror=null;this.style.display=\'none\';'
+                f'this.nextElementSibling.style.display=\'block\';">'
+                f'<span class="img-fallback">🍽️ 该成品图暂时无法显示<br>'
+                f'<small style="opacity:.7;">图片来源在当前网络下不可访问（常见于 Instagram / 海外图床）</small></span>'
+                f'</span>'
             )
 
         s = re.sub(image_pattern, image_to_html, s)
@@ -689,7 +806,7 @@ def md_to_html(text: str) -> str:
 # --------------------------------------------------------------------------- #
 def render_conversation():
     session = get_current_session()
-    chat_history = session.get("messages", [])
+    chat_history = session.get("messages", []) if session is not None else []
 
     if not chat_history:
         st.markdown(
@@ -745,6 +862,7 @@ def render_conversation():
                 session["messages"].pop(index)
                 if not session["messages"]:
                     session["title"] = "新对话"
+                save_sessions()
                 st.rerun()
 
 
@@ -770,6 +888,7 @@ def handle_regenerate(index):
                 uploaded_file=uploaded,
             )
             messages[index]["answer"] = new_answer
+            save_sessions()
             st.rerun()
         except requests.exceptions.RequestException as exc:
             st.error(f"🍽️ 暂时联系不上后端服务：{exc}")
@@ -909,14 +1028,24 @@ def render_input_bar():
         label_visibility="collapsed",
     )
 
-    can_submit = current_image is not None or bool(question.strip())
+    session = get_current_session()
+    session_exists = session is not None
+    if not session_exists:
+        st.caption("💡 请先在左侧点击「➕ 新建会话」开始一轮新对话。")
 
+    can_submit = session_exists and (current_image is not None or bool(question.strip()))
+
+    help_text = (
+        "请先点击「新建会话」，再输入问题或上传图片。"
+        if not session_exists
+        else "输入问题或上传图片后点击发送。"
+    )
     send_clicked = st.button(
         "✨ 发送给 AI 私厨",
         type="primary",
         use_container_width=True,
         disabled=not can_submit,
-        help="请先输入问题或上传一张图片。",
+        help=help_text,
     )
 
     if send_clicked:
@@ -925,6 +1054,9 @@ def render_input_bar():
 
 def handle_send(question, current_image):
     session = get_current_session()
+    if session is None:
+        st.error("请先在左侧点击「➕ 新建会话」开始一轮新对话。")
+        return
     taste_prefs = st.session_state.get("taste_prefs", [])
     raw_question = question.strip() or "请识别图片中的食材，并推荐适合的家常菜。"
     message = build_message(raw_question, taste_prefs)
@@ -971,6 +1103,7 @@ def handle_send(question, current_image):
             st.session_state["clear_question"] = True
             st.session_state["uploaded_image"] = None
             st.session_state["uploader_version"] += 1
+            save_sessions()
             st.rerun()
 
 
