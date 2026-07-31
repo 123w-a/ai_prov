@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -197,6 +198,16 @@ def inject_styles():
             color: #d84315 !important;
             text-decoration: underline;
         }
+        .bubble-body img {
+            display: block;
+            width: min(100%, 420px);
+            max-height: 320px;
+            margin: .7rem auto .15rem;
+            object-fit: contain;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 112, 67, .16);
+            box-shadow: 0 6px 16px rgba(104, 57, 32, .08);
+        }
 
         /* ---------- AI 操作按钮行 ---------- */
         .ai-actions {
@@ -238,12 +249,16 @@ def inject_styles():
             margin-top: .6rem;
         }
 
-        /* ---------- 文本框 ---------- */
+        /* ---------- 文本框（动态高度） ---------- */
         .stTextArea textarea {
             border: 1px solid rgba(121, 85, 72, .3);
             border-radius: 12px;
             background: #fffaf5;
             color: var(--brown);
+            min-height: 60px;
+            max-height: 300px;
+            field-sizing: content;
+            overflow-y: auto;
         }
         .stTextArea textarea:focus {
             border-color: var(--orange);
@@ -283,16 +298,28 @@ def inject_styles():
             background: rgba(255, 255, 255, .35);
         }
 
-        /* ---------- 侧栏历史记录 compact ---------- */
-        .history-item {
-            padding: .35rem .45rem;
-            border-radius: 8px;
+        /* ---------- 侧栏会话列表 ---------- */
+        .session-item {
+            padding: .45rem .55rem;
+            border-radius: 10px;
             background: rgba(255, 240, 224, .55);
             border: 1px solid rgba(255, 112, 67, .08);
-            margin-bottom: .25rem;
-            font-size: .78rem;
+            margin-bottom: .3rem;
+            font-size: .8rem;
             color: var(--brown-light);
             line-height: 1.4;
+            cursor: pointer;
+            transition: background .15s;
+        }
+        .session-item:hover {
+            background: rgba(255, 224, 200, .75);
+        }
+        .session-item.active {
+            background: rgba(255, 112, 67, .12);
+            border-color: rgba(255, 112, 67, .25);
+        }
+        .session-item strong {
+            color: var(--brown);
         }
 
         @media (max-width: 780px) {
@@ -316,12 +343,12 @@ def inject_styles():
 
 
 # --------------------------------------------------------------------------- #
-#  状态初始化
+#  状态初始化（会话概念）
 # --------------------------------------------------------------------------- #
 def init_state():
     defaults = {
-        "chat_history": [],
-        "session_id": f"user_{uuid.uuid4().hex[:10]}",
+        "sessions": [],
+        "current_session_index": 0,
         "uploaded_image": None,
         "uploader_version": 0,
         "taste_prefs": [],
@@ -329,8 +356,81 @@ def init_state():
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
+
+    # 兼容旧版本：如果还有 chat_history，迁移成一个会话
+    if "chat_history" in st.session_state and st.session_state["chat_history"]:
+        old_history = st.session_state.pop("chat_history")
+        old_session_id = st.session_state.pop("session_id", f"user_{uuid.uuid4().hex[:10]}")
+        title = old_history[0]["user_text"][:22] if old_history else "历史对话"
+        session = {
+            "session_id": old_session_id,
+            "title": title,
+            "time": old_history[0]["time"] if old_history else datetime.now().strftime("%H:%M"),
+            "messages": old_history,
+        }
+        st.session_state["sessions"] = [session]
+        st.session_state["current_session_index"] = 0
+
+    # 保证至少有一个会话
+    if not st.session_state["sessions"]:
+        create_new_session(set_current=True)
+
     if st.session_state.pop("clear_question", False):
         st.session_state["question"] = ""
+
+
+def create_new_session(set_current: bool = True):
+    session = {
+        "session_id": f"user_{uuid.uuid4().hex[:10]}",
+        "title": "新对话",
+        "time": datetime.now().strftime("%H:%M"),
+        "messages": [],
+    }
+    st.session_state["sessions"].append(session)
+    if set_current:
+        st.session_state["current_session_index"] = len(st.session_state["sessions"]) - 1
+    return session
+
+
+def get_current_session():
+    idx = st.session_state.get("current_session_index", 0)
+    sessions = st.session_state.get("sessions", [])
+    if 0 <= idx < len(sessions):
+        return sessions[idx]
+    # 兜底
+    if sessions:
+        st.session_state["current_session_index"] = 0
+        return sessions[0]
+    return create_new_session(set_current=True)
+
+
+def switch_session(index: int):
+    sessions = st.session_state.get("sessions", [])
+    if 0 <= index < len(sessions):
+        st.session_state["current_session_index"] = index
+        st.session_state["uploaded_image"] = None
+        st.session_state["uploader_version"] += 1
+        st.session_state["question"] = ""
+        st.rerun()
+
+
+def delete_session(index: int):
+    sessions = st.session_state.get("sessions", [])
+    if 0 <= index < len(sessions):
+        sessions.pop(index)
+        current = st.session_state.get("current_session_index", 0)
+        if current >= len(sessions):
+            st.session_state["current_session_index"] = max(0, len(sessions) - 1)
+        if not sessions:
+            create_new_session(set_current=True)
+        st.rerun()
+
+
+def clear_current_session():
+    session = get_current_session()
+    session["messages"] = []
+    session["title"] = "新对话"
+    st.rerun()
 
 
 # --------------------------------------------------------------------------- #
@@ -481,10 +581,115 @@ def render_copy_button(text, key):
 
 
 # --------------------------------------------------------------------------- #
+#  轻量 Markdown → HTML（用于把 AI 回答完整包进气泡）
+# --------------------------------------------------------------------------- #
+def md_to_html(text: str) -> str:
+    """把常用 Markdown 转成 HTML，保证回答内容能完整放进一个气泡。"""
+    lines = text.split("\n")
+    out = []
+    in_code = False
+    code_lines = []
+    in_ul = False
+    in_ol = False
+
+    def close_lists():
+        nonlocal in_ul, in_ol
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+        if in_ol:
+            out.append("</ol>")
+            in_ol = False
+
+    def inline_fmt(s: str) -> str:
+        # 图片 Markdown 转成浏览器可以直接显示的 img 标签
+        s = html.escape(s)
+        image_pattern = r"!\[([^\]]*)\]\((https?://[^)\s]+)\)"
+
+        def image_to_html(match):
+            alt = match.group(1)
+            url = match.group(2)
+            return (
+                f'<img src="{url}" alt="{alt}" '
+                f'class="answer-image">'
+            )
+
+        s = re.sub(image_pattern, image_to_html, s)
+        # 加粗
+        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        # 斜体
+        s = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", s)
+        # 行内代码
+        s = re.sub(r"`(.+?)`", r"<code>\1</code>", s)
+        return s
+
+    for line in lines:
+        # 代码块
+        if line.strip().startswith("```"):
+            if in_code:
+                code_html = "\n".join(code_lines)
+                out.append(f'<pre><code>{html.escape(code_html)}</code></pre>')
+                code_lines = []
+                in_code = False
+            else:
+                close_lists()
+                in_code = True
+            continue
+
+        if in_code:
+            code_lines.append(line)
+            continue
+
+        stripped = line.strip()
+
+        # 空行
+        if not stripped:
+            close_lists()
+            continue
+
+        # 标题
+        if re.match(r"^#{1,6} ", stripped):
+            close_lists()
+            level = len(re.match(r"^#+", stripped).group())
+            content = inline_fmt(stripped[level + 1:])
+            out.append(f"<h{level}>{content}</h{level}>")
+            continue
+
+        # 无序列表
+        if re.match(r"^[-*] ", stripped):
+            if not in_ul:
+                close_lists()
+                in_ul = True
+                out.append("<ul>")
+            item_text = inline_fmt(stripped[2:])
+            out.append(f"<li>{item_text}</li>")
+            continue
+
+        # 有序列表
+        m_ol = re.match(r"^(\d+)\. ", stripped)
+        if m_ol:
+            if not in_ol:
+                close_lists()
+                in_ol = True
+                out.append("<ol>")
+            item_text = inline_fmt(stripped[m_ol.end():])
+            out.append(f"<li>{item_text}</li>")
+            continue
+
+        # 普通段落
+        close_lists()
+        out.append(f"<p>{inline_fmt(line)}</p>")
+
+    close_lists()
+    return "".join(out)
+
+
+# --------------------------------------------------------------------------- #
 #  对话展示（自定义左右气泡）
 # --------------------------------------------------------------------------- #
 def render_conversation():
-    chat_history = st.session_state.get("chat_history", [])
+    session = get_current_session()
+    chat_history = session.get("messages", [])
 
     if not chat_history:
         st.markdown(
@@ -514,41 +719,41 @@ def render_conversation():
             unsafe_allow_html=True,
         )
 
-        # ---- AI 消息：右对齐 ----
+        # ---- AI 消息：右对齐（标题 + 内容完整包在一个气泡内） ----
+        answer_html = md_to_html(item["answer"])
         st.markdown(
             f"""
             <div class="chat-row ai-row">
                 <div class="bubble ai-bubble">
                     <div class="bubble-meta">🍳 AI 私厨 · {item['time']}</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        # 在气泡内部渲染 Markdown 回答
-        st.markdown(item["answer"])
-
-        # 操作按钮行（复制 / 重新生成 / 删除）
-        action_cols = st.columns([1.6, 1.0, 1.0, 0.6])
-        with action_cols[1]:
-            render_copy_button(item["answer"], f"copy_{index}")
-        with action_cols[2]:
-            if st.button("🔄 重新生成", key=f"regen_{index}", use_container_width=True):
-                handle_regenerate(index)
-        with action_cols[3]:
-            if st.button("🗑️", key=f"del_{index}", help="删除这对对话"):
-                st.session_state["chat_history"].pop(index)
-                st.rerun()
-
-        st.markdown(
-            """
+                    <div class="bubble-body">{answer_html}</div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
+        # 操作按钮行（复制 / 重新生成 / 删除）—— 右对齐
+        action_cols = st.columns([2.4, 1.0, 1.0, 0.6])
+        with action_cols[1]:
+            render_copy_button(item["answer"], f"copy_{index}")
+        with action_cols[2]:
+            if st.button("🔄 重新生成", key=f"regen_{index}", use_container_width=True):
+                handle_regenerate(index)
+        with action_cols[3]:
+            if st.button("🗑️", key=f"del_{index}", help="删除这对问答"):
+                session["messages"].pop(index)
+                if not session["messages"]:
+                    session["title"] = "新对话"
+                st.rerun()
+
 
 def handle_regenerate(index):
-    item = st.session_state["chat_history"][index]
+    session = get_current_session()
+    messages = session.get("messages", [])
+    if not (0 <= index < len(messages)):
+        return
+    item = messages[index]
     with st.spinner("👨‍🍳 重新生成中……"):
         try:
             uploaded = None
@@ -560,11 +765,11 @@ def handle_regenerate(index):
             message = build_message(item["user_text"], item.get("taste_prefs", []))
             new_answer = api_chat(
                 api_url=DEFAULT_API_URL,
-                session_id=st.session_state["session_id"],
+                session_id=session["session_id"],
                 message=message,
                 uploaded_file=uploaded,
             )
-            st.session_state["chat_history"][index]["answer"] = new_answer
+            messages[index]["answer"] = new_answer
             st.rerun()
         except requests.exceptions.RequestException as exc:
             st.error(f"🍽️ 暂时联系不上后端服务：{exc}")
@@ -595,51 +800,65 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # 清空对话
-        if st.button("🧹 清空对话记录", use_container_width=True):
-            st.session_state["chat_history"] = []
-            st.rerun()
+        # ---- 会话操作区 ----
+        col_new, col_clear = st.columns(2)
+        with col_new:
+            if st.button("➕ 新建会话", use_container_width=True):
+                create_new_session(set_current=True)
+                st.session_state["uploaded_image"] = None
+                st.session_state["uploader_version"] += 1
+                st.session_state["question"] = ""
+                st.rerun()
+        with col_clear:
+            if st.button("🧹 清空当前", use_container_width=True):
+                clear_current_session()
 
-        # 使用提示
+        # ---- 会话列表 ----
+        st.markdown("## 🍲 会话记录")
+
+        sessions = st.session_state.get("sessions", [])
+        current_idx = st.session_state.get("current_session_index", 0)
+
+        if not sessions:
+            st.caption("暂无会话，点击「新建会话」开始")
+        else:
+            for idx, session in enumerate(sessions):
+                is_active = idx == current_idx
+                active_class = "active" if is_active else ""
+                title = session.get("title", "新对话")
+                time_str = session.get("time", "")
+                msg_count = len(session.get("messages", []))
+                count_badge = f" · {msg_count} 条" if msg_count > 0 else ""
+
+                text_col, del_col = st.columns([0.78, 0.22])
+                with text_col:
+                    # 点击会话切换
+                    clicked = st.button(
+                        f"{title}{count_badge}\n\n{time_str}",
+                        key=f"session_switch_{idx}",
+                        use_container_width=True,
+                    )
+                    if clicked and not is_active:
+                        switch_session(idx)
+                with del_col:
+                    if st.button("×", key=f"session_del_{idx}", help="删除这个会话"):
+                        delete_session(idx)
+
+        st.markdown("---")
+
+        # 使用提示（最底部）
         st.markdown(
             """
             <div class="tip">
                 💡 <strong>使用提示</strong><br>
+                • 点击「新建会话」开启一轮新话题<br>
+                • 同一会话里的连续问答会自动归在一起<br>
                 • 上传食材图片让 AI 识别<br>
-                • 输入菜名或烹饪问题<br>
-                • 选择口味偏好获取个性化推荐<br>
-                • 点击「重新生成」换一份食谱
+                • 选择口味偏好获取个性化推荐
             </div>
             """,
             unsafe_allow_html=True,
         )
-
-        # ---- 对话记录（恢复） ----
-        st.markdown("---")
-        st.markdown("## 🍲 对话记录")
-
-        chat_history = st.session_state.get("chat_history", [])
-        if not chat_history:
-            st.caption("暂无记录，开始第一次对话吧~")
-        else:
-            for idx, item in enumerate(chat_history):
-                text_col, del_col = st.columns([0.82, 0.18])
-                with text_col:
-                    preview = item["user_text"]
-                    if len(preview) > 22:
-                        preview = preview[:22] + "…"
-                    st.markdown(
-                        f"""
-                        <div class="history-item">
-                            <strong>{item['time']}</strong> · {html.escape(preview)}
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                with del_col:
-                    if st.button("×", key=f"sidebar_del_{idx}", help="删除这条记录"):
-                        st.session_state["chat_history"].pop(idx)
-                        st.rerun()
 
 
 # --------------------------------------------------------------------------- #
@@ -686,7 +905,6 @@ def render_input_bar():
     question = st.text_area(
         "烹饪问题",
         key="question",
-        height=110,
         placeholder="比如：番茄牛腩怎么做更软烂？或者直接上传食材图片让我帮你搭配！",
         label_visibility="collapsed",
     )
@@ -706,6 +924,7 @@ def render_input_bar():
 
 
 def handle_send(question, current_image):
+    session = get_current_session()
     taste_prefs = st.session_state.get("taste_prefs", [])
     raw_question = question.strip() or "请识别图片中的食材，并推荐适合的家常菜。"
     message = build_message(raw_question, taste_prefs)
@@ -714,7 +933,7 @@ def handle_send(question, current_image):
         try:
             answer = api_chat(
                 api_url=DEFAULT_API_URL,
-                session_id=st.session_state["session_id"],
+                session_id=session["session_id"],
                 message=message,
                 uploaded_file=current_image,
             )
@@ -733,15 +952,22 @@ def handle_send(question, current_image):
                     "data": current_image.getvalue(),
                     "type": current_image.type or "application/octet-stream",
                 }
-            st.session_state["chat_history"].append(
+
+            now = datetime.now().strftime("%H:%M")
+            session["messages"].append(
                 {
                     "user_text": raw_question,
                     "answer": answer,
-                    "time": datetime.now().strftime("%H:%M"),
+                    "time": now,
                     "image_data": image_data,
                     "taste_prefs": list(taste_prefs),
                 }
             )
+            # 新会话的第一条消息，用问题作为会话标题
+            if len(session["messages"]) == 1:
+                session["title"] = raw_question[:22] + ("…" if len(raw_question) > 22 else "")
+                session["time"] = now
+
             st.session_state["clear_question"] = True
             st.session_state["uploaded_image"] = None
             st.session_state["uploader_version"] += 1
