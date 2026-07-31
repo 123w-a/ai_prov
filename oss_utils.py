@@ -1,0 +1,49 @@
+import time
+import uuid
+import mimetypes
+import os
+from dotenv import load_dotenv
+import alibabacloud_oss_v2 as oss
+
+load_dotenv()
+
+# 环境变量读取
+ENDPOINT = os.getenv("OSS_ENDPOINT")
+BUCKET_NAME = os.getenv("OSS_BUCKET")
+ACCESS_KEY = os.getenv("OSS_ACCESS_KEY")
+SECRET_KEY = os.getenv("OSS_SECRET_KEY")
+BASE_URL = os.getenv("OSS_BASE_URL")
+
+# ========== 关键修复：region 改为 cn-beijing ==========
+cred_provider = oss.credentials.StaticCredentialsProvider(ACCESS_KEY, SECRET_KEY)
+cfg = oss.config.load_default()
+cfg.credentials_provider = cred_provider
+cfg.region = "cn-beijing"  # 这里是Region ID，不是endpoint前缀
+cfg.endpoint = ENDPOINT
+client = oss.Client(cfg)
+
+
+def upload_to_oss(file_bytes: bytes, content_type: str) -> str:
+    ext = mimetypes.guess_extension(content_type) or ".jpg"
+    object_key = f"upload/{int(time.time())}_{uuid.uuid4().hex}{ext}"
+    try:
+        resp = client.put_object(
+            oss.PutObjectRequest(
+                bucket=BUCKET_NAME,
+                key=object_key,
+                body=file_bytes,
+                content_type=content_type
+            )
+        )
+        print(f"✅ 上传成功，OSS路径：{object_key}")
+        full_url = f"{BASE_URL}/{object_key}"
+        print(f"访问链接：{full_url}")
+        return full_url
+    except Exception as err:
+        print(f"❌ 上传失败：{err}")
+        raise err
+
+
+if __name__ == "__main__":
+    # 测试上传文本文件
+    upload_to_oss(b"oss test content", "text/plain")

@@ -1,26 +1,22 @@
-import base64  #把二进制变为纯文本编码
-import mimetypes  #显出JPG 图片 PNG 图片这俩种的区别
-
+import mimetypes#显出JPG 图片 PNG 图片这俩种的区别
 from langchain_core.messages import HumanMessage  #用户发送消息的类
 from agent import agent  #调用我写的agent
+from oss_utils import upload_to_oss  #把图片上传到OSS并返回公网URL
 
 
-def image_to_data_url(image_path):  #将本地磁盘路径转为data url AI能识别的图片格式
+def image_to_oss_url(image_path):  #将本地图片上传OSS并返回可访问URL
     mime_type, _ = mimetypes.guess_type(image_path)  #获取图片的MIME类型
-
     if mime_type is None:  #如果没有MIME类型就按默认jpg图片格式处理
         mime_type = "image/jpeg"
-
-    with open(image_path, "rb") as image_file:  #将打开的文件流名为image_file
-        image_base64 = base64.b64encode(  #转为base64文本串，人类看的懂的东西
-            image_file.read()
-        ).decode("utf-8")
-
-    return f"data:{mime_type};base64,{image_base64}"  #以data url格式返回图片
+    with open(image_path, "rb") as image_file:  #读取图片字节
+        image_bytes = image_file.read()
+    return upload_to_oss(image_bytes, mime_type)  #上传到OSS，返回公网URL
 
 
 def ask_agent_with_image(image_path, text, session_id):#传图片加文字串进行对话
-    image_url = image_to_data_url(image_path)#把搜索到的图片转为data url
+    image_url = image_to_oss_url(image_path)#把图片上传OSS得到URL
+
+
 
     message = HumanMessage(
         content=[

@@ -9,6 +9,7 @@ from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
 import sqlite3#持久化短期记忆
 from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆
+from oss_utils import upload_to_oss  #把成品图上传到OSS并返回公网URL
 
 provider = "gpt"
 llm=get_langchain_llm(provider)#获取模型对象
@@ -64,8 +65,7 @@ def web_search(query:str)-> str:
                     continue
                 if len(resp.content) > MAX_IMAGE_BYTES:  # 太大就放弃，尝试下一张
                     continue
-                b64 = base64.b64encode(resp.content).decode("ascii")
-                return f"data:{content_type};base64,{b64}"
+                return upload_to_oss(resp.content, content_type)
             except Exception:
                 continue
         return ""

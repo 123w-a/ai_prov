@@ -1,10 +1,7 @@
 import base64
 import html
-import json
 import os
 import re
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -362,97 +359,89 @@ def inject_styles():
 
 
 # --------------------------------------------------------------------------- #
-#  会话持久化（JSON 文件：刷新后恢复，不随机生成新会话）
-# --------------------------------------------------------------------------- #
-SESSIONS_FILE = Path(__file__).with_name("sessions.json")
-
-
-def _serialize_sessions(sessions):
-    """把会话列表转成可 JSON 序列化的结构（图片字节 -> base64）。"""
-    out = []
-    for s in sessions:
-        s_copy = dict(s)
-        msgs = []
-        for m in s.get("messages", []):
-            m_copy = dict(m)
-            img = m_copy.get("image_data")
-            if isinstance(img, dict) and isinstance(img.get("data"), (bytes, bytearray)):
-                m_copy["image_data"] = {
-                    "name": img.get("name"),
-                    "type": img.get("type"),
-                    "data": base64.b64encode(img["data"]).decode("ascii"),
-                }
-            msgs.append(m_copy)
-        s_copy["messages"] = msgs
-        out.append(s_copy)
-    return out
-
-
-def _deserialize_sessions(data):
-    """从 JSON 结构还原会话列表（base64 -> 图片字节）。"""
-    out = []
-    for s in data:
-        s_copy = dict(s)
-        msgs = []
-        for m in s.get("messages", []):
-            m_copy = dict(m)
-            img = m_copy.get("image_data")
-            if isinstance(img, dict) and isinstance(img.get("data"), str):
-                m_copy["image_data"] = {
-                    "name": img.get("name"),
-                    "type": img.get("type"),
-                    "data": base64.b64decode(img["data"]),
-                }
-            msgs.append(m_copy)
-        s_copy["messages"] = msgs
-        out.append(s_copy)
-    return out
-
-
-def save_sessions():
-    """把当前会话列表与当前会话下标写入本地 JSON 文件。"""
-    data = {
-        "current_session_index": st.session_state.get("current_session_index"),
-        "sessions": _serialize_sessions(st.session_state.get("sessions", [])),
-    }
-    try:
-        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception:
-        # 持久化失败不应阻断交互
-        pass
-
-
-def load_sessions():
-    """从本地 JSON 文件读取会话；文件不存在或损坏返回 None。"""
-    if not SESSIONS_FILE.exists():
-        return None
-    try:
-        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-# --------------------------------------------------------------------------- #
 #  状态初始化（会话概念）
 # --------------------------------------------------------------------------- #
-def init_state():
-    # 从本地文件恢复会话，避免刷新时随机生成新会话
-    if "sessions" not in st.session_state:
-        restored = load_sessions()
-        if restored is not None:
-            st.session_state["sessions"] = _deserialize_sessions(restored.get("sessions", []))
-            idx = restored.get("current_session_index")
-            if idx is not None and 0 <= idx < len(st.session_state["sessions"]):
-                st.session_state["current_session_index"] = idx
-            else:
-                st.session_state["current_session_index"] = (
-                    0 if st.session_state["sessions"] else None
-                )
+def api_list_sessions(api_url, timeout=30):
+    endpoint = f"{api_url.rstrip('/')}/api/sessions"
+    response = requests.get(endpoint, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("sessions", [])
+
+
+def api_create_session(api_url, timeout=30):
+    endpoint = f"{api_url.rstrip('/')}/api/sessions"
+    response = requests.post(endpoint, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    session = data.get("session")
+    if not session:
+        raise RuntimeError("后端创建会话成功，但没有返回会话数据")
+    return session
+
+
+def api_delete_session(api_url, session_id, timeout=30):
+    endpoint = f"{api_url.rstrip('/')}/api/sessions/{session_id}"
+    response = requests.delete(endpoint, timeout=timeout)
+    response.raise_for_status()
+
+
+def api_clear_session(api_url, session_id, timeout=30):
+    endpoint = f"{api_url.rstrip('/')}/api/sessions/{session_id}/clear"
+    response = requests.post(endpoint, timeout=timeout)
+    response.raise_for_status()
+
+
+def api_delete_message(api_url, session_id, message_id, timeout=30):
+    endpoint = f"{api_url.rstrip('/')}/api/sessions/{session_id}/messages/{message_id}"
+    response = requests.delete(endpoint, timeout=timeout)
+    response.raise_for_status()
+
+
+def refresh_sessions(preferred_session_id=None):
+    """从后端重新读取会话，前端 session_state 只保存临时缓存。"""
+    try:
+        sessions = api_list_sessions(DEFAULT_API_URL)
+    except requests.exceptions.RequestException as exc:
+        st.session_state["sessions"] = []
+        # 5xx 是后端处理出错，4xx 是请求参数问题，连不上才是网络/未启动
+        if "500" in str(exc) or "502" in str(exc) or "503" in str(exc):
+            hint = "后端服务内部出错，请检查终端日志或重启 run.py"
+        elif "404" in str(exc):
+            hint = "后端接口不存在，请确认 run.py 已正常启动"
+        elif "Connection refused" in str(exc) or "Max retries" in str(exc):
+            hint = "连接不上后端，请确认 8010 端口已启动"
         else:
-            st.session_state["sessions"] = []
-            st.session_state["current_session_index"] = None
+            hint = "读取后端会话失败"
+        st.session_state["sessions_error"] = f"{hint}：{exc}"
+        st.session_state["current_session_index"] = None
+        return False
+
+    st.session_state["sessions"] = sessions
+    st.session_state.pop("sessions_error", None)
+
+    if preferred_session_id:
+        for index, session in enumerate(sessions):
+            if session.get("session_id") == preferred_session_id:
+                st.session_state["current_session_index"] = index
+                return True
+
+    current_index = st.session_state.get("current_session_index")
+    if current_index is not None and 0 <= current_index < len(sessions):
+        return True
+
+    st.session_state["current_session_index"] = 0 if sessions else None
+    return True
+
+
+def init_state():
+    # 每次页面运行都同步后端会话，确保后端恢复/修复后错误提示能自动消失
+    preferred = None
+    sessions = st.session_state.get("sessions", [])
+    idx = st.session_state.get("current_session_index")
+    if idx is not None and 0 <= idx < len(sessions):
+        preferred = sessions[idx].get("session_id")
+    refresh_sessions(preferred_session_id=preferred)
 
     defaults = {
         "uploaded_image": None,
@@ -463,36 +452,20 @@ def init_state():
         if key not in st.session_state:
             st.session_state[key] = val
 
-    # 兼容旧版本：如果还有 chat_history，迁移成一个会话
-    if "chat_history" in st.session_state and st.session_state["chat_history"]:
-        old_history = st.session_state.pop("chat_history")
-        old_session_id = st.session_state.pop("session_id", f"user_{uuid.uuid4().hex[:10]}")
-        title = old_history[0]["user_text"][:22] if old_history else "历史对话"
-        session = {
-            "session_id": old_session_id,
-            "title": title,
-            "time": old_history[0]["time"] if old_history else datetime.now().strftime("%H:%M"),
-            "messages": old_history,
-        }
-        st.session_state["sessions"] = [session]
-        st.session_state["current_session_index"] = 0
-        save_sessions()
-
     if st.session_state.pop("clear_question", False):
         st.session_state["question"] = ""
 
 
 def create_new_session(set_current: bool = True):
-    session = {
-        "session_id": f"user_{uuid.uuid4().hex[:10]}",
-        "title": "新对话",
-        "time": datetime.now().strftime("%H:%M"),
-        "messages": [],
-    }
-    st.session_state["sessions"].append(session)
-    if set_current:
-        st.session_state["current_session_index"] = len(st.session_state["sessions"]) - 1
-    save_sessions()
+    try:
+        session = api_create_session(DEFAULT_API_URL)
+    except requests.exceptions.RequestException as exc:
+        st.error(f"无法创建新会话，请确认后端已启动：{exc}")
+        return None
+
+    refresh_sessions(
+        preferred_session_id=session.get("session_id") if set_current else None
+    )
     return session
 
 
@@ -512,25 +485,25 @@ def get_current_session():
 def switch_session(index: int):
     sessions = st.session_state.get("sessions", [])
     if 0 <= index < len(sessions):
+        selected_session_id = sessions[index].get("session_id")
         st.session_state["current_session_index"] = index
         st.session_state["uploaded_image"] = None
         st.session_state["uploader_version"] += 1
         st.session_state["question"] = ""
-        save_sessions()
+        refresh_sessions(preferred_session_id=selected_session_id)
         st.rerun()
 
 
 def delete_session(index: int):
     sessions = st.session_state.get("sessions", [])
     if 0 <= index < len(sessions):
-        sessions.pop(index)
-        if not sessions:
-            st.session_state["current_session_index"] = None
-        else:
-            current = st.session_state.get("current_session_index")
-            if current is None or current >= len(sessions):
-                st.session_state["current_session_index"] = len(sessions) - 1
-        save_sessions()
+        session_id = sessions[index].get("session_id")
+        try:
+            api_delete_session(DEFAULT_API_URL, session_id)
+        except requests.exceptions.RequestException as exc:
+            st.error(f"删除会话失败：{exc}")
+            return
+        refresh_sessions()
         st.rerun()
 
 
@@ -538,9 +511,12 @@ def clear_current_session():
     session = get_current_session()
     if session is None:
         return
-    session["messages"] = []
-    session["title"] = "新对话"
-    save_sessions()
+    try:
+        api_clear_session(DEFAULT_API_URL, session["session_id"])
+    except requests.exceptions.RequestException as exc:
+        st.error(f"清空会话失败：{exc}")
+        return
+    refresh_sessions(preferred_session_id=session["session_id"])
     st.rerun()
 
 
@@ -824,12 +800,21 @@ def render_conversation():
     for index, item in enumerate(chat_history):
         # ---- 用户消息：左对齐 ----
         user_text = html.escape(item["user_text"]).replace("\n", "<br>")
+        img_html = ""
+        img_data = item.get("image_data")
+        if img_data and img_data.get("data"):
+            img_html = (
+                f'<img src="data:{img_data["type"]};base64,{img_data["data"]}" '
+                f'alt="用户上传图片" class="history-user-image" '
+                f'style="max-width:180px;max-height:140px;border-radius:10px;margin-top:6px;">'
+            )
         st.markdown(
             f"""
             <div class="chat-row user-row">
                 <div class="bubble user-bubble">
                     <div class="bubble-meta">🍴 你 · {item['time']}</div>
                     <div class="bubble-body">{user_text}</div>
+                    {img_html}
                 </div>
             </div>
             """,
@@ -859,10 +844,20 @@ def render_conversation():
                 handle_regenerate(index)
         with action_cols[3]:
             if st.button("🗑️", key=f"del_{index}", help="删除这对问答"):
-                session["messages"].pop(index)
-                if not session["messages"]:
-                    session["title"] = "新对话"
-                save_sessions()
+                message_id = item.get("id")
+                if message_id is None:
+                    st.error("这条历史消息缺少后端编号，暂时无法删除")
+                    return
+                try:
+                    api_delete_message(
+                        DEFAULT_API_URL,
+                        session["session_id"],
+                        message_id,
+                    )
+                except requests.exceptions.RequestException as exc:
+                    st.error(f"删除消息失败：{exc}")
+                    return
+                refresh_sessions(preferred_session_id=session["session_id"])
                 st.rerun()
 
 
@@ -877,8 +872,15 @@ def handle_regenerate(index):
             uploaded = None
             img_data = item.get("image_data")
             if img_data:
+                # 后端把图片 BLOB 以 base64 字符串返回，重新生成前解码回 bytes
+                raw = img_data["data"]
+                image_bytes = (
+                    base64.b64decode(raw)
+                    if isinstance(raw, str)
+                    else raw
+                )
                 uploaded = StoredFile(
-                    img_data["name"], img_data["data"], img_data["type"]
+                    img_data["name"], image_bytes, img_data["type"]
                 )
             message = build_message(item["user_text"], item.get("taste_prefs", []))
             new_answer = api_chat(
@@ -887,11 +889,20 @@ def handle_regenerate(index):
                 message=message,
                 uploaded_file=uploaded,
             )
-            messages[index]["answer"] = new_answer
-            save_sessions()
+            old_message_id = item.get("id")
+            if old_message_id is not None:
+                api_delete_message(
+                    DEFAULT_API_URL,
+                    session["session_id"],
+                    old_message_id,
+                )
+            refresh_sessions(preferred_session_id=session["session_id"])
             st.rerun()
         except requests.exceptions.RequestException as exc:
-            st.error(f"🍽️ 暂时联系不上后端服务：{exc}")
+            if "500" in str(exc) or "502" in str(exc) or "503" in str(exc):
+                st.error(f"🍽️ 后端处理出错，请检查终端日志：{exc}")
+            else:
+                st.error(f"🍽️ 连接不上后端服务：{exc}")
         except Exception as exc:
             st.error(f"🍽️ 重新生成失败：{exc}")
 
@@ -923,11 +934,12 @@ def render_sidebar():
         col_new, col_clear = st.columns(2)
         with col_new:
             if st.button("➕ 新建会话", use_container_width=True):
-                create_new_session(set_current=True)
-                st.session_state["uploaded_image"] = None
-                st.session_state["uploader_version"] += 1
-                st.session_state["question"] = ""
-                st.rerun()
+                new_session = create_new_session(set_current=True)
+                if new_session is not None:
+                    st.session_state["uploaded_image"] = None
+                    st.session_state["uploader_version"] += 1
+                    st.session_state["question"] = ""
+                    st.rerun()
         with col_clear:
             if st.button("🧹 清空当前", use_container_width=True):
                 clear_current_session()
@@ -937,6 +949,9 @@ def render_sidebar():
 
         sessions = st.session_state.get("sessions", [])
         current_idx = st.session_state.get("current_session_index", 0)
+
+        if st.session_state.get("sessions_error"):
+            st.error(st.session_state["sessions_error"])
 
         if not sessions:
             st.caption("暂无会话，点击「新建会话」开始")
@@ -1077,33 +1092,11 @@ def handle_send(question, current_image):
         except Exception as exc:
             st.error(f"🍽️ 这次烹饪请求没有完成：{exc}")
         else:
-            image_data = None
-            if current_image is not None:
-                image_data = {
-                    "name": current_image.name,
-                    "data": current_image.getvalue(),
-                    "type": current_image.type or "application/octet-stream",
-                }
-
-            now = datetime.now().strftime("%H:%M")
-            session["messages"].append(
-                {
-                    "user_text": raw_question,
-                    "answer": answer,
-                    "time": now,
-                    "image_data": image_data,
-                    "taste_prefs": list(taste_prefs),
-                }
-            )
-            # 新会话的第一条消息，用问题作为会话标题
-            if len(session["messages"]) == 1:
-                session["title"] = raw_question[:22] + ("…" if len(raw_question) > 22 else "")
-                session["time"] = now
-
+            # 后端聊天接口已经把本轮消息写入 SQLite，前端只刷新临时缓存
+            refresh_sessions(preferred_session_id=session["session_id"])
             st.session_state["clear_question"] = True
             st.session_state["uploaded_image"] = None
             st.session_state["uploader_version"] += 1
-            save_sessions()
             st.rerun()
 
 
