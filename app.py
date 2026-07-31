@@ -2,6 +2,7 @@ import html
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import requests
 import streamlit as st
@@ -16,6 +17,7 @@ st.set_page_config(
 
 
 DEFAULT_API_URL = os.getenv("AI_CHEF_API_URL", "http://127.0.0.1:8010")
+LOGO_PATH = Path(__file__).with_name("ai_chef_logo.jpg")
 
 
 def inject_styles():
@@ -164,6 +166,30 @@ def inject_styles():
             text-align: center;
             line-height: 1.6;
             font-size: .88rem;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stImage"] {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        [data-testid="stSidebar"] .sidebar-logo {
+            display: flex;
+            justify-content: center;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        [data-testid="stSidebar"] .sidebar-logo img {
+            width: 168px;
+            height: auto;
+            pointer-events: none;
+            user-select: none;
         }
 
         .bubble {
@@ -314,39 +340,47 @@ def render_history():
         unsafe_allow_html=True,
     )
 
-    history = st.session_state.get("history", [])
-    if not history:
+    chat_history = st.session_state.get("chat_history", [])
+    if len(chat_history) == 0:
         st.markdown(
             '<div class="chat-empty">👨‍🍳 你的厨房还很安静，上传食材或问我一道菜吧。</div>',
             unsafe_allow_html=True,
         )
         return
 
-    for item in history:
-        user_text = html.escape(item["user_text"]).replace("\n", "<br>")
-        st.markdown(
-            f"""
-            <div class="bubble user">
-                <div class="bubble-meta">🍴 你 · {item["time"]}</div>
-                {user_text}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    for index, item in enumerate(chat_history):
+        content_col, delete_col = st.columns([0.88, 0.12], gap="small")
 
-        with st.container(border=True):
+        with content_col:
+            user_text = html.escape(item["user_text"]).replace("\n", "<br>")
             st.markdown(
-                f'<div class="bubble-meta" style="color:#1b5e20;">👨‍🍳 AI 私厨 · {item["time"]}</div>',
+                f"""
+                <div class="bubble user">
+                    <div class="bubble-meta">🍴 你 · {item["time"]}</div>
+                    {user_text}
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
-            st.markdown(item["answer"])
+
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="bubble-meta" style="color:#1b5e20;">👨‍🍳 AI 私厨 · {item["time"]}</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(item["answer"])
+
+        with delete_col:
+            if st.button("×", key=f"delete_chat_{index}", help="删除这条对话"):
+                st.session_state["chat_history"].pop(index)
+                st.rerun()
 
 
 def main():
     inject_styles()
 
-    if "history" not in st.session_state:
-        st.session_state["history"] = []
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = f"user_{uuid.uuid4().hex[:10]}"
     if "uploaded_image" not in st.session_state:
@@ -367,27 +401,14 @@ def main():
     )
 
     with st.sidebar:
+        st.markdown('<div class="sidebar-logo">', unsafe_allow_html=True)
+        st.sidebar.image(str(LOGO_PATH), width=168)
+        st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("## 🧂 厨房设置")
-        api_url = st.text_input(
-            "FastAPI 地址",
-            value=DEFAULT_API_URL,
-            help="默认连接本机的 FastAPI 服务。",
-        )
-        st.session_state["session_id"] = st.text_input(
-            "会话 ID",
-            value=st.session_state["session_id"],
-            help="相同会话 ID 可以继续使用同一段后端记忆。",
-        )
-        st.caption("当前后端接口：`POST /api/chat/image`")
-        st.markdown(
-            '<div class="tip">当前后端要求上传图片后才能调用图片聊天接口。</div>',
-            unsafe_allow_html=True,
-        )
-
         render_history()
 
         if st.button("🧹 清空对话记录", use_container_width=True):
-            st.session_state["history"] = []
+            st.session_state["chat_history"] = []
             st.rerun()
 
     main_col = st.columns([0.12, 0.76, 0.12])[1]
@@ -458,8 +479,8 @@ def main():
             st.session_state["clear_question"] = True
             st.rerun()
 
+        api_url = DEFAULT_API_URL
         can_submit = current_image is not None or bool(question.strip())
-        st.caption("可以只输入文字、只上传图片，也可以同时提交，让 AI 私厨更准确地理解你的需求。")
 
         send_clicked = st.button(
             "✨ 发送给 AI 私厨",
@@ -486,7 +507,7 @@ def main():
                 except Exception as exc:
                     st.error(f"🍽️ 这次烹饪请求没有完成：{exc}")
                 else:
-                    st.session_state["history"].append(
+                    st.session_state["chat_history"].append(
                         {
                             "user_text": question.strip() or "请识别图片中的食材，并推荐适合的家常菜。",
                             "answer": answer,

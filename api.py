@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from main import ask_agent_with_image, ask_agent_with_text
 
 
-app = FastAPI(title="ai私厨")
+app = FastAPI(title="ai私厨")#命名
 
 UPLOAD_DIR = Path("resources/uploads")#创建保存用户上传图片的目录为了持久性短期记忆
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
