@@ -148,10 +148,10 @@ def inject_styles():
             margin-bottom: .2rem;
         }
         .user-row {
-            justify-content: flex-start;
+            justify-content: flex-end;
         }
         .ai-row {
-            justify-content: flex-end;
+            justify-content: flex-start;
         }
         .bubble {
             max-width: 78%;
@@ -799,7 +799,13 @@ def render_conversation():
 
     for index, item in enumerate(chat_history):
         # ---- 用户消息：左对齐 ----
-        user_text = html.escape(item["user_text"]).replace("\n", "<br>")
+        clean_user_text = re.sub(
+            r"</div\s*>",
+            "",
+            item["user_text"],
+            flags=re.IGNORECASE,
+        )
+        user_text = html.escape(clean_user_text).replace("\n", "<br>")
         img_html = ""
         img_data = item.get("image_data")
         if img_data and img_data.get("data"):

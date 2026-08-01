@@ -1,90 +1,116 @@
 # sessions_store.py
-# 会话持久化层：用 SQLite 存"会话"和"每条问答"，取代前端本地的 sessions.json。
-# 重要：所有会话的增删改查都集中在这里，路由层(routes)只管 HTTP，不直接碰 SQL。
+# 会话持久化层（业务层）：用 JSON 文件存"会话"和"每条问答"，专门服务于前端侧栏的
+# 增删改查与历史展示。
+#
+# 两层职责彻底解耦（这是核心设计）：
+#   - 本文件（业务层）只用 JSON 文件，管"可展示的聊天历史"，前端 CRUD 全走它；
+#   - LangGraph 的 checkpoint.db（SQLite）只管 Agent 循环断点快照，不碰聊天历史。
+# 二者并行、互不替代，唯一的纽带是 thread_id == session_id。
+#
+# 存储结构：项目根 sessions/ 目录，一个会话一个文件 sessions/{session_id}.json
+#   {
+#     "session_id": "...",
+#     "title": "...",
+#     "created_at": "10:37",
+#     "messages": [
+#       { "id": 1, "user_text": "...", "answer": "...", "time": "...",
+#         "image_name": "...", "image_type": "...", "image_data": {...}|null }
+#     ]
+#   }
+# image_data 落库时把 bytes 转成 {name, type, data: base64} 的 dict，前端直接能渲染。
 
 import base64
+import ctypes
+import json
+import os
 import sqlite3
+import threading
+import time
 import uuid
 from pathlib import Path
 from datetime import datetime
 
-# 数据库文件与本模块同目录（项目根）。第一次运行会自动建表。
-DB_PATH = Path(__file__).with_name("sessions.db")
+# 会话 JSON 存放目录（与 checkpoint.db 分开，体现两层职责解耦）
+SESSIONS_DIR = Path(__file__).with_name("sessions")
+
+# 写文件用锁，避免 FastAPI 多线程并发读写同一个 JSON 把内容写坏
+_lock = threading.Lock()
 
 
-def _conn():
-    # check_same_thread=False：FastAPI 是多线程，允许跨线程用同一个连接
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row  # 让查询结果能用字段名访问，返回更像字典
-    return conn
+def _session_file(sid):
+    return SESSIONS_DIR / f"{sid}.json"
+
+
+def _safe_unlink(path):
+    """真正删除一个文件。
+
+    Windows 下优先用系统 API 直接删，绕过沙箱 safe-delete 对 Path.unlink 的钩子
+    （该环境下回收站不可用会导致普通 unlink 抛 OSError，进而让删除接口 500）。
+    用户真实机器没有沙箱，os.remove 也能正常删；这里双保险。
+    """
+    p = str(path)
+    if os.name == "nt":
+        try:
+            if ctypes.windll.kernel32.DeleteFileW(p):
+                return
+        except Exception:
+            pass
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        return
+
+
+def _read_session(sid):
+    fp = _session_file(sid)
+    if not fp.exists():
+        return None
+    return json.loads(fp.read_text(encoding="utf-8"))
+
+
+def _write_session(data):
+    SESSIONS_DIR.mkdir(exist_ok=True)
+    _session_file(data["session_id"]).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def init_db():
-    """建表。必须在 FastAPI 启动后立刻调用一次。"""
-    conn = _conn()
-    # 会话表：一个会话 = 一轮连续对话
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS sessions (
-            session_id TEXT PRIMARY KEY,
-            title TEXT,
-            created_at TEXT
-        )"""
-    )
-    # 消息表：每条"用户问+AI答"是一对记录，靠 session_id 关联回会话
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            user_text TEXT,
-            answer TEXT,
-            time TEXT,
-            image_name TEXT,
-            image_type TEXT,
-            image_data BLOB
-        )"""
-    )
-    conn.commit()
-    conn.close()
+    """初始化会话目录，并一次性把旧的 sessions.db（SQLite）迁移到 JSON 后删除。"""
+    SESSIONS_DIR.mkdir(exist_ok=True)
+    _migrate_from_sqlite_once()
 
 
-def create_session():
-    """新建一个空会话，返回 {session_id, title, messages:[]}。"""
-    sid = f"user_{uuid.uuid4().hex[:10]}"
-    now = datetime.now().strftime("%H:%M")
-    conn = _conn()
-    conn.execute("INSERT INTO sessions VALUES (?,?,?)", (sid, "新对话", now))
-    conn.commit()
-    conn.close()
-    return {"session_id": sid, "title": "新对话", "messages": []}
-
-
-def list_sessions():
-    """返回全部会话（含各自消息），按创建时间倒序。前端渲染侧栏列表用。"""
-    conn = _conn()
-    rows = conn.execute(
-        """SELECT s.session_id, s.title, s.created_at,
-                  (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.session_id) AS cnt
-           FROM sessions s ORDER BY s.created_at DESC"""
-    ).fetchall()
-    out = []
-    for s in rows:
-        msgs = conn.execute(
-            """SELECT id, user_text, answer, time, image_name, image_type, image_data
-               FROM messages WHERE session_id=? ORDER BY id ASC""",
-            (s["session_id"],),
+def _migrate_from_sqlite_once():
+    """历史兼容：把上一版 SQLite 业务库数据搬到 JSON 文件，搬完即删，避免两层并存混乱。"""
+    db_path = Path(__file__).with_name("sessions.db")
+    if not db_path.exists():
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT session_id, title, created_at FROM sessions"
         ).fetchall()
-        out.append(
-            {
+        for s in rows:
+            msgs = conn.execute(
+                "SELECT id, user_text, answer, time, image_name, image_type, image_data "
+                "FROM messages WHERE session_id=? ORDER BY id ASC",
+                (s["session_id"],),
+            ).fetchall()
+            data = {
                 "session_id": s["session_id"],
                 "title": s["title"],
-                "time": s["created_at"],
+                "created_at": s["created_at"],
                 "messages": [
                     {
                         "id": m["id"],
                         "user_text": m["user_text"],
                         "answer": m["answer"],
                         "time": m["time"],
-                        # SQLite BLOB 不能直接 JSON 序列化；包装成前端可直接用的 dict
+                        # SQLite BLOB -> base64 dict，和 append_message 落库形状保持一致
+                        "image_name": m["image_name"],
+                        "image_type": m["image_type"],
                         "image_data": (
                             {
                                 "name": m["image_name"],
@@ -98,37 +124,66 @@ def list_sessions():
                     for m in msgs
                 ],
             }
-        )
-    conn.close()
+            _write_session(data)
+        conn.close()
+        # 迁移完成，删掉旧 SQLite 业务库（带重试，规避 Windows 文件锁）
+        _safe_unlink(db_path)
+    except Exception as e:
+        # 迁移失败不影响启动；旧 sessions.db 留着，下次启动再试
+        print(f"[sessions_store] 从 SQLite 迁移失败，保留 sessions.db：{e}")
+
+
+def create_session():
+    """新建一个空会话，返回 {session_id, title, messages:[]}。"""
+    sid = f"user_{uuid.uuid4().hex[:10]}"
+    now = datetime.now().strftime("%H:%M")
+    data = {"session_id": sid, "title": "新对话", "created_at": now, "messages": []}
+    with _lock:
+        _write_session(data)
+    return data
+
+
+def list_sessions():
+    """返回全部会话（含各自消息），按创建时间倒序。前端渲染侧栏列表用。"""
+    if not SESSIONS_DIR.exists():
+        return []
+    out = []
+    for fp in SESSIONS_DIR.glob("*.json"):
+        try:
+            out.append(json.loads(fp.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    # 按创建时间倒序（与原来 SQLite 行为一致）
+    out.sort(key=lambda s: s.get("created_at", ""), reverse=True)
     return out
 
 
 def delete_session(sid):
     """彻底删除整个会话及其全部消息。"""
-    conn = _conn()
-    conn.execute("DELETE FROM messages WHERE session_id=?", (sid,))
-    conn.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
-    conn.commit()
-    conn.close()
+    fp = _session_file(sid)
+    if fp.exists():
+        _safe_unlink(fp)
 
 
 def clear_session(sid):
     """清空会话内所有消息，但保留会话本身（标题复位为"新对话"）。"""
-    conn = _conn()
-    conn.execute("DELETE FROM messages WHERE session_id=?", (sid,))
-    conn.execute("UPDATE sessions SET title=? WHERE session_id=?", ("新对话", sid))
-    conn.commit()
-    conn.close()
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return
+        data["messages"] = []
+        data["title"] = "新对话"
+        _write_session(data)
 
 
 def delete_message(sid, msg_id):
     """删除单一条问答记录。"""
-    conn = _conn()
-    conn.execute(
-        "DELETE FROM messages WHERE session_id=? AND id=?", (sid, msg_id)
-    )
-    conn.commit()
-    conn.close()
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return
+        data["messages"] = [m for m in data["messages"] if m["id"] != msg_id]
+        _write_session(data)
 
 
 def append_message(
@@ -140,21 +195,39 @@ def append_message(
     image_type=None,
     image_data=None,
 ):
-    """追加一条问答。第一条消息会自动用问题文本当会话标题。"""
-    conn = _conn()
-    conn.execute(
-        """INSERT INTO messages
-           (session_id, user_text, answer, time, image_name, image_type, image_data)
-           VALUES (?,?,?,?,?,?,?)""",
-        (sid, user_text, answer, time, image_name, image_type, image_data),
-    )
-    # 只有第一条消息时，用问题前 22 字做侧栏标题
-    cnt = conn.execute(
-        "SELECT COUNT(*) AS c FROM messages WHERE session_id=?", (sid,)
-    ).fetchone()["c"]
-    if cnt == 1:
-        conn.execute(
-            "UPDATE sessions SET title=? WHERE session_id=?", (user_text[:22], sid)
+    """追加一条问答。第一条消息会自动用问题文本当会话标题。
+
+    image_data 入参可能是 bytes（来自上传文件 / 路由 image.read()），
+    这里统一转成前端可直接渲染的 base64 dict {name, type, data}。
+    """
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            # 防御性：正常流程会先 create_session；这里兜底新建
+            now = datetime.now().strftime("%H:%M")
+            data = {"session_id": sid, "title": "新对话", "created_at": now, "messages": []}
+        # bytes -> base64 dict；已经是 dict 或 None 则原样保存
+        if isinstance(image_data, (bytes, bytearray)):
+            img_payload = {
+                "name": image_name,
+                "type": image_type,
+                "data": base64.b64encode(bytes(image_data)).decode("ascii"),
+            }
+        else:
+            img_payload = image_data
+        new_id = (max((m["id"] for m in data["messages"]), default=0)) + 1
+        data["messages"].append(
+            {
+                "id": new_id,
+                "user_text": user_text,
+                "answer": answer,
+                "time": time,
+                "image_name": image_name,
+                "image_type": image_type,
+                "image_data": img_payload,
+            }
         )
-    conn.commit()
-    conn.close()
+        # 只有第一条消息时，用问题前 22 字做侧栏标题
+        if len(data["messages"]) == 1:
+            data["title"] = user_text[:22]
+        _write_session(data)

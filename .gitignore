@@ -6,6 +6,8 @@ venv/
 .env
 .env.local
 .env.*
+# 保留模板文件供他人参考（不被 .env.* 忽略）
+!.env.example
 
 # Python字节码缓存
 __pycache__/
@@ -37,3 +39,13 @@ resources/checkpoint*
 
 # IDE配置文件
 .idea/
+
+# 运行时会话数据（用户对话历史，含隐私，不入库）
+sessions/
+
+# 智能体项目记忆（WorkBuddy 内部数据，不入库）
+.workbuddy/
+
+# 开发/测试用的临时图片（非项目必要资源）
+t_veg.jpg
+test_veg2.jpg
