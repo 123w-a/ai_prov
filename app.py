@@ -2,7 +2,9 @@ import base64
 import html
 import os
 import re
+import json  # 解析后端 SSE 流式事件
 from pathlib import Path
+from datetime import datetime
 
 import requests
 import streamlit as st
@@ -54,6 +56,14 @@ def inject_styles():
                 radial-gradient(circle at 95% 10%, rgba(139, 195, 74, .13), transparent 22%),
                 linear-gradient(135deg, #fffaf5 0%, #fff4e8 48%, #fffaf5 100%);
             color: var(--brown);
+        }
+
+        /* ---------- 主内容区加宽（对话界面是主角，默认 730px 太窄） ---------- */
+        [data-testid="stMainBlockContainer"],
+        .block-container {
+            max-width: 1500px !important;
+            padding-left: 2.5rem;
+            padding-right: 2.5rem;
         }
 
         /* ---------- 侧栏 ---------- */
@@ -141,6 +151,34 @@ def inject_styles():
             font-size: .8rem;
         }
 
+        /* ---------- 厨师烹饪等待动画（三个跳动的点，防"变白像卡住"） ---------- */
+        .cooking-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: .3rem;
+            font-size: .88rem;
+            color: var(--brown-light);
+        }
+        .cooking-dots {
+            display: inline-flex;
+            gap: .18rem;
+            margin-left: .2rem;
+        }
+        .cooking-dots i {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--orange);
+            display: inline-block;
+            animation: cooking-bounce 1.2s infinite ease-in-out;
+        }
+        .cooking-dots i:nth-child(2) { animation-delay: .15s; }
+        .cooking-dots i:nth-child(3) { animation-delay: .3s; }
+        @keyframes cooking-bounce {
+            0%, 60%, 100% { transform: translateY(0); opacity: .5; }
+            30% { transform: translateY(-5px); opacity: 1; }
+        }
+
         /* ---------- 左右对话气泡（核心） ---------- */
         .chat-row {
             display: flex;
@@ -154,7 +192,7 @@ def inject_styles():
             justify-content: flex-start;
         }
         .bubble {
-            max-width: 78%;
+            max-width: 86%;
             border-radius: 14px;
             padding: .7rem .9rem;
             line-height: 1.65;
@@ -523,11 +561,17 @@ def clear_current_session():
 # --------------------------------------------------------------------------- #
 #  后端通信
 # --------------------------------------------------------------------------- #
-def api_chat(api_url, session_id, message, uploaded_file=None, timeout=180):
+def api_chat(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
     endpoint = f"{api_url.rstrip('/')}/api/chat/image"
 
     files = None
-    if uploaded_file is not None:
+    data = {
+        "session_id": session_id,
+        "message": message,
+    }
+    if image_url is not None:
+        data["image_url"] = image_url
+    elif uploaded_file is not None:
         files = {
             "image": (
                 uploaded_file.name,
@@ -538,10 +582,7 @@ def api_chat(api_url, session_id, message, uploaded_file=None, timeout=180):
 
     response = requests.post(
         endpoint,
-        data={
-            "session_id": session_id,
-            "message": message,
-        },
+        data=data,
         files=files,
         timeout=timeout,
     )
@@ -565,6 +606,58 @@ def api_chat(api_url, session_id, message, uploaded_file=None, timeout=180):
         raise RuntimeError("后端返回成功，但没有找到回答内容")
 
     return str(answer)
+
+
+# --------------------------------------------------------------------------- #
+#  流式聊天：POST 到 /api/chat/stream，用 requests 边收边解析 SSE 事件
+#  生成器每次 yield 一个 token，交给 Streamlit 的 st.write_stream 做打字机渲染
+# --------------------------------------------------------------------------- #
+def api_chat_stream(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
+    endpoint = f"{api_url.rstrip('/')}/api/chat/stream"
+    files = None
+    data = {"session_id": session_id, "message": message}
+    if image_url is not None:
+        data["image_url"] = image_url
+    elif uploaded_file is not None:
+        files = {
+            "image": (
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                uploaded_file.type or "application/octet-stream",
+            )
+        }
+    # stream=True 边收边处理，实现打字机效果
+    with requests.post(
+        endpoint,
+        data=data,
+        files=files,
+        stream=True,
+        timeout=timeout,
+    ) as response:
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            raise RuntimeError(f"后端请求失败：{response.text}")
+        # 逐行读取 SSE：每行形如 "data: {...}"
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            payload = line[len("data: "):]
+            try:
+                data = json.loads(payload)
+            except ValueError:
+                continue
+            # 两段式事件流：token(正文逐字) → structuring(切骨架屏) → answer(整包JSON画卡片)
+            if "token" in data:
+                yield ("token", data["token"])
+            elif "structuring" in data:
+                yield ("structuring", True)
+            elif "answer" in data:
+                yield ("answer", data["answer"])
+            elif "finish" in data:
+                return
+            elif "error" in data:
+                raise RuntimeError(data["error"])
 
 
 # --------------------------------------------------------------------------- #
@@ -708,6 +801,12 @@ def md_to_html(text: str) -> str:
             )
 
         s = re.sub(image_pattern, image_to_html, s)
+        # 普通 Markdown 链接：[文字](https://...)，避免长 URL 撑破气泡
+        s = re.sub(
+            r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+            r'<a href="\2" target="_blank" style="word-break:break-all;">\1</a>',
+            s,
+        )
         # 加粗
         s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
         # 斜体
@@ -778,13 +877,225 @@ def md_to_html(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+#  流式对话临时渲染（让当前 Q&A 也出现在对话食谱容器里并居中）
+# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+#  结构化回答（ChefAnswer JSON）→ 卡片 HTML
+#  新回答落库的是 JSON 字符串；旧回答是 markdown。双格式兼容：
+#  parse_structured_answer 能解析出 recipes 就走卡片，否则走原来的 md_to_html
+# --------------------------------------------------------------------------- #
+def parse_structured_answer(text):
+    """尝试把 answer 解析成 ChefAnswer JSON；成功返回 dict，不是结构化数据返回 None"""
+    if not isinstance(text, str):
+        return None
+    s = text.strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        data = json.loads(s)
+    except ValueError:
+        return None
+    # 必须含 recipes 列表才认作 ChefAnswer，避免把别的 JSON 误判
+    if isinstance(data, dict) and isinstance(data.get("recipes"), list):
+        return data
+    return None
+
+
+def _stars_html(n):
+    """1-5 整数 → 5 颗星（亮 n 颗暗 5-n 颗），星级由前端画，不再靠模型画"""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        n = 0
+    n = max(0, min(5, n))
+    return (
+        f'<span style="color:#f5a623;">{"★" * n}</span>'
+        f'<span style="color:#dcdcdc;">{"★" * (5 - n)}</span>'
+    )
+
+
+def recipe_card_html(data):
+    """ChefAnswer dict → 菜谱卡片 HTML（菜名/简介/双星级/调料表/步骤/图片/小建议）"""
+    blocks = []
+    for r in data.get("recipes", []):
+        name = html.escape(str(r.get("name", "")))
+        intro = html.escape(str(r.get("intro", "")))
+        diff = _stars_html(r.get("difficulty"))
+        nutr = _stars_html(r.get("nutrition"))
+
+        seasoning_items = "".join(
+            f'<li><b>{html.escape(str(s.get("name", "")))}</b>：'
+            f'{html.escape(str(s.get("amount", "")))}</li>'
+            for s in r.get("seasonings", [])
+            if isinstance(s, dict)
+        )
+        seasoning_block = ""
+        if seasoning_items:
+            seasoning_block = (
+                '<div style="margin-top:6px;font-size:13px;"><b>🧂 调料：</b>'
+                f'<ul style="margin:4px 0 0;padding-left:18px;">{seasoning_items}</ul></div>'
+            )
+
+        step_items = "".join(
+            f"<li>{html.escape(str(step))}</li>"
+            for step in r.get("steps", [])
+        )
+        step_block = ""
+        if step_items:
+            step_block = (
+                '<div style="margin-top:6px;font-size:13px;"><b>👨‍🍳 步骤：</b>'
+                f'<ol style="margin:4px 0 0;padding-left:18px;">{step_items}</ol></div>'
+            )
+
+        blocks.append(
+            '<div style="border:1px solid #f0e6d8;border-radius:12px;padding:12px 14px;'
+            'margin:10px 0;background:#fffaf3;">'
+            f'<div style="font-weight:600;font-size:15px;">🍲 {name}</div>'
+            f'<div style="color:#888;font-size:12px;margin:2px 0 6px;">{intro}</div>'
+            f'<div style="font-size:13px;">难度 {diff}　营养 {nutr}</div>'
+            f"{seasoning_block}{step_block}"
+            "</div>"
+        )
+
+    # 图片渲染原则：有真 URL 才渲染 <img>，没有就显示 image_note 文字说明，绝不渲染乱码/二进制流。
+    # 关键体验：图片从 OSS 拉取可能较慢——先显示"正在拉取"占位（此时 img 用 display:none 藏起），
+    # 等 onload 成功才换图、onerror 改成"加载失败"提示。这样用户不会误以为"已经生成完了"。
+    img_url = data.get("image_url")
+    if img_url and str(img_url).startswith(("http://", "https://")):
+        safe_img = html.escape(str(img_url))
+        img_block = (
+            '<div style="margin-top:8px;">'
+            '<div style="font-size:12px;color:#999;padding:10px;text-align:center;'
+            'border:1px dashed rgba(255,112,67,.35);border-radius:10px;">'
+            "🍳 成品图正在拉取，请稍候…</div>"
+            f'<img src="{safe_img}" alt="成品图" '
+            f'style="max-width:100%;border-radius:10px;margin-top:8px;display:none;" '
+            f'onload="this.style.display=\'block\';'
+            f'this.previousElementSibling.style.display=\'none\';" '
+            f'onerror="this.previousElementSibling.innerHTML='
+            f'\'🍽️ 图片加载失败，可稍后刷新重试\';">'
+            "</div>"
+        )
+    else:
+        note = html.escape(str(data.get("image_note") or "未找到可正常展示的成品图片。"))
+        img_block = (
+            f'<div style="font-size:12px;color:#999;margin-top:8px;">🍽️ {note}</div>'
+        )
+
+    tip = html.escape(str(data.get("chef_tip", "")).strip())
+    tip_block = ""
+    if tip:
+        tip_block = (
+            '<div style="margin-top:8px;font-size:13px;background:#fdf6ec;'
+            'border-radius:10px;padding:8px 10px;">'
+            f"👨‍🍳 <b>私厨建议：</b>{tip}</div>"
+        )
+    return "".join(blocks) + img_block + tip_block
+
+
+def render_streaming_exchange(pending):
+    """在对话容器内渲染"正在发送的用户消息 + 正在流式生成的 AI 回答"。
+
+    流式结束后再刷新一次，把完整消息并到历史记录里统一展示。
+    """
+    session_id = pending["session_id"]
+    message = pending["message"]
+    question = pending["question"]
+    image = pending.get("image")
+    time_str = pending["time"]
+
+    # ---- 用户气泡（问题 + 本次上传的缩略图）----
+    clean_q = re.sub(r"<[^>]+>", "", question)
+    user_html = html.escape(clean_q).replace("\n", "<br>")
+    img_html = ""
+    if image is not None:
+        b64 = base64.b64encode(image.getvalue()).decode("ascii")
+        img_html = (
+            f'<img src="data:{image.type};base64,{b64}" alt="用户上传图片" '
+            f'style="max-width:180px;max-height:140px;border-radius:10px;margin-top:6px;">'
+        )
+    st.markdown(
+        f'<div class="chat-row user-row">'
+        f'<div class="bubble user-bubble">'
+        f'<div class="bubble-meta">🍴 你 · {time_str}</div>'
+        f'<div class="bubble-body">{user_html}</div>{img_html}'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---- AI 气泡（先放"厨师烹饪中"动画占位，拿到 token 再逐字换成正文）----
+    # 搜索阶段后台要跑好几秒，空白气泡会让用户以为卡死，动画占位给出明确反馈
+    ai_placeholder = st.empty()
+    card_placeholder = st.empty()  # 结构化卡片单独一个占位：骨架屏 → 卡片
+
+    def cooking_html(text):
+        return (
+            f'<div class="chat-row ai-row">'
+            f'<div class="bubble ai-bubble">'
+            f'<div class="bubble-meta">🍳 AI 私厨 · {time_str}</div>'
+            f'<div class="bubble-body">'
+            f'<span class="cooking-indicator">👨‍🍳 {text}'
+            f'<span class="cooking-dots"><i></i><i></i><i></i></span>'
+            f'</span></div>'
+            f'</div></div>'
+        )
+
+    ai_placeholder.markdown(
+        cooking_html("私厨正在识别食材、联网搜菜谱"), unsafe_allow_html=True
+    )
+    full_parts = []
+    try:
+        for kind, payload in api_chat_stream(
+            DEFAULT_API_URL,
+            session_id=session_id,
+            message=message,
+            uploaded_file=image,
+        ):
+            if kind == "token":
+                # 正文逐字打字机（开场白/做法细节全文流式，体验保留）
+                full_parts.append(payload)
+                answer_html = md_to_html("".join(full_parts))
+                ai_placeholder.markdown(
+                    f'<div class="chat-row ai-row">'
+                    f'<div class="bubble ai-bubble">'
+                    f'<div class="bubble-meta">🍳 AI 私厨 · {time_str}</div>'
+                    f'<div class="bubble-body">{answer_html}</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            elif kind == "structuring":
+                # 正文流完，卡片占位切"整理中"动画
+                card_placeholder.markdown(
+                    '<div style="font-size:12px;color:#999;padding:6px 2px;">'
+                    '<span class="cooking-indicator">🍳 正在整理菜谱卡片'
+                    '<span class="cooking-dots"><i></i><i></i><i></i></span>'
+                    '</span></div>',
+                    unsafe_allow_html=True,
+                )
+            elif kind == "answer":
+                # 整包 ChefAnswer JSON 到达，骨架屏替换成卡片
+                card_placeholder.markdown(
+                    recipe_card_html(payload), unsafe_allow_html=True
+                )
+    except Exception as exc:
+        st.error(f"🍽️ 这次烹饪请求没有完成：{exc}")
+        return
+
+    # 流式结束：清掉 pending，刷新历史，rerun 让本轮进入正常历史渲染
+    st.session_state.pop("pending_stream", None)
+    refresh_sessions(preferred_session_id=session_id)
+    st.rerun()
+
+
+# --------------------------------------------------------------------------- #
 #  对话展示（自定义左右气泡）
 # --------------------------------------------------------------------------- #
 def render_conversation():
     session = get_current_session()
     chat_history = session.get("messages", []) if session is not None else []
+    pending = st.session_state.get("pending_stream")
 
-    if not chat_history:
+    if not chat_history and not pending:
         st.markdown(
             """
             <div class="chat-empty">
@@ -799,52 +1110,63 @@ def render_conversation():
 
     for index, item in enumerate(chat_history):
         # ---- 用户消息：左对齐 ----
-        clean_user_text = re.sub(
-            r"</div\s*>",
-            "",
-            item["user_text"],
-            flags=re.IGNORECASE,
-        )
+        # 把用户可能粘贴的 HTML 标签（<div>、</div> 等）全部剥掉，防止显示成代码块
+        clean_user_text = re.sub(r"<[^>]+>", "", item["user_text"])
         user_text = html.escape(clean_user_text).replace("\n", "<br>")
         img_html = ""
-        img_data = item.get("image_data")
-        if img_data and img_data.get("data"):
+        img_url = item.get("image_url")
+        if img_url:
+            # 新数据：只存 OSS URL，前端直接从对象存储拉取
+            safe_url = html.escape(img_url)
             img_html = (
-                f'<img src="data:{img_data["type"]};base64,{img_data["data"]}" '
+                f'<img src="{safe_url}" '
                 f'alt="用户上传图片" class="history-user-image" '
                 f'style="max-width:180px;max-height:140px;border-radius:10px;margin-top:6px;">'
             )
+        else:
+            # 兼容旧数据：早期 JSON 可能仍存 base64 的 image_data
+            img_data = item.get("image_data")
+            if img_data and img_data.get("data"):
+                img_html = (
+                    f'<img src="data:{img_data["type"]};base64,{img_data["data"]}" '
+                    f'alt="用户上传图片" class="history-user-image" '
+                    f'style="max-width:180px;max-height:140px;border-radius:10px;margin-top:6px;">'
+                )
+        # 注意：必须单行拼接 HTML！三引号多行写法里，若 img_html 为空会留下"纯缩进空格行"，
+        # markdown 会把它当 blank line 截断 HTML 块，剩下的 </div> 被当成缩进代码块渲染成黑块
         st.markdown(
-            f"""
-            <div class="chat-row user-row">
-                <div class="bubble user-bubble">
-                    <div class="bubble-meta">🍴 你 · {item['time']}</div>
-                    <div class="bubble-body">{user_text}</div>
-                    {img_html}
-                </div>
-            </div>
-            """,
+            f'<div class="chat-row user-row">'
+            f'<div class="bubble user-bubble">'
+            f'<div class="bubble-meta">🍴 你 · {item["time"]}</div>'
+            f'<div class="bubble-body">{user_text}</div>'
+            f'{img_html}'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
 
         # ---- AI 消息：右对齐（标题 + 内容完整包在一个气泡内） ----
-        answer_html = md_to_html(item["answer"])
+        # 双格式兼容：新回答是 ChefAnswer JSON → opening 正文 + 卡片；
+        # 旧回答是 markdown → 走原来的 md_to_html 渲染
+        structured = parse_structured_answer(item["answer"])
+        if structured:
+            body_html = md_to_html(structured.get("opening", "")) + recipe_card_html(structured)
+        else:
+            body_html = md_to_html(item["answer"])
         st.markdown(
-            f"""
-            <div class="chat-row ai-row">
-                <div class="bubble ai-bubble">
-                    <div class="bubble-meta">🍳 AI 私厨 · {item['time']}</div>
-                    <div class="bubble-body">{answer_html}</div>
-                </div>
-            </div>
-            """,
+            f'<div class="chat-row ai-row">'
+            f'<div class="bubble ai-bubble">'
+            f'<div class="bubble-meta">🍳 AI 私厨 · {item["time"]}</div>'
+            f'<div class="bubble-body">{body_html}</div>'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
 
         # 操作按钮行（复制 / 重新生成 / 删除）—— 右对齐
         action_cols = st.columns([2.4, 1.0, 1.0, 0.6])
         with action_cols[1]:
-            render_copy_button(item["answer"], f"copy_{index}")
+            # 结构化回答复制 opening 正文（用户要的是菜的做法，不是 JSON）
+            copy_text = structured.get("opening", "") if structured else item["answer"]
+            render_copy_button(copy_text, f"copy_{index}")
         with action_cols[2]:
             if st.button("🔄 重新生成", key=f"regen_{index}", use_container_width=True):
                 handle_regenerate(index)
@@ -866,6 +1188,10 @@ def render_conversation():
                 refresh_sessions(preferred_session_id=session["session_id"])
                 st.rerun()
 
+    # 当前正在流式生成的问答也渲染到对话容器里，避免出现在容器外/不居中
+    if pending:
+        render_streaming_exchange(pending)
+
 
 def handle_regenerate(index):
     session = get_current_session()
@@ -876,9 +1202,10 @@ def handle_regenerate(index):
     with st.spinner("👨‍🍳 重新生成中……"):
         try:
             uploaded = None
+            regen_image_url = item.get("image_url")
+            # 兼容旧数据：早期 JSON 仍可能存 base64 image_data
             img_data = item.get("image_data")
             if img_data:
-                # 后端把图片 BLOB 以 base64 字符串返回，重新生成前解码回 bytes
                 raw = img_data["data"]
                 image_bytes = (
                     base64.b64decode(raw)
@@ -894,6 +1221,7 @@ def handle_regenerate(index):
                 session_id=session["session_id"],
                 message=message,
                 uploaded_file=uploaded,
+                image_url=regen_image_url,
             )
             old_message_id = item.get("id")
             if old_message_id is not None:
@@ -1070,36 +1398,21 @@ def render_input_bar():
     )
 
     if send_clicked:
-        handle_send(question, current_image)
-
-
-def handle_send(question, current_image):
-    session = get_current_session()
-    if session is None:
-        st.error("请先在左侧点击「➕ 新建会话」开始一轮新对话。")
-        return
-    taste_prefs = st.session_state.get("taste_prefs", [])
-    raw_question = question.strip() or "请识别图片中的食材，并推荐适合的家常菜。"
-    message = build_message(raw_question, taste_prefs)
-
-    with st.spinner("👨‍🍳 AI 私厨正在识别食材、搜索菜谱……"):
-        try:
-            answer = api_chat(
-                api_url=DEFAULT_API_URL,
-                session_id=session["session_id"],
-                message=message,
-                uploaded_file=current_image,
-            )
-        except requests.exceptions.RequestException as exc:
-            st.error(
-                "🍽️ 暂时联系不上后端服务，请确认 FastAPI 已启动。\n\n"
-                f"错误信息：{exc}"
-            )
-        except Exception as exc:
-            st.error(f"🍽️ 这次烹饪请求没有完成：{exc}")
+        session = get_current_session()
+        if session is None:
+            st.error("请先在左侧点击「➕ 新建会话」开始一轮新对话。")
         else:
-            # 后端聊天接口已经把本轮消息写入 SQLite，前端只刷新临时缓存
-            refresh_sessions(preferred_session_id=session["session_id"])
+            taste_prefs = st.session_state.get("taste_prefs", [])
+            raw_question = question.strip() or "请识别图片中的食材，并推荐适合的家常菜。"
+            # 把当前问题+图片登记为 pending_stream，rerun 后由 render_conversation
+            # 在"对话食谱"容器内统一渲染流式 Q&A，避免出现在容器外/不居中
+            st.session_state["pending_stream"] = {
+                "session_id": session["session_id"],
+                "message": build_message(raw_question, taste_prefs),
+                "question": raw_question,
+                "image": current_image,
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
             st.session_state["clear_question"] = True
             st.session_state["uploaded_image"] = None
             st.session_state["uploader_version"] += 1

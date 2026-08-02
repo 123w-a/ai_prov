@@ -9,6 +9,7 @@ from sessions_store import (
     delete_message,
     append_message,
 )
+from main import image_bytes_to_oss_url
 
 router = APIRouter()
 
@@ -55,6 +56,9 @@ async def api_append_message(
     image: UploadFile | None = File(None),
 ):
     # 备用：前端手动补一条消息入库（常规流程由 chat_image 自动调用 append_message）
-    image_data = await image.read() if image else None
-    append_message(sid, user_text, answer, time, image_name, image_type, image_data)
+    image_url = None
+    if image is not None:
+        file_bytes = await image.read()
+        image_url = image_bytes_to_oss_url(file_bytes, image.content_type)
+    append_message(sid, user_text, answer, time, image_name, image_type, image_url)
     return {"ok": True, "msg": "消息入库成功"}

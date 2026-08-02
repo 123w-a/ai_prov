@@ -14,12 +14,11 @@
 #     "created_at": "10:37",
 #     "messages": [
 #       { "id": 1, "user_text": "...", "answer": "...", "time": "...",
-#         "image_name": "...", "image_type": "...", "image_data": {...}|null }
+#         "image_name": "...", "image_type": "...", "image_url": "..."|null }
 #     ]
 #   }
-# image_data 落库时把 bytes 转成 {name, type, data: base64} 的 dict，前端直接能渲染。
+# 用户上传的图片只存 OSS 可访问 URL，不再存 base64/image_data；前端从对象存储直接拉取。
 
-import base64
 import ctypes
 import json
 import os
@@ -108,18 +107,11 @@ def _migrate_from_sqlite_once():
                         "user_text": m["user_text"],
                         "answer": m["answer"],
                         "time": m["time"],
-                        # SQLite BLOB -> base64 dict，和 append_message 落库形状保持一致
+                        # 旧 SQLite 里只有 base64 BLOB，没有 OSS URL；迁移时直接丢弃图片数据，
+                        # 让历史会话只保留文字。新的 JSON 结构统一只存 image_url。
                         "image_name": m["image_name"],
                         "image_type": m["image_type"],
-                        "image_data": (
-                            {
-                                "name": m["image_name"],
-                                "type": m["image_type"],
-                                "data": base64.b64encode(m["image_data"]).decode("ascii"),
-                            }
-                            if m["image_data"]
-                            else None
-                        ),
+                        "image_url": None,
                     }
                     for m in msgs
                 ],
@@ -193,12 +185,12 @@ def append_message(
     time,
     image_name=None,
     image_type=None,
-    image_data=None,
+    image_url=None,
 ):
     """追加一条问答。第一条消息会自动用问题文本当会话标题。
 
-    image_data 入参可能是 bytes（来自上传文件 / 路由 image.read()），
-    这里统一转成前端可直接渲染的 base64 dict {name, type, data}。
+    用户上传的图片只保留 OSS 可访问 URL(image_url 字符串)，
+    不再把 bytes/base64 落库；前端需要图片时直接从对象存储拉取。
     """
     with _lock:
         data = _read_session(sid)
@@ -206,15 +198,6 @@ def append_message(
             # 防御性：正常流程会先 create_session；这里兜底新建
             now = datetime.now().strftime("%H:%M")
             data = {"session_id": sid, "title": "新对话", "created_at": now, "messages": []}
-        # bytes -> base64 dict；已经是 dict 或 None 则原样保存
-        if isinstance(image_data, (bytes, bytearray)):
-            img_payload = {
-                "name": image_name,
-                "type": image_type,
-                "data": base64.b64encode(bytes(image_data)).decode("ascii"),
-            }
-        else:
-            img_payload = image_data
         new_id = (max((m["id"] for m in data["messages"]), default=0)) + 1
         data["messages"].append(
             {
@@ -224,7 +207,7 @@ def append_message(
                 "time": time,
                 "image_name": image_name,
                 "image_type": image_type,
-                "image_data": img_payload,
+                "image_url": image_url,  # 只存 OSS URL，不存 base64
             }
         )
         # 只有第一条消息时，用问题前 22 字做侧栏标题
