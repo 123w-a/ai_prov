@@ -1397,11 +1397,6 @@ def render_sidebar():
         st.session_state["stream_mode"] = (
             "sync" if answer_mode == mode_options["sync"] else "stream"
         )
-        st.caption(
-            "💡 使用提示：\n"
-            "• 🎙️ 边说边出：像直播一样逐字显示思考过程，适合看 AI 怎么推理；\n"
-            "• ⚡ 一次性出完整菜谱：Agent 一次性跑完状态机，直接给出完整卡片，适合想快速拿到结果。"
-        )
 
         st.markdown("---")
 
@@ -1463,7 +1458,9 @@ def render_sidebar():
                 • 点击「新建会话」开启一轮新话题<br>
                 • 同一会话里的连续问答会自动归在一起<br>
                 • 上传食材图片让 AI 识别<br>
-                • 选择口味偏好获取个性化推荐
+                • 选择口味偏好获取个性化推荐<br>
+                • 🎙️ 边说边出：像直播一样逐字显示 AI 思考过程；<br>
+                • ⚡ 一次性出完整菜谱：直接拿到完整卡片，适合想快速看结果
             </div>
             """,
             unsafe_allow_html=True,
