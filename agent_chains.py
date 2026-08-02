@@ -3,6 +3,8 @@
 # 不含图流转逻辑（在 agent_graph.py），不含数据形状定义（在 agent_schemas.py）
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.exceptions import OutputParserException  # LangChain 解析失败统一异常
+from pydantic import ValidationError  # Pydantic schema 越界/缺字段校验异常
 
 from model_name import get_langchain_llm
 from agent_schemas import ChefAnswer
@@ -41,6 +43,54 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([
 structure_llm = get_langchain_llm("gpt", temperature=0.2, max_tokens=2048)
 
 chef_answer_chain = STRUCTURE_PROMPT | structure_llm | chef_parser
+
+
+# --------------------------------------------------------------------------- #
+#  4. 格式自动重试（Retry on Parsing Error）——业界标准做法
+#     行业做法：Pydantic 解析失败时，把具体报错回灌 LLM，让它自我修正后重新解析，
+#     最多重试 MAX_STRUCTURE_RETRIES 次；全部失败才把错误上抛，交上层降级为 markdown。
+#     比"直接降级成 markdown"更稳健——结构化卡片成功率显著提升。
+# --------------------------------------------------------------------------- #
+MAX_STRUCTURE_RETRIES = 2
+
+# 修正提示：让模型看到原始上下文 + 上一次的具体报错，重新产出合规 JSON
+_STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "你是 AI 私厨的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"
+        "重新输出，不要输出任何额外文字、解释或代码围栏。\n{format_instructions}",
+    ),
+    (
+        "human",
+        "原始对话上下文：\n{context}\n\n"
+        "上一次解析报错信息：\n{error}\n\n"
+        "请根据上面报错修正，并重新输出完全符合格式的 JSON。",
+    ),
+]).partial(format_instructions=chef_parser.get_format_instructions())
+
+
+def build_structured_answer(context: str) -> ChefAnswer:
+    """对上下文做结构化，自带「格式自动重试」。
+
+    执行流程：
+      1. 首次：标准链 STRUCTURE_PROMPT | llm | parser；
+      2. 若抛解析异常（ValidationError / OutputParserException），把报错 + 原文上下文
+         喂给 _STRUCTURE_FIX_PROMPT 修正链，最多重试 MAX_STRUCTURE_RETRIES 次；
+      3. 重试耗尽仍失败 → 上抛最后错误，由 agent_graph 的 except 降级为 markdown。
+    """
+    last_err: Exception | None = None
+    for attempt in range(1 + MAX_STRUCTURE_RETRIES):
+        try:
+            if attempt == 0:
+                return chef_answer_chain.invoke({"context": context})
+            # 重试：专用修正链，把上次错误反馈给模型自我修正
+            return (_STRUCTURE_FIX_PROMPT | structure_llm | chef_parser).invoke(
+                {"context": context, "error": str(last_err)}
+            )
+        except (ValidationError, OutputParserException) as e:
+            last_err = e
+    # 重试耗尽，抛出最后错误，交给 structure_answer_node 的降级逻辑
+    raise last_err  # type: ignore[arg-type]
 
 
 def rank_recipes(answer: ChefAnswer) -> ChefAnswer:

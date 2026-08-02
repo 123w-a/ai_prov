@@ -21,7 +21,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断�
 
 from agent_prompts import SYSTEM_PROMPT
 from agent_tools import tools
-from agent_chains import chef_answer_chain, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序
+from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
 
 # --------------------------------------------------------------------------- #
 #  1. 模型 & 工具绑定
@@ -200,8 +200,8 @@ def structure_answer_node(state: MessagesState):
     context, real_image_url = _build_structure_context(messages)
     if not context.strip():#没有可整理的上下文（理论上不会走到这），直接结束
         return {"messages": []}
-    try:#结构化链也可能 502/JSON 校验失败，降级为"只用 markdown 原文"
-        answer = chef_answer_chain.invoke({"context": context})
+    try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
+        answer = build_structured_answer(context)
         answer = rank_recipes(answer)#排序不靠模型自觉，Python 精确执行
         # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
         # 杜绝"正文说找到图、卡片却没图"的口径不一
