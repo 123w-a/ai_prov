@@ -180,6 +180,12 @@ def inject_styles():
         }
 
         /* ---------- 侧栏「回答方式」radio 高亮：选中用主题橙，未选中用棕色，一眼看清 ---------- */
+        [data-testid="stRadio"] label p,
+        [data-testid="stRadio"] div[data-testid="stWidgetLabel"] p {
+            color: var(--orange) !important;
+            font-weight: 700 !important;
+            font-size: 1.05rem !important;
+        }
         [data-testid="stRadio"] input[type="radio"] + div {
             border-color: var(--brown-light) !important;
             width: 20px !important;
