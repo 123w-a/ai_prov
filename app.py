@@ -179,6 +179,25 @@ def inject_styles():
             30% { transform: translateY(-5px); opacity: 1; }
         }
 
+        /* ---------- 侧栏「回答方式」radio 高亮：选中用主题橙，未选中用棕色，一眼看清 ---------- */
+        [data-testid="stRadio"] input[type="radio"] + div {
+            border-color: var(--brown-light) !important;
+            width: 20px !important;
+            height: 20px !important;
+        }
+        [data-testid="stRadio"] input[type="radio"]:checked + div {
+            border-color: var(--orange) !important;
+            background-color: var(--orange) !important;
+            box-shadow: 0 0 0 4px rgba(255, 112, 67, .18) !important;
+        }
+        [data-testid="stRadio"] input[type="radio"]:checked + div > div {
+            background-color: #fff !important;
+        }
+        [data-testid="stRadio"] div[role="radiogroup"] > div {
+            align-items: center;
+            gap: .35rem;
+        }
+
         /* ---------- 成品图加载占位：6 秒没出来就切换文案，避免用户以为卡死 ---------- */
         @keyframes img-placeholder-fade {
             0%, 99.99% { opacity: 1; }
@@ -1364,15 +1383,24 @@ def render_sidebar():
         st.session_state["taste_prefs"] = taste or []
 
         # ---- 回答方式：流式 / 非流式 统一开关 ----
+        mode_options = {
+            "stream": "🎙️ 边说边出（打字机流式）",
+            "sync": "⚡ 一次性出完整菜谱",
+        }
         answer_mode = st.radio(
             "回答方式",
-            ["逐字加载（打字机）", "直接出结果（非流式）"],
+            list(mode_options.values()),
             index=0,
             horizontal=True,
-            help="流式：打字机逐字 + 卡片；非流式：Agent 一次性跑完直接出完整卡片（同一接口 stream 开关切换）",
+            help="两种方式共用同一套 Agent，仅响应方式不同",
         )
         st.session_state["stream_mode"] = (
-            "sync" if answer_mode.startswith("直接") else "stream"
+            "sync" if answer_mode == mode_options["sync"] else "stream"
+        )
+        st.caption(
+            "💡 使用提示：\n"
+            "• 🎙️ 边说边出：像直播一样逐字显示思考过程，适合看 AI 怎么推理；\n"
+            "• ⚡ 一次性出完整菜谱：Agent 一次性跑完状态机，直接给出完整卡片，适合想快速拿到结果。"
         )
 
         st.markdown("---")
