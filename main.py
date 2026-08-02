@@ -1,5 +1,13 @@
+import os  # 注入主脑模型选择到环境变量
 import mimetypes  # 区分 JPG / PNG 等 MIME 类型
 from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息类 + 流式增量块类型
+
+# 主脑模型选择：想换模型改这里（"gpt" / "deepseek" / 未来 "qwen"），
+# 需在 .env 配好对应 *_API_KEY；若没配，model_name 会自动回退到 .env 第一个可用模型并告知。
+PROVIDER = "gpt"
+# 在 import agent 之前注入，让 agent_graph 构建时读到用户指定的主脑模型
+os.environ["CHEF_PROVIDER"] = PROVIDER
+
 from agent import agent  # 调用写好的 LangGraph Agent
 from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
 
