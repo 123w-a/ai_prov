@@ -2,6 +2,7 @@
 # 只负责"编排"：把提示词、工具、LLM、记忆、路由串成一张可运行的图
 # 具体工具怎么干活看 agent_tools.py，提示词内容看 agent_prompts.py
 
+import os#读取 CHEF_PROVIDER 环境变量（主脑模型选择）
 import json#结构化回答打包成 JSON 字符串落进消息
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import time#重试间隔用
@@ -26,7 +27,10 @@ from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链
 # --------------------------------------------------------------------------- #
 #  1. 模型 & 工具绑定
 # --------------------------------------------------------------------------- #
-provider = "gpt"#主脑运行模型
+# 主脑运行模型：默认 gpt，可在 .env 用 CHEF_PROVIDER 覆盖；
+# main.py 会在 import 本模块前把用户指定的 PROVIDER 注入该环境变量，
+# 若 .env 没配该 provider 的 key，get_langchain_llm 会自动回退到第一个可用模型并明确告知。
+provider = os.getenv("CHEF_PROVIDER", "gpt")
 llm = get_langchain_llm(provider)#获取模型对象
 
 # 绑定工具给LLM（让模型知道它能调用哪些工具）
