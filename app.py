@@ -179,6 +179,41 @@ def inject_styles():
             30% { transform: translateY(-5px); opacity: 1; }
         }
 
+        /* ---------- 成品图加载占位：6 秒没出来就切换文案，避免用户以为卡死 ---------- */
+        @keyframes img-placeholder-fade {
+            0%, 99.99% { opacity: 1; }
+            100% { opacity: 0; pointer-events: none; }
+        }
+        @keyframes img-placeholder-show {
+            0%, 99.99% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        .img-loading-wrap {
+            position: relative;
+            min-height: 40px;
+        }
+        .img-loading-text,
+        .img-timeout-text {
+            font-size: 12px;
+            color: #999;
+            padding: 10px;
+            text-align: center;
+            border: 1px dashed rgba(255, 112, 67, .35);
+            border-radius: 10px;
+            box-sizing: border-box;
+        }
+        .img-loading-text {
+            animation: img-placeholder-fade 0.01s 6s linear forwards;
+        }
+        .img-timeout-text {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            opacity: 0;
+            animation: img-placeholder-show 0.01s 6s linear forwards;
+        }
+
         /* ---------- 左右对话气泡（核心） ---------- */
         .chat-row {
             display: flex;
@@ -958,22 +993,29 @@ def recipe_card_html(data):
         )
 
     # 图片渲染原则：有真 URL 才渲染 <img>，没有就显示 image_note 文字说明，绝不渲染乱码/二进制流。
-    # 关键体验：图片从 OSS 拉取可能较慢——先显示"正在拉取"占位（此时 img 用 display:none 藏起），
-    # 等 onload 成功才换图、onerror 改成"加载失败"提示。这样用户不会误以为"已经生成完了"。
+    # 关键体验：
+    #   1) 图片从 OSS 拉取可能较慢——先显示"正在拉取"占位（img 用 display:none 藏起），
+    #      等 onload 成功才换图、onerror 改成"加载失败"；
+    #   2) 用纯 CSS 动画做 6 秒超时兜底：超过 6 秒还没 onload/onerror，占位自动切换成
+    #      "未在合理时间内找到可展示的图片"，避免用户以为卡死或"已经生成完了"。
     img_url = data.get("image_url")
     if img_url and str(img_url).startswith(("http://", "https://")):
         safe_img = html.escape(str(img_url))
         img_block = (
-            '<div style="margin-top:8px;">'
-            '<div style="font-size:12px;color:#999;padding:10px;text-align:center;'
-            'border:1px dashed rgba(255,112,67,.35);border-radius:10px;">'
-            "🍳 成品图正在拉取，请稍候…</div>"
+            '<div class="img-loading-wrap" style="margin-top:8px;">'
+            '<div class="img-loading-text">🍳 成品图正在拉取，请稍候…</div>'
+            '<div class="img-timeout-text">🍽️ 未在合理时间内找到可展示的图片</div>'
             f'<img src="{safe_img}" alt="成品图" '
             f'style="max-width:100%;border-radius:10px;margin-top:8px;display:none;" '
-            f'onload="this.style.display=\'block\';'
-            f'this.previousElementSibling.style.display=\'none\';" '
-            f'onerror="this.previousElementSibling.innerHTML='
-            f'\'🍽️ 图片加载失败，可稍后刷新重试\';">'
+            f'onload="var w=this.parentElement; '
+            f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
+            f'w.querySelector(\'.img-timeout-text\').style.display=\'none\'; '
+            f'this.style.display=\'block\';" '
+            f'onerror="var w=this.parentElement; '
+            f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
+            f'var t=w.querySelector(\'.img-timeout-text\'); '
+            f't.innerHTML=\'🍽️ 图片加载失败，可稍后刷新重试\'; '
+            f't.style.opacity=\'1\'; t.style.display=\'block\';">'
             "</div>"
         )
     else:

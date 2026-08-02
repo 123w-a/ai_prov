@@ -67,9 +67,14 @@ def to_data_url(img_list):
     return ""
 
 @tool
-def web_search(query:str)-> str:
-    """当用户给出食物图片或者食物文字的时候调用这个进行上网搜索要怎么搭配"""
-    result = tavily.invoke({"query": query})#接受搜索到的json结果,拿文本
+def web_search(query: str) -> str:
+    """当用户询问某道菜、食材搭配或家常菜做法时调用。
+    工具会联网搜索文字做法，并尝试返回一张该菜品的成品图 OSS URL。
+    为提升家常菜/常见菜的图片命中率，调用时给出明确菜名即可（如"红烧肉""糯米肉丸"），
+    工具内部会自动追加美食/成品图关键词进行搜索。"""
+    # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
+    image_friendly_query = f"{query} 美食 成品图"
+    result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
 
     items = result.get("results", [])#拿到result这个列表中的几条结果
     if not items:
