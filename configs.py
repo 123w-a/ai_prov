@@ -14,9 +14,4 @@ MODEL_CONFIGS = {#模型配置
         "base_url": os.getenv("CHAT_BASE_URL"),
         "model_name": os.getenv("CHAT_MODE_NAME"),
     },
-    "qwen": {
-        "api_key": os.getenv("QWEN_API_KEY"),
-        "base_url": os.getenv("QWEN_BASE_URL"),
-        "model_name": os.getenv("QWEN_MODE_NAME"),
-    },
 }
