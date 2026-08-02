@@ -7,6 +7,7 @@ from pathlib import Path#路径解析
 from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
+from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
 
 # Tavily 搜索客户端（联网菜谱检索）
 tavily = TavilySearch(
@@ -71,7 +72,11 @@ def web_search(query: str) -> str:
     """当用户询问某道菜、食材搭配或家常菜做法时调用。
     工具会联网搜索文字做法，并尝试返回一张该菜品的成品图 OSS URL。
     为提升家常菜/常见菜的图片命中率，调用时给出明确菜名即可（如"红烧肉""糯米肉丸"），
-    工具内部会自动追加美食/成品图关键词进行搜索。"""
+    工具内部会自动追加美食/成品图关键词进行搜索。
+    若搜索引擎完全拿不到可靠成品图，会自动调用通义万相生成一张「AI 示意图」兜底
+    （该图会在下游被明确标注为 AI 生成，绝不伪装成真实成品照）。"""
+    # 保留原始菜名查询，用于「AI 生图兜底」的提示词（不希望把"美食 成品图"后缀带进生图）
+    base_query = query
     # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
     image_friendly_query = f"{query} 美食 成品图"
     result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
@@ -79,7 +84,11 @@ def web_search(query: str) -> str:
     items = result.get("results", [])#拿到result这个列表中的几条结果
     if not items:
         # 结构化空结果：image_url 为 None，下游节点据此在卡片里明说"没找到图"
-        return json.dumps({"text": "没有搜索到可靠结果", "image_url": None}, ensure_ascii=False)
+        # image_source 标 "real" 表示并非 AI 生成（这里本来就无图）
+        return json.dumps(
+            {"text": "没有搜索到可靠结果", "image_url": None, "image_source": "real"},
+            ensure_ascii=False,
+        )
 
     lines = []#用来存初始化好了的结果
     for index, item in enumerate(items, start=1):#遍历结果的同时拿上序号
@@ -92,12 +101,23 @@ def web_search(query: str) -> str:
             f"摘要：{item.get('content', '')[:200]}"
         )
     images = result.get("images", [])#字典语法拿到图片路径，拿图片
-    image_url = to_data_url(images) or None#在图片里挑一张国内可下载的，转成 OSS URL；没有就是 None
+    image_url = to_data_url(images) or None  # 在图片里挑一张国内可下载的，转成 OSS URL；没有就是 None
+    image_source = "real"  # 图源标记：real=搜索实拍图 / ai=通义万相生成 / none=无图
+
+    # 搜不到可靠成品图时，自动调用通义万相生成一张「AI 示意图」兜底（见 image_gen.py）。
+    # 生成成功才把 image_source 置为 "ai"，下游据此在卡片上明示"AI 生成示意图"，避免误导。
+    # 生成失败（无密钥/限流/异常）generate_dish_image 会返回 None，这里自然回退到"无图"。
+    if image_url is None:
+        ai_url = generate_dish_image(base_query)
+        if ai_url:
+            image_url = ai_url
+            image_source = "ai"
 
     # 关键：图片 URL 独立成字段，不再以 markdown 形式混进文本，
     # 从源头杜绝乱码 URL/二进制流被铺进回答；没图就老实给 None，不硬塞
+    # image_source 随图返回，供 structure_answer 节点判定是否需要透明标注
     return json.dumps(
-        {"text": "\n\n".join(lines), "image_url": image_url},
+        {"text": "\n\n".join(lines), "image_url": image_url, "image_source": image_source},
         ensure_ascii=False,
     )
 

@@ -18,6 +18,7 @@ dependencies = [
     "requests>=2.34.2",
     "streamlit>=1.60.0",
     "the-new-hotness>=1.4.1",
+    "dashscope>=1.26.5",
 ]
 
 [[tool.uv.index]]

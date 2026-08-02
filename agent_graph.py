@@ -159,10 +159,15 @@ tool_executor = ToolNode(tools)#执行者
 # --------------------------------------------------------------------------- #
 def _build_structure_context(messages):
     """给结构化链组装上下文：最近一条真实用户需求 + 本轮 web_search 的搜索结果。
-    返回 (context_text, real_image_url)：real_image_url 是最近一次搜索真实拿到的
-    图片链接（可能为 None），作为"有没有图"的代码级依据，不信模型口头说法。"""
+    返回 (context_text, real_image_url, real_image_ai)：
+      - real_image_url：最近一次搜索真实拿到的图片链接（可能为 None），
+        作为"有没有图"的代码级依据，不信模型口头说法；
+      - real_image_ai：该图是否由通义万相 AI 生成（image_source=="ai"），
+        用于下游透明标注「AI 生成示意图」，防止把生成图当用户实拍图误导。
+    注意：real_image_url 与 real_image_ai 始终成对赋值，保证"有图"与"是否 AI 图"口径一致。"""
     parts = []
     real_image_url = None
+    real_image_ai = False
     # 最近一条真实用户消息（跳过压缩节点注入的"历史对话摘要"，图文混合消息只取文字）
     for m in reversed(messages):
         if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
@@ -175,24 +180,29 @@ def _build_structure_context(messages):
                 text = str(m.content)
             parts.append("用户需求：" + text)
             break
-    # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片）
+    # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []
     for m in messages:
         if isinstance(m, ToolMessage) and getattr(m, "name", "") == "web_search":
             content = str(m.content)
             search_blocks.append(content)
-            try:#新格式 {text, image_url}；旧格式是纯文本，json 解析失败就跳过
-                img = json.loads(content).get("image_url")
+            try:#新格式 {text, image_url, image_source}；旧格式是纯文本，json 解析失败就跳过
+                parsed = json.loads(content)
+                img = parsed.get("image_url")
+                src = parsed.get("image_source")
+                # 成对赋值：有图才更新图源标记，保证"图"与"是否 AI 图"一致
                 if img:
                     real_image_url = img#后出现的覆盖前面的，留下最近一次
+                    real_image_ai = (src == "ai")#仅当该次返回明确标记为 AI 生成才置 True
             except (ValueError, AttributeError):
                 pass
     if search_blocks:
         parts.append(
-            "搜索结果（每条是 JSON：text 为搜索文本、image_url 为成品图链接或 null）：\n"
+            "搜索结果（每条是 JSON：text 为搜索文本、image_url 为成品图链接或 null、"
+            "image_source 为图源 real/ai）：\n"
             + "\n\n".join(search_blocks[-3:])#最多取最近3次搜索，防上下文过长
         )
-    return "\n\n".join(parts), real_image_url
+    return "\n\n".join(parts), real_image_url, real_image_ai
 
 
 def structure_answer_node(state: MessagesState):
@@ -201,7 +211,7 @@ def structure_answer_node(state: MessagesState):
     opening = ""
     if messages and isinstance(messages[-1], AIMessage):
         opening = str(messages[-1].content)
-    context, real_image_url = _build_structure_context(messages)
+    context, real_image_url, real_image_ai = _build_structure_context(messages)
     if not context.strip():#没有可整理的上下文（理论上不会走到这），直接结束
         return {"messages": []}
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
@@ -210,7 +220,15 @@ def structure_answer_node(state: MessagesState):
         # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
         # 杜绝"正文说找到图、卡片却没图"的口径不一
         answer.image_url = real_image_url
-        if real_image_url is None and not answer.image_note:
+        # 透明标注（项目亮点）：图片若由通义万相生成，强制让前端知道，绝不伪装成实拍图
+        answer.image_ai_generated = real_image_ai
+        if real_image_ai:
+            # 强制图注带「AI 生成示意图」，防止模型漏写导致误导用户/评委
+            if not answer.image_note:
+                answer.image_note = "AI 生成示意图（非真实成品照，仅供样式参考）"
+            elif "AI 生成示意图" not in answer.image_note:
+                answer.image_note = "AI 生成示意图：" + answer.image_note
+        elif real_image_url is None and not answer.image_note:
             answer.image_note = "未找到可正常展示的成品图片。"
         payload = {"opening": opening, **answer.model_dump()}
         return {

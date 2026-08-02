@@ -28,6 +28,8 @@ uvicorn*.log
 # 上传资源、运行产生的临时文件
 resources/uploads/
 resources/checkpoint*
+# 菜品图缓存（运行时生成、可重建，不入库）
+resources/dish_image_cache.json
 
 # UV依赖锁定文件其实可以保留（可选）
 # uv.lock

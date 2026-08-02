@@ -238,6 +238,22 @@ def inject_styles():
             opacity: 0;
             animation: img-placeholder-show 0.01s 6s linear forwards;
         }
+        /* ---------- AI 生成示意图专用徽标：醒目、明确，绝不伪装成实拍图 ---------- */
+        .ai-img-badge {
+            margin-top: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #b34900;
+            background: #fff4e6;
+            border: 1px solid #ffb877;
+            border-radius: 10px;
+            padding: 6px 10px;
+            text-align: center;
+        }
+        .ai-img-badge span {
+            font-weight: 400;
+            color: #c0661f;
+        }
 
         /* ---------- 左右对话气泡（核心） ---------- */
         .chat-row {
@@ -1062,13 +1078,30 @@ def recipe_card_html(data):
     #   2) 用纯 CSS 动画做 6 秒超时兜底：超过 6 秒还没 onload/onerror，占位自动切换成
     #      "未在合理时间内找到可展示的图片"，避免用户以为卡死或"已经生成完了"。
     img_url = data.get("image_url")
+    # 透明标注核心开关：该图是否由 AI 生成（来自 ChefAnswer.image_ai_generated）。
+    ai_img = bool(data.get("image_ai_generated"))
     if img_url and str(img_url).startswith(("http://", "https://")):
         safe_img = html.escape(str(img_url))
+        if ai_img:
+            # AI 生成图：占位文案升级为"正在生成菜品图"，并附醒目徽标，绝不伪装成实拍图
+            loading_text = "🤖 正在为你生成菜品图…"
+            timeout_text = "🖼️ AI 生成示意图加载较慢，请稍候…"
+            alt_text = "AI 生成示意图"
+            err_text = "🖼️ AI 生成示意图加载失败，可稍后刷新重试"
+            badge = ('<div class="ai-img-badge">🤖 AI 生成示意图'
+                     '<span>（非真实成品照，仅供样式参考）</span></div>')
+        else:
+            # 真实搜索图：维持原"成品图正在拉取"占位
+            loading_text = "🍳 成品图正在拉取，请稍候…"
+            timeout_text = "🍽️ 未在合理时间内找到可展示的图片"
+            alt_text = "成品图"
+            err_text = "🍽️ 图片加载失败，可稍后刷新重试"
+            badge = ""
         img_block = (
             '<div class="img-loading-wrap" style="margin-top:8px;">'
-            '<div class="img-loading-text">🍳 成品图正在拉取，请稍候…</div>'
-            '<div class="img-timeout-text">🍽️ 未在合理时间内找到可展示的图片</div>'
-            f'<img src="{safe_img}" alt="成品图" '
+            f'<div class="img-loading-text">{loading_text}</div>'
+            f'<div class="img-timeout-text">{timeout_text}</div>'
+            f'<img src="{safe_img}" alt="{alt_text}" '
             f'style="max-width:100%;border-radius:10px;margin-top:8px;display:none;" '
             f'onload="var w=this.parentElement; '
             f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
@@ -1077,8 +1110,9 @@ def recipe_card_html(data):
             f'onerror="var w=this.parentElement; '
             f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
             f'var t=w.querySelector(\'.img-timeout-text\'); '
-            f't.innerHTML=\'🍽️ 图片加载失败，可稍后刷新重试\'; '
+            f't.innerHTML=\'{err_text}\'; '
             f't.style.opacity=\'1\'; t.style.display=\'block\';">'
+            f"{badge}"
             "</div>"
         )
     else:
