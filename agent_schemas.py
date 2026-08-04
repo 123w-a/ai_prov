@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 #field主要的作用就是给特殊字段加上规则和限制
 #description是给字段添加描述，归field管
-class Seasoning(BaseModel):#调料结构
+class Seasoning(BaseModel):#调料结构#告诉模型输入的东西必须是什么格式
     """单个调料：名称 + 用量（克数必须带生活化比喻，来自系统提示词第 5 条要求）"""
     name: str = Field(description="调料名称，如：盐、生抽、蒜")
     amount: str = Field(description="用量，必须带生活化比喻，如：'3g，约半小勺'、'5ml，约一矿泉水瓶盖'")

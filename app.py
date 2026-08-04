@@ -685,45 +685,7 @@ def api_chat(api_url, session_id, message, uploaded_file=None, image_url=None, t
 
 
 # --------------------------------------------------------------------------- #
-#  非流式聊天：POST 到统一 /api/chat（stream=false），agent.ainvoke 一次性返回
-#  完整 ChefAnswer JSON（干净 dict，无 SSE 封装），适合慢网/调试/第三方对接演示。
-# --------------------------------------------------------------------------- #
-def api_chat_sync(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
-    endpoint = f"{api_url.rstrip('/')}/api/chat"
-    files = None
-    data = {
-        "session_id": session_id,
-        "message": message,
-        "stream": "false",  # 关键：关掉流式，走 ainvoke 一次性返回
-    }
-    if image_url is not None:
-        data["image_url"] = image_url
-    elif uploaded_file is not None:
-        files = {
-            "image": (
-                uploaded_file.name,
-                uploaded_file.getvalue(),
-                uploaded_file.type or "application/octet-stream",
-            )
-        }
-
-    response = requests.post(endpoint, data=data, files=files, timeout=timeout)
-    try:
-        response_data = response.json()
-    except ValueError:
-        response.raise_for_status()
-        raise RuntimeError("后端返回了无法解析的内容")
-
-    if not response.ok:
-        detail = response_data.get("detail", response.text)
-        raise RuntimeError(f"后端请求失败：{detail}")
-
-    # /api/chat 非流式直接返回 ChefAnswer dict（非信封），可直接交给卡片渲染
-    return response_data
-
-
-# --------------------------------------------------------------------------- #
-#  流式聊天：POST 到 /api/chat/stream，用 requests 边收边解析 SSE 事件
+#  流式聊天：POST 到 /api/chat，用 requests 边收边解析 SSE 事件
 #  生成器每次 yield 一个 token，交给 Streamlit 的 st.write_stream 做打字机渲染
 # --------------------------------------------------------------------------- #
 def api_chat_stream(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
@@ -1179,27 +1141,7 @@ def render_streaming_exchange(pending):
             f'</div></div>'
         )
 
-    # ---- 统一开关：非流式（直接出结果）走 /api/chat?stream=false，一次性拿完整卡片 ----
-    stream_mode = st.session_state.get("stream_mode", "stream")
-    if stream_mode == "sync":
-        ai_placeholder.markdown(
-            cooking_html("私厨正在烹饪中（非流式，请稍候）"), unsafe_allow_html=True
-        )
-        try:
-            data = api_chat_sync(
-                DEFAULT_API_URL,
-                session_id=session_id,
-                message=message,
-                uploaded_file=image,
-            )
-            card_placeholder.markdown(recipe_card_html(data), unsafe_allow_html=True)
-        except Exception as exc:
-            st.error(f"🍽️ 这次烹饪请求没有完成：{exc}")
-            return
-        st.session_state.pop("pending_stream", None)
-        refresh_sessions(preferred_session_id=session_id)
-        st.rerun()
-
+    # 统一走流式：SSE 逐事件推，正文打字机 + 卡片整包 JSON
     ai_placeholder.markdown(
         cooking_html("私厨正在识别食材、联网搜菜谱"), unsafe_allow_html=True
     )
@@ -1421,22 +1363,6 @@ def render_sidebar():
             key="taste_pills",
         )
         st.session_state["taste_prefs"] = taste or []
-
-        # ---- 回答方式：流式 / 非流式 统一开关 ----
-        mode_options = {
-            "stream": "🎙️ 边说边出（打字机流式）",
-            "sync": "⚡ 一次性出完整菜谱",
-        }
-        answer_mode = st.radio(
-            "回答方式",
-            list(mode_options.values()),
-            index=0,
-            horizontal=True,
-            help="两种方式共用同一套 Agent，仅响应方式不同",
-        )
-        st.session_state["stream_mode"] = (
-            "sync" if answer_mode == mode_options["sync"] else "stream"
-        )
 
         st.markdown("---")
 

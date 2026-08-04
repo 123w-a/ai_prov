@@ -31,6 +31,11 @@ resources/checkpoint*
 # 菜品图缓存（运行时生成、可重建，不入库）
 resources/dish_image_cache.json
 
+# 用户个人偏好（含忌口/健康约束等隐私数据，不入库）
+data/preferences.txt
+# 保留公开模板供他人参考（不被上面的规则忽略）
+!data/preferences.txt.example
+
 # UV依赖锁定文件其实可以保留（可选）
 # uv.lock
 # pyproject.toml

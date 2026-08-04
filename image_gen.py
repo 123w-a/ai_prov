@@ -20,6 +20,7 @@ import os          # 读环境变量
 import json        # 本地菜品图缓存读写
 import time        # 缓存文件名时间戳
 import uuid        # 缓存文件名防重
+import concurrent.futures  # 给万相调用加超时止损，避免抽风卡住整轮
 import requests    # 下载通义万相返回的临时图片 URL
 from dotenv import load_dotenv
 
@@ -150,13 +151,21 @@ def generate_dish_image(dish_name: str):
     # --- 3. 调通义万相生成（异步任务，SDK 内部自动轮询等待结果） ---
     try:
         print(f"[image_gen] 调用通义万相生成菜品图：{cache_key}（模型 {WANX_MODEL}）")
-        result = ImageSynthesis.call(
-            model=WANX_MODEL,
-            prompt=prompt,
-            negative_prompt=WANX_NEGATIVE_PROMPT,
-            n=1,
-            size=WANX_SIZE,
-        )
+        # 用线程池包裹生成调用，单图最多等 20s，超时直接放弃兜底（正常 8-15s 不误杀），
+        # 避免万相抽风卡 20-30s 拖垮整轮回答。
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(
+                ImageSynthesis.call,
+                model=WANX_MODEL,
+                prompt=prompt,
+                negative_prompt=WANX_NEGATIVE_PROMPT,
+                n=1,
+                size=WANX_SIZE,
+            )
+            result = future.result(timeout=20)
+    except concurrent.futures.TimeoutError:
+        print("[image_gen] 通义万相生成超时（>20s），放弃兜底生图，回退无图")
+        return None
     except Exception as e:
         print(f"[image_gen] 通义万相调用异常：{e}")
         return None

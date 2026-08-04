@@ -1,15 +1,32 @@
-import os  # 注入主脑模型选择到环境变量
 import mimetypes  # 区分 JPG / PNG 等 MIME 类型
 from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息类 + 流式增量块类型
 
-# 主脑模型选择：想换模型改这里（"gpt" / "deepseek"），
-# 需在 .env 配好对应 *_API_KEY；若没配，model_name 会自动回退到 .env 第一个可用模型并告知。
-PROVIDER = "gpt"
-# 在 import agent 之前注入，让 agent_graph 构建时读到用户指定的主脑模型
-os.environ["CHEF_PROVIDER"] = PROVIDER
-
+# 主脑模型选择统一交给 .env 的 CHEF_PROVIDER 开关（见 model_name.resolve_provider）：
+#   - 不写 / 留空 → 自动用 configs.py 里第一个配好 key 的模型，无需改任何代码
+#   - 想用哪个写哪个：CHEF_PROVIDER=deepseek / gpt，或任何你在 configs 配置过的键名
 from agent import agent  # 调用写好的 LangGraph Agent
 from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
+from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
+from pathlib import Path
+
+# 用户长期偏好文件路径（白名单目录 data/ 下）
+_PREFS_PATH = str(Path(__file__).resolve().parent / "data" / "preferences.txt")
+
+
+def load_preferences() -> str:
+    """会话初始化时读取用户长期偏好（忌口/辣度/减脂/糖尿病忌糖等）。
+    用 get_file 工具读取（复用沙箱能力，自动受目录白名单保护）；
+    文件不存在/读取被拒时返回空串，绝不阻断主流程。
+    过滤注释行（# 开头）与空行，只把有效偏好注入模型上下文。"""
+    try:
+        content = get_file.invoke({"file_path": _PREFS_PATH})
+        if content and not content.startswith(("文件不存在", "读取被拒绝", "读取失败")):
+            lines = [ln.strip() for ln in content.splitlines()
+                     if ln.strip() and not ln.strip().startswith("#")]
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
 
 
 def image_to_oss_url(image_path):  # 本地图片 -> OSS 公网 URL
@@ -30,7 +47,17 @@ def image_bytes_to_oss_url(image_bytes, mime_type="image/jpeg"):
 
 def build_human_message(text, image_url=None):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
-    所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。"""
+    所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
+    偏好注入：每次请求都带上用户长期偏好（忌口/辣度/减脂/糖尿病忌糖），
+    实现「记得你」的轻量长期记忆——文件持久化 + 会话初始化读取注入。"""
+    prefs = load_preferences()
+    if prefs:
+        text = (
+            "【用户长期偏好（每次对话自动加载，务必严格遵守）】\n"
+            f"{prefs}\n"
+            "【以上为偏好约束，以下是本次需求】\n"
+            f"{text}"
+        )
     if image_url:
         return HumanMessage(
             content=[
@@ -42,30 +69,8 @@ def build_human_message(text, image_url=None):
 
 
 # --------------------------------------------------------------------------- #
-#  非流式版本：agent.ainvoke 一次性跑完整状态机（含 structure_answer 结构化节点），
-#  取最后一条消息即 ChefAnswer JSON。流式/非流式复用同一张图、同一套结构化链路。
-# --------------------------------------------------------------------------- #
-async def ask_agent(message, session_id):
-    """非流式核心：直接 ainvoke 拿完整回答字符串（含结构化 JSON）。"""
-    config = {"configurable": {"thread_id": session_id}}
-    state = await agent.ainvoke({"messages": [message]}, config=config)
-    return state["messages"][-1].content
-
-
-async def ask_agent_with_text(text, session_id):
-    return await ask_agent(build_human_message(text), session_id)
-
-
-async def ask_agent_with_image_url(image_url, text, session_id):
-    return await ask_agent(build_human_message(text, image_url), session_id)
-
-
-async def ask_agent_with_image(image_path, text, session_id):
-    return await ask_agent_with_image_url(image_to_oss_url(image_path), text, session_id)
-
-
-# --------------------------------------------------------------------------- #
 #  流式版本：agent.stream(stream_mode="messages") 逐 token 吐出，只过滤 LLM 增量。
+#  图拓扑、工具、断点、压缩、结构化收尾逻辑完全不动。
 #  图拓扑、工具、断点、压缩、结构化收尾逻辑完全不动。
 #
 #  两段式输出（LCEL 重构后）：每次 yield 一个 (kind, content) 元组——
@@ -109,13 +114,3 @@ def stream_agent_with_image_url(image_url, text, session_id):
 
 def stream_agent_with_image(image_path, text, session_id):
     yield from stream_agent_with_image_url(image_to_oss_url(image_path), text, session_id)
-
-
-if __name__ == "__main__":
-    import asyncio
-    answer = asyncio.run(ask_agent_with_image(
-        r"D:\微信图片_20260729172003_642_58.jpg",
-        "识别图片中的食材，并推荐健身能吃的菜。",
-        "user_001",
-    ))
-    print(answer)
