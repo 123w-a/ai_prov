@@ -56,3 +56,7 @@ sessions/
 # 开发/测试用的临时图片（非项目必要资源）
 t_veg.jpg
 test_veg2.jpg
+
+# OSS 清理过程产生的本地备份和删除计划（不属于应用运行时）
+oss_backup_*/
+oss_delete_plan.json

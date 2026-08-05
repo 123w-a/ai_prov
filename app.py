@@ -204,10 +204,12 @@ def inject_styles():
             gap: .35rem;
         }
 
-        /* ---------- 成品图加载占位：6 秒没出来就切换文案，避免用户以为卡死 ---------- */
+        /* ---------- 成品图加载占位：6 秒没收起就切换文案，避免用户以为卡死 ---------- */
+        /* 注意：不能用 onload/onerror 内联事件——st.markdown 的 HTML 走 React 渲染，
+           字符串事件属性会触发 React error #231 导致整个组件崩溃。只能用纯 CSS 时序。 */
         @keyframes img-placeholder-fade {
             0%, 99.99% { opacity: 1; }
-            100% { opacity: 0; pointer-events: none; }
+            100% { opacity: 0; pointer-events: none; height: 0; padding: 0; border: none; margin: 0; }
         }
         @keyframes img-placeholder-show {
             0%, 99.99% { opacity: 0; }
@@ -223,8 +225,6 @@ def inject_styles():
             color: #999;
             padding: 10px;
             text-align: center;
-            border: 1px dashed rgba(255, 112, 67, .35);
-            border-radius: 10px;
             box-sizing: border-box;
         }
         .img-loading-text {
@@ -637,51 +637,6 @@ def clear_current_session():
 # --------------------------------------------------------------------------- #
 #  后端通信
 # --------------------------------------------------------------------------- #
-def api_chat(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
-    endpoint = f"{api_url.rstrip('/')}/api/chat/image"
-
-    files = None
-    data = {
-        "session_id": session_id,
-        "message": message,
-    }
-    if image_url is not None:
-        data["image_url"] = image_url
-    elif uploaded_file is not None:
-        files = {
-            "image": (
-                uploaded_file.name,
-                uploaded_file.getvalue(),
-                uploaded_file.type or "application/octet-stream",
-            )
-        }
-
-    response = requests.post(
-        endpoint,
-        data=data,
-        files=files,
-        timeout=timeout,
-    )
-
-    try:
-        response_data = response.json()
-    except ValueError:
-        response.raise_for_status()
-        raise RuntimeError("后端返回了无法解析的内容")
-
-    if not response.ok:
-        detail = response_data.get("detail", response.text)
-        raise RuntimeError(f"后端请求失败：{detail}")
-
-    if response_data.get("code") != 200:
-        raise RuntimeError(response_data.get("messages", "后端返回失败"))
-
-    data = response_data.get("data") or {}
-    answer = data.get("answer") or data.get("assion")
-    if not answer:
-        raise RuntimeError("后端返回成功，但没有找到回答内容")
-
-    return str(answer)
 
 
 # --------------------------------------------------------------------------- #
@@ -689,7 +644,7 @@ def api_chat(api_url, session_id, message, uploaded_file=None, image_url=None, t
 #  生成器每次 yield 一个 token，交给 Streamlit 的 st.write_stream 做打字机渲染
 # --------------------------------------------------------------------------- #
 def api_chat_stream(api_url, session_id, message, uploaded_file=None, image_url=None, timeout=180):
-    endpoint = f"{api_url.rstrip('/')}/api/chat/stream"
+    endpoint = f"{api_url.rstrip('/')}/api/chat"
     files = None
     data = {"session_id": session_id, "message": message}
     if image_url is not None:
@@ -715,7 +670,9 @@ def api_chat_stream(api_url, session_id, message, uploaded_file=None, image_url=
         except requests.exceptions.HTTPError:
             raise RuntimeError(f"后端请求失败：{response.text}")
         # 逐行读取 SSE：每行形如 "data: {...}"
-        for line in response.iter_lines(decode_unicode=True):
+        # SSE 事件很小；chunk_size=1 让 token/heartbeat 及时到达前端，
+        # 避免 requests 等内部缓冲区积满后才一次性吐出。
+        for line in response.iter_lines(chunk_size=1, decode_unicode=True):
             if not line or not line.startswith("data: "):
                 continue
             payload = line[len("data: "):]
@@ -866,13 +823,11 @@ def md_to_html(text: str) -> str:
             alt = match.group(1)
             url = match.group(2)
             safe_alt = html.escape(alt)
+            # 不能用 onerror 内联事件（React error #231 会崩整个组件）；
+            # 加载失败就交给浏览器默认破图标 + alt 文字
             return (
                 f'<span class="img-wrap">'
-                f'<img src="{url}" alt="{safe_alt}" class="answer-image" '
-                f'onerror="this.onerror=null;this.style.display=\'none\';'
-                f'this.nextElementSibling.style.display=\'block\';">'
-                f'<span class="img-fallback">🍽️ 该成品图暂时无法显示<br>'
-                f'<small style="opacity:.7;">图片来源在当前网络下不可访问（常见于 Instagram / 海外图床）</small></span>'
+                f'<img src="{url}" alt="{safe_alt}" class="answer-image">'
                 f'</span>'
             )
 
@@ -990,10 +945,43 @@ def _stars_html(n):
     )
 
 
+def _recipe_image_html(img_url, ai_img, image_note=""):
+    """生成一道菜自己的图片 HTML，避免多道菜共用同一张图。"""
+    if img_url and str(img_url).startswith(("http://", "https://")):
+        safe_img = html.escape(str(img_url))
+        if ai_img:
+            loading_text = "🤖 正在为你生成菜品图…"
+            timeout_text = "🖼️ 若示意图未成功显示，可稍后刷新重试"
+            alt_text = "AI 生成示意图"
+            badge = (
+                '<div class="ai-img-badge">🤖 AI 生成示意图'
+                '<span>（非真实成品照，仅供样式参考）</span></div>'
+            )
+        else:
+            loading_text = "🍳 成品图正在拉取，请稍候…"
+            timeout_text = "🍽️ 若图片未成功显示，可稍后刷新重试"
+            alt_text = "成品图"
+            badge = ""
+        return (
+            '<div class="img-loading-wrap" style="margin-top:8px;position:relative;">'
+            f'<div class="img-loading-text">{loading_text}</div>'
+            f'<div class="img-timeout-text">{timeout_text}</div>'
+            f'<img src="{safe_img}" alt="{alt_text}" '
+            f'style="max-width:100%;margin-top:8px;position:relative;z-index:1;">'
+            f"{badge}"
+            "</div>"
+        )
+
+    note = html.escape(str(image_note or "未找到可正常展示的成品图片。"))
+    return f'<div style="font-size:12px;color:#999;margin-top:8px;">🍽️ {note}</div>'
+
+
 def recipe_card_html(data):
     """ChefAnswer dict → 菜谱卡片 HTML（菜名/简介/双星级/调料表/步骤/图片/小建议）"""
     blocks = []
-    for r in data.get("recipes", []):
+    # 显示层再做一次兜底，兼容旧会话中已经保存的多道菜回答。
+    recipes = data.get("recipes", [])[:1]
+    for recipe_index, r in enumerate(recipes):
         name = html.escape(str(r.get("name", "")))
         intro = html.escape(str(r.get("intro", "")))
         diff = _stars_html(r.get("difficulty"))
@@ -1030,57 +1018,24 @@ def recipe_card_html(data):
             f'<div style="color:#888;font-size:12px;margin:2px 0 6px;">{intro}</div>'
             f'<div style="font-size:13px;">难度 {diff}　营养 {nutr}</div>'
             f"{seasoning_block}{step_block}"
+            f'<!--RECIPE_IMAGE_{recipe_index}-->'
             "</div>"
         )
 
-    # 图片渲染原则：有真 URL 才渲染 <img>，没有就显示 image_note 文字说明，绝不渲染乱码/二进制流。
-    # 关键体验：
-    #   1) 图片从 OSS 拉取可能较慢——先显示"正在拉取"占位（img 用 display:none 藏起），
-    #      等 onload 成功才换图、onerror 改成"加载失败"；
-    #   2) 用纯 CSS 动画做 6 秒超时兜底：超过 6 秒还没 onload/onerror，占位自动切换成
-    #      "未在合理时间内找到可展示的图片"，避免用户以为卡死或"已经生成完了"。
-    img_url = data.get("image_url")
-    # 透明标注核心开关：该图是否由 AI 生成（来自 ChefAnswer.image_ai_generated）。
-    ai_img = bool(data.get("image_ai_generated"))
-    if img_url and str(img_url).startswith(("http://", "https://")):
-        safe_img = html.escape(str(img_url))
-        if ai_img:
-            # AI 生成图：占位文案升级为"正在生成菜品图"，并附醒目徽标，绝不伪装成实拍图
-            loading_text = "🤖 正在为你生成菜品图…"
-            timeout_text = "🖼️ AI 生成示意图加载较慢，请稍候…"
-            alt_text = "AI 生成示意图"
-            err_text = "🖼️ AI 生成示意图加载失败，可稍后刷新重试"
-            badge = ('<div class="ai-img-badge">🤖 AI 生成示意图'
-                     '<span>（非真实成品照，仅供样式参考）</span></div>')
-        else:
-            # 真实搜索图：维持原"成品图正在拉取"占位
-            loading_text = "🍳 成品图正在拉取，请稍候…"
-            timeout_text = "🍽️ 未在合理时间内找到可展示的图片"
-            alt_text = "成品图"
-            err_text = "🍽️ 图片加载失败，可稍后刷新重试"
-            badge = ""
-        img_block = (
-            '<div class="img-loading-wrap" style="margin-top:8px;">'
-            f'<div class="img-loading-text">{loading_text}</div>'
-            f'<div class="img-timeout-text">{timeout_text}</div>'
-            f'<img src="{safe_img}" alt="{alt_text}" '
-            f'style="max-width:100%;border-radius:10px;margin-top:8px;display:none;" '
-            f'onload="var w=this.parentElement; '
-            f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
-            f'w.querySelector(\'.img-timeout-text\').style.display=\'none\'; '
-            f'this.style.display=\'block\';" '
-            f'onerror="var w=this.parentElement; '
-            f'w.querySelector(\'.img-loading-text\').style.display=\'none\'; '
-            f'var t=w.querySelector(\'.img-timeout-text\'); '
-            f't.innerHTML=\'{err_text}\'; '
-            f't.style.opacity=\'1\'; t.style.display=\'block\';">'
-            f"{badge}"
-            "</div>"
-        )
-    else:
-        note = html.escape(str(data.get("image_note") or "未找到可正常展示的成品图片。"))
-        img_block = (
-            f'<div style="font-size:12px;color:#999;margin-top:8px;">🍽️ {note}</div>'
+    # 每道菜优先使用自己的图片；旧数据没有菜级图片时，单道菜才回退到顶层图片。
+    image_blocks = []
+    for recipe_index, recipe in enumerate(recipes):
+        recipe_img_url = recipe.get("image_url")
+        recipe_ai_img = bool(recipe.get("image_ai_generated"))
+        if not recipe_img_url and len(recipes) == 1:
+            recipe_img_url = data.get("image_url")
+            recipe_ai_img = bool(data.get("image_ai_generated"))
+        image_blocks.append(
+            _recipe_image_html(
+                recipe_img_url,
+                recipe_ai_img,
+                data.get("image_note"),
+            )
         )
 
     tip = html.escape(str(data.get("chef_tip", "")).strip())
@@ -1091,7 +1046,11 @@ def recipe_card_html(data):
             'border-radius:10px;padding:8px 10px;">'
             f"👨‍🍳 <b>私厨建议：</b>{tip}</div>"
         )
-    return "".join(blocks) + img_block + tip_block
+    recipe_blocks = "".join(
+        block.replace(f"<!--RECIPE_IMAGE_{recipe_index}-->", image_blocks[recipe_index])
+        for recipe_index, block in enumerate(blocks)
+    )
+    return recipe_blocks + tip_block
 
 
 def render_streaming_exchange(pending):
@@ -1247,11 +1206,13 @@ def render_conversation():
         )
 
         # ---- AI 消息：右对齐（标题 + 内容完整包在一个气泡内） ----
-        # 双格式兼容：新回答是 ChefAnswer JSON → opening 正文 + 卡片；
+        # 双格式兼容：新回答是 ChefAnswer JSON → 只渲染一张结构化菜谱卡片；
         # 旧回答是 markdown → 走原来的 md_to_html 渲染
         structured = parse_structured_answer(item["answer"])
         if structured:
-            body_html = md_to_html(structured.get("opening", "")) + recipe_card_html(structured)
+            # opening 是 Agent 的原始自然语言回答，可能包含多道备选菜；
+            # 结构化卡片已经包含最终菜名、调料、步骤和图片，因此这里不再重复渲染 opening。
+            body_html = recipe_card_html(structured)
         else:
             body_html = md_to_html(item["answer"])
         st.markdown(
@@ -1318,13 +1279,15 @@ def handle_regenerate(index):
                     img_data["name"], image_bytes, img_data["type"]
                 )
             message = build_message(item["user_text"], item.get("taste_prefs", []))
-            new_answer = api_chat(
+            # 重新生成复用流式接口：跑完整轮让后端落库即可，结果不取，rerun 后从历史拉新卡片
+            for _ in api_chat_stream(
                 api_url=DEFAULT_API_URL,
                 session_id=session["session_id"],
                 message=message,
                 uploaded_file=uploaded,
                 image_url=regen_image_url,
-            )
+            ):
+                pass
             old_message_id = item.get("id")
             if old_message_id is not None:
                 api_delete_message(

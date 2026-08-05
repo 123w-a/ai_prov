@@ -105,23 +105,23 @@ def free_port(host=HOST, port=PORT):
 
     if not ours:
         # 不确定是谁的服务，绝不乱杀，交给用户判断
-        print(f"⚠️  端口 {port} 被占用，但它不像是本项目的后端（健康接口无响应）。")
+        print(f"[WARN] 端口 {port} 被占用，但它不像是本项目的后端（健康接口无响应）。")
         print(f"    占用进程 PID：{sorted(pids) or '未知'}")
         print(f"    请手动处理后重试，或修改 run.py 里的 PORT（记得同步改 app.py 的 DEFAULT_API_URL）。")
         return False
 
-    print(f"🔄 检测到旧的后端仍在 {host}:{port} 运行，正在自动关闭：PID {sorted(pids)}")
+    print(f"[INFO] 检测到旧的后端仍在 {host}:{port} 运行，正在自动关闭：PID {sorted(pids)}")
     for pid in pids:
         kill_pid(pid)
 
     # Windows 释放端口有延迟，轮询等待，最多等 5 秒
     for _ in range(10):
         if not port_in_use(host, port):
-            print("✅ 旧进程已退出，端口已释放。")
+            print("[OK] 旧进程已退出，端口已释放。")
             return True
         time.sleep(0.5)
 
-    print(f"❌ 端口 {port} 仍未释放，请手动执行：taskkill /PID {sorted(pids)} /F")
+    print(f"[ERROR] 端口 {port} 仍未释放，请手动执行：taskkill /PID {sorted(pids)} /F")
     return False
 
 

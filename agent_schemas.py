@@ -28,13 +28,21 @@ class Recipe(BaseModel):#菜谱结构
         min_length=1,#最少1个步骤
         description="做菜步骤，每步一句话，通俗适合家庭厨房，火候和时间要写清"
     )
+    image_url: Optional[str] = Field(
+        default=None,
+        description="这道菜对应的成品图链接。多道菜时每道菜必须使用自己的对应图片，没有可靠图片就填 null"
+    )
+    image_ai_generated: bool = Field(
+        default=False,
+        description="这道菜的图片是否为 AI 生成示意图；由系统根据图片来源设置，模型不要自行编造"
+    )
 
 
 class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
     """AI 私厨最终回答的完整结构（对应前端一张完整的回答卡片）"""
     recipes: list[Recipe] = Field(#列表元素类型 Recipe，列表中嵌套列表
         min_length=1,#最少1道菜
-        description="推荐菜谱列表；排序不用模型管，Python 会按营养降序、难度升序重排"
+        description="最终只返回最合适的一道菜；排序不用模型管，Python 会按营养降序、难度升序重排"
     )
     image_url: Optional[str] = Field(#图片链接
         default=None,

@@ -3,6 +3,8 @@
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 import json  # 把 token / structuring / answer / finish 打包成 SSE 事件
+import queue
+import threading
 
 from main import (
     build_human_message,
@@ -76,8 +78,37 @@ async def chat(
     def event_generator():
         full_parts = []     # 正文 token 碎片（兜底落库用）
         final_answer = None  # structure_answer 节点产出的 ChefAnswer JSON 字符串
+        events = queue.Queue()
+        finished = object()
+
+        def run_agent():
+            try:
+                for item in stream_agent(human_message, session_id):
+                    events.put(("item", item))
+            except Exception as exc:
+                events.put(("error", exc))
+            finally:
+                events.put(("done", finished))
+
+        # Agent 内部可能在联网搜索、图片下载或结构化模型调用中等待较久。
+        # 放到后台线程后，主生成器可以每隔几秒发送心跳，避免前端误判为断线。
+        threading.Thread(target=run_agent, daemon=True).start()
+        yield f"data: {json.dumps({'status': 'working'}, ensure_ascii=False)}\n\n"
+
         try:
-            for kind, payload in stream_agent(human_message, session_id):
+            while True:
+                try:
+                    event_type, event = events.get(timeout=10)
+                except queue.Empty:
+                    yield f"data: {json.dumps({'heartbeat': True}, ensure_ascii=False)}\n\n"
+                    continue
+
+                if event_type == "error":
+                    raise event
+                if event_type == "done":
+                    break
+
+                kind, payload = event
                 if kind == "token":
                     full_parts.append(payload)
                     yield f"data: {json.dumps({'token': payload}, ensure_ascii=False)}\n\n"

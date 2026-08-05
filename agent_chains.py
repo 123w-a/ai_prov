@@ -27,9 +27,11 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "1. 菜谱必须来自上下文中的搜索结果，禁止编造上下文之外的菜；\n"
         "2. 难度/营养星级只给 1-5 的整数；调料用量必须带生活化比喻；"
         "步骤通俗严谨，写清火候和时间；\n"
-        "3. image_url 只能填上下文中工具返回的图片链接，没有可靠图片就填 null，"
+        "3. image_url 由系统在确定唯一菜名后匹配对应成品图，没有可靠图片就填 null，"
         "并在 image_note 里明说没找到、用文字描述口感；\n"
-        "4. 只输出符合以下格式的 JSON，不要输出任何额外文字、解释或代码围栏。\n"
+        "4. 默认 recipes 只包含最合适的一道菜；只有当用户明确要求多个选择、几道菜或供选择时，才允许输出多道菜；\n"
+        "5. image_url 必须对应 recipes 中的菜名；没有可靠图片就填 null；\n"
+        "6. 只输出符合以下格式的 JSON，不要输出任何额外文字、解释或代码围栏。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题
@@ -56,7 +58,8 @@ _STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提
     (
         "system",
         "你是 AI 私厨的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"
-        "重新输出，不要输出任何额外文字、解释或代码围栏。\n{format_instructions}",
+        "重新输出：默认只保留最合适的一道菜；如果原始上下文明确要求多道菜，才保留对应的多道菜；"
+        "不要输出任何额外文字、解释或代码围栏。\n{format_instructions}",
     ),
     (
         "human",
@@ -98,8 +101,10 @@ def build_structured_answer(context: str) -> ChefAnswer:
     raise last_err  # type: ignore[arg-type]
 
 
-def rank_recipes(answer: ChefAnswer) -> ChefAnswer:
+def rank_recipes(answer: ChefAnswer, allow_multiple: bool = False) -> ChefAnswer:
     """链后处理：排序规则不靠模型"自觉"，由 Python 精确执行——
     第一优先级营养从高到低，第二优先级难度从易到难（与系统提示词第 3 条一致）"""
     answer.recipes.sort(key=lambda r: (-r.nutrition, r.difficulty))#拿菜谱排序
+    if not allow_multiple:
+        answer.recipes = answer.recipes[:1]
     return answer

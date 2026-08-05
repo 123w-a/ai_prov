@@ -199,12 +199,18 @@ def generate_dish_image(dish_name: str):
         return None
 
     # --- 6. 上传自家 OSS，得到持久公网 URL，并写入缓存 ---
+    # 显式加 15s 超时（OSS SDK 默认超时很长，外部接口抽风时不能拖累整轮）
     try:
-        oss_url = upload_to_oss(img_bytes, content_type)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _oss_ex:
+            _oss_future = _oss_ex.submit(upload_to_oss, img_bytes, content_type)
+            oss_url = _oss_future.result(timeout=15)
         cache[cache_key] = oss_url
         _save_cache(cache)
         print(f"[image_gen] 生成并缓存成功：{cache_key} -> {oss_url}")
         return oss_url
+    except concurrent.futures.TimeoutError:
+        print("[image_gen] 上传 OSS 超时（>15s），回退无图")
+        return None
     except Exception as e:
         print(f"[image_gen] 上传 OSS 失败：{e}")
         return None

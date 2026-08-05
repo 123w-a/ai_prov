@@ -1,12 +1,16 @@
 # agent_tools.py：定义 Agent 可调用的工具（联网搜索菜谱 + 读取本地文件）
 # 工具与图逻辑解耦：这里只管"工具本身怎么干活"，不涉及 LLM、状态图、断点等编排细节
 
+import base64       # 把候选图片转成视觉模型可读取的 data URL
 import os           # 读环境变量（UNSPLASH_ACCESS_KEY）
+import re           # 解析 Bing 国内版返回 HTML 里的图片直链
 import json#工具返回值打包成结构化 JSON（文本与图片 URL 分字段）
 import requests#后端直接下载国内能访问的图片
 from pathlib import Path#路径解析
+from langchain_core.messages import HumanMessage  # 发送图片给视觉模型做内容校验
 from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
+from model_name import get_langchain_llm  # 获取用于图片审核的视觉模型
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
 
@@ -27,7 +31,70 @@ BLOCKED_DOMAINS = (
     "imgur.com", "reddit.com", "wixmp.com", "ctcdn.co", "threads.com",
     "threads.net",
 )
+# 图片搜索结果里出现这些词时，通常不是菜品成品图，直接跳过，避免字帖/广告/人物图进入 OSS。
+BLOCKED_IMAGE_KEYWORDS = (
+    "文字", "汉字", "字帖", "书法", "汽车", "房屋", "房子", "人物",
+    "广告", "海报", "logo", "图标", "截图", "证件",
+)
 MAX_IMAGE_BYTES = 1_500_000  # 超过 1.5MB 不入对话，避免 base64 撑爆模型上下文
+MIN_PHOTO_BYTES = 20_000  # 过小的图片通常是纯色占位图、文字缩略图或错误图片
+
+# 图片先通过视觉模型审核，确认无误后才上传 OSS，避免无关图片污染图片桶。
+_IMAGE_CHECK_LLM = None
+
+
+def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: str) -> bool:
+    """判断候选图是否真的是目标菜品成品图。
+
+    只要无法确认是目标菜品，就返回 False，让上层继续尝试下一张候选图。
+    这样宁可暂时无图，也不把建筑、风景或其他菜品错配到当前菜谱。
+    """
+    global _IMAGE_CHECK_LLM
+    try:
+        if _IMAGE_CHECK_LLM is None:
+            _IMAGE_CHECK_LLM = get_langchain_llm(
+                "gpt",
+                temperature=0,
+                max_tokens=30,
+            )
+
+        image_base64 = base64.b64encode(image_bytes).decode("ascii")
+        image_url = f"data:{content_type};base64,{image_base64}"
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": (
+                        "你是严格的菜品成品图审核器。"
+                        f"目标菜名是：{recipe_name}。"
+                        "只回答 YES 或 NO，不要解释。"
+                        "只有在图片主体是可食用的成品菜，并且与目标菜名高度匹配时才回答 YES。"
+                        "建筑、风景、人物、文字海报、餐具、包装、单独食材、"
+                        "明显不同的菜品，或者无法确定时都回答 NO。"
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                },
+            ]
+        )
+        response = _IMAGE_CHECK_LLM.invoke([message])
+        result = response.content
+        if isinstance(result, list):
+            result = " ".join(
+                str(part.get("text", ""))
+                for part in result
+                if isinstance(part, dict)
+            )
+        result = str(result).strip().upper()
+        matched = result.startswith("YES") or result.startswith("是")
+        print(f"[image_check] {recipe_name} -> {'通过' if matched else '跳过'}")
+        return matched
+    except Exception as exc:
+        # 审核模型不可用时不放行未审核图片，优先保证图片与菜名不乱配。
+        print(f"[image_check] 审核失败，跳过候选图：{exc}")
+        return False
 
 # --------------------------------------------------------------------------- #
 #  本地文件读取沙箱（安全红线）
@@ -72,12 +139,27 @@ def _looks_like_image(data: bytes) -> bool:
     )
 
 
-def to_data_url(img_list):
+def _image_candidate_text(img) -> str:
+    """提取 Tavily 图片候选的标题/描述，用于过滤明显无关图片。"""
+    if isinstance(img, str):
+        return ""
+    if not isinstance(img, dict):
+        return ""
+    return " ".join(
+        str(img.get(key, ""))
+        for key in ("title", "description", "image_description", "alt")
+    ).lower()
+
+
+def to_data_url(img_list, recipe_name=None):
     # 内部函数：过滤国内无法访问的海外图源，并把能成功下载的图片转成 OSS URL 返回
     # 这里只返回真正可展示的图片 URL；找不到合适图片就返回空字符串，不再硬塞
     for img in img_list:
         img_url = img if isinstance(img, str) else img.get("url", "")#俩种图片返回格式都处理
         if not img_url.startswith(("http://", "https://")):#只要合法的 http(s) 链接
+            continue
+        candidate_text = _image_candidate_text(img)
+        if any(word in candidate_text for word in BLOCKED_IMAGE_KEYWORDS):
             continue
         if any(dom in img_url.lower() for dom in BLOCKED_DOMAINS):  # 跳过明显被墙的海外图源，省去无谓超时
             continue
@@ -90,7 +172,15 @@ def to_data_url(img_list):
                 continue
             if len(resp.content) > MAX_IMAGE_BYTES:  # 太大就放弃，尝试下一张
                 continue
+            if len(resp.content) < MIN_PHOTO_BYTES:  # 过小图片通常不是可用的菜品成品图
+                continue
             if not _looks_like_image(resp.content):  # 文件头不是真实图片，跳过
+                continue
+            if recipe_name and not _recipe_image_matches(
+                recipe_name,
+                resp.content,
+                content_type,
+            ):
                 continue
             return upload_to_oss(resp.content, content_type)
         except Exception:
@@ -128,14 +218,99 @@ def _unsplash_image(query: str):
     return None
 
 
+# Bing 国内版图片搜索兜底：cn.bing.com 在国内直接可达、无需 key、覆盖家常菜。
+# 返回 HTML 里抓图片直链；优先用 turl（Bing 自家缩略图 CDN，国内 100% 可达、不被防盗链），
+# fallback murl（原始图直链，图床杂，可能被墙/防盗链）。
+# 返回多张候选列表交给 to_data_url 逐张试——单张可能恰好下载失败（网络抖动），
+# 多张候选把命中率拉满，与 Tavily images 列表的逐张试策略对齐。
+def _bing_images(query: str, limit: int = 5):
+    """从 Bing 国内版图片搜索拿一道菜的成品图候选直链列表（无需 key、国内可达）。
+    返回 list（turl 优先、murl 补尾，最多 limit 张）；失败返回空 list。"""
+    try:
+        resp = requests.get(
+            "https://cn.bing.com/images/search",
+            params={"q": f"{query} 成品图", "form": "HDRSC2", "first": 1},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept-Language": "zh-CN,zh;q=0.9",
+            },
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return []
+        # 优先 turl：Bing 自家缩略图 CDN（ts1-4.mm.bing.net），国内稳定可达
+        turls = re.findall(r'turl&quot;:&quot;(.*?)&quot;', resp.text)
+        if not turls:
+            turls = re.findall(r'"turl":"(.*?)"', resp.text)
+        candidates = [u for u in turls if u.startswith(("http://", "https://"))]
+        # fallback murl 补尾：原始图直链，过滤 BLOCKED_DOMAINS
+        if len(candidates) < limit:
+            murls = re.findall(r'murl&quot;:&quot;(.*?)&quot;', resp.text)
+            if not murls:
+                murls = re.findall(r'"murl":"(.*?)"', resp.text)
+            for u in murls:
+                if (
+                    u.startswith(("http://", "https://"))
+                    and not any(dom in u.lower() for dom in BLOCKED_DOMAINS)
+                    and u not in candidates
+                ):
+                    candidates.append(u)
+                if len(candidates) >= limit:
+                    break
+        return candidates[:limit]
+    except Exception:
+        return []
+
+
+def find_recipe_image(recipe_name: str):
+    """只为已经确定的最终菜名搜索一张对应成品图，返回 (OSS URL, 图源)。"""
+    base_query = recipe_name.strip()
+    if not base_query:
+        return None, "none"
+
+    image_friendly_query = f"{base_query} 菜品 美食 成品图"
+    try:
+        result = tavily.invoke({"query": image_friendly_query})
+        image_url = to_data_url(
+            result.get("images", []),
+            recipe_name=base_query,
+        ) or None
+    except Exception:
+        image_url = None
+
+    if image_url is None:
+        bing_candidates = _bing_images(f"{base_query} 菜品 美食")
+        if bing_candidates:
+            image_url = to_data_url(
+                bing_candidates,
+                recipe_name=base_query,
+            ) or None
+
+    if image_url is None:
+        u = _unsplash_image(f"{base_query} food dish")
+        if u:
+            image_url = to_data_url(
+                [u],
+                recipe_name=base_query,
+            ) or None
+
+    if image_url is not None:
+        return image_url, "real"
+
+    ai_url = generate_dish_image(base_query)
+    if ai_url:
+        return ai_url, "ai"
+    return None, "none"
+
+
 @tool
 def web_search(query: str) -> str:
     """当用户询问某道菜、食材搭配或家常菜做法时调用。
-    工具会联网搜索文字做法，并尝试返回一张该菜品的成品图 OSS URL。
-    为提升家常菜/常见菜的图片命中率，调用时给出明确菜名即可（如"红烧肉""糯米肉丸"），
-    工具内部会自动追加美食/成品图关键词进行搜索。
-    若搜索引擎完全拿不到可靠成品图，会自动调用通义万相生成一张「AI 示意图」兜底
-    （该图会在下游被明确标注为 AI 生成，绝不伪装成真实成品照）。"""
+    工具只负责联网搜索文字做法；最终菜名确定后，由 find_recipe_image 单独搜索对应成品图。
+    这样可以避免用户输入的食材名、口味词或泛查询直接被当成菜名搜图。"""
     # 保留原始菜名查询，用于「AI 生图兜底」的提示词（不希望把"美食 成品图"后缀带进生图）
     base_query = query
     # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
@@ -161,26 +336,10 @@ def web_search(query: str) -> str:
             f"来源：[{display_url}]({url})\n"
             f"摘要：{item.get('content', '')[:200]}"
         )
-    images = result.get("images", [])#字典语法拿到图片路径，拿图片
-    image_url = to_data_url(images) or None  # 在图片里挑一张国内可下载的，转成 OSS URL；没有就是 None
-    image_source = "real"  # 图源标记：real=搜索实拍图 / ai=通义万相生成 / none=无图
-
-    # 二级兜底：Tavily 没拿到国内可下的图，再试 Unsplash 国内源（秒级、基本可达），仍是真实图
-    if image_url is None:
-        u = _unsplash_image(base_query)
-        if u:
-            image_url = to_data_url([u]) or None
-            if image_url:
-                image_source = "real"
-
-    # 三级兜底：仍无图才调通义万相生成「AI 示意图」（见 image_gen.py）。
-    # 生成成功才把 image_source 置为 "ai"，下游据此在卡片上明示"AI 生成示意图"，避免误导。
-    # 生成失败（无密钥/限流/异常）generate_dish_image 会返回 None，这里自然回退到"无图"。
-    if image_url is None:
-        ai_url = generate_dish_image(base_query)
-        if ai_url:
-            image_url = ai_url
-            image_source = "ai"
+    # 图片不要在这里处理：此时 query 可能只是食材/口味，尚未确定最终菜名。
+    # 等结构化节点选出唯一菜品后，再由 find_recipe_image 按最终菜名搜索，避免图文错配。
+    image_url = None
+    image_source = "none"
 
     # 关键：图片 URL 独立成字段，不再以 markdown 形式混进文本，
     # 从源头杜绝乱码 URL/二进制流被铺进回答；没图就老实给 None，不硬塞

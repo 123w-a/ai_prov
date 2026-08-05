@@ -20,9 +20,15 @@ from langgraph.prebuilt import ToolNode, tools_condition  # 内置工具节点 +
 from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断点续跑、循环状态保存）
 
 from agent_prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
-from agent_tools import tools
+from agent_tools import find_recipe_image, tools, web_search
 from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
 #build_structured_answer标准链+parser检查出错误后再进行重试
+
+# 稳定输出规则：覆盖旧提示词中的多菜分支，保证流式正文和结构化卡片一致。
+SINGLE_RECIPE_RULE = (
+    "\n\n【默认单菜规则】用户没有明确要求多个选择时，"
+    "每次最终只回答最合适的一道菜，不要列出第二道、备选菜或并列方案。"
+)
 # --------------------------------------------------------------------------- #
 #  1. 模型 & 工具绑定
 # --------------------------------------------------------------------------- #
@@ -57,7 +63,7 @@ checkpointer.setup()
 #  历史消息超过阈值时，把更老的"用户/AI 对话"总结成要点、删掉原文，防上下文溢出
 #  只总结 user/AI，跳过 ToolMessage 工具返回；总结 Prompt 针对厨师场景定制
 # --------------------------------------------------------------------------- #
-MAX_HISTORY_KEEP = 16  # 保留最近约 8 轮(user+ai)，更早的参与总结（调大以减少压缩触发、保住菜品编号上下文）
+MAX_HISTORY_KEEP = 6  # 保留最近约 3 轮(user+ai)，更早的参与总结（调大以减少压缩触发、保住菜品编号上下文）
 #MessagesState是所有的状态消息，包含 messages 属性
 def maybe_condense(state: MessagesState):#压缩历史对话
     msgs = state["messages"]
@@ -137,11 +143,113 @@ def _drop_orphan_tool_messages(messages):#过滤AIMessage tool_calls
     ]
 
 
+def _latest_user_has_image(messages):
+    """判断最近一条用户消息是否包含图片。"""
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
+            return _message_has_image(m)
+    return False
+
+
+def _message_text(message):
+    """提取一条用户消息中的文字部分。"""
+    if isinstance(message.content, list):
+        return " ".join(
+            part.get("text", "")
+            for part in message.content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return str(message.content)
+
+
+def _message_has_image(message):
+    """判断一条图文消息是否包含图片。"""
+    return isinstance(message.content, list) and any(
+        isinstance(part, dict) and part.get("type") == "image_url"
+        for part in message.content
+    )
+
+
+def _current_request_text(text):
+    """从用户消息中取出本次需求，排除每轮自动注入的长期偏好。"""
+    marker = "【以上为偏好约束，以下是本次需求】"
+    if marker in text:
+        text = text.split(marker, 1)[1]
+    return text.strip()
+
+
+def _is_new_ingredient_image_request(text):
+    """判断本轮图片是新的食材输入，还是对当前菜品的修改。"""
+    # 调用此函数的前提是消息中已经包含图片。
+    # 图片本身就是用户明确提供的新视觉输入，因此直接建立新的食材主题。
+    # 普通的“清淡一点”“换成猪肉”等追问没有图片，不会进入这里，
+    # 仍然通过 checkpoint 保留当前菜品记忆。
+    return True
+
+
+def _latest_user_index(messages):
+    """返回最近一条真实用户消息的位置，跳过历史摘要消息。"""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if (
+            isinstance(message, HumanMessage)
+            and not str(message.content).startswith("[历史对话摘要")
+        ):
+            return index
+    return None
+
+
+def _latest_new_image_index(messages):
+    """返回最近一次新食材图片的起点，作为当前菜品主题边界。"""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if (
+            isinstance(message, HumanMessage)
+            and not str(message.content).startswith("[历史对话摘要")
+            and _message_has_image(message)
+            and _is_new_ingredient_image_request(_message_text(message))
+        ):
+            return index
+    return None
+
+
+def _messages_for_current_turn(messages, isolate_old_context=False):
+    """按需要取当前轮消息，避免新图片请求混入旧菜品的工具结果。"""
+    if not isolate_old_context:
+        return messages
+    index = _latest_new_image_index(messages)
+    if index is None:
+        index = _latest_user_index(messages)
+    if index is None:
+        return messages
+    return messages[index:]
+
+
 def chef_agent_node(state: MessagesState):
     messages = state["messages"]#已经被压缩过后的4种消息类的消息
     # 前置插入系统提示词，再追加历史对话消息（先清掉孤儿 ToolMessage 防 API 400）
-    prompt_msg = SystemMessage(content=SYSTEM_PROMPT)#保存字符串提示词
-    payload = [prompt_msg] + _drop_orphan_tool_messages(messages)#提示词+历史对话消息，括号是转换成列表
+    latest_text = _latest_user_text(messages)
+    latest_has_image = _latest_user_has_image(messages)
+    is_new_image_request = (
+        latest_has_image and _is_new_ingredient_image_request(latest_text)
+    )
+    prompt_content = SYSTEM_PROMPT
+    if not _wants_multiple_recipes(messages):
+        prompt_content += SINGLE_RECIPE_RULE
+    if is_new_image_request:
+        prompt_content += (
+            "\n\n【新食材图片优先规则】"
+            "本轮用户上传的是新的食材图片，并且是在询问新的菜品推荐。"
+            "必须以本轮图片识别出的食材为最高优先级，忽略历史中的当前菜名、旧食材和旧菜谱。"
+            "先重新识别本轮图片，再基于本轮食材调用搜索工具。"
+            "不得因为历史摘要中存在上一道菜，就继续生成上一道菜。"
+        )
+    prompt_msg = SystemMessage(content=prompt_content)#保存字符串提示词
+    model_messages = _messages_for_current_turn(
+        messages,
+        isolate_old_context=_latest_new_image_index(messages) is not None,
+    )
+    payload = [prompt_msg] + _drop_orphan_tool_messages(model_messages)#提示词+历史对话消息，括号是转换成列表
     # 上游 LLM 偶发 502/超时，加重试避免整轮对话直接 500 崩掉
     last_err = None
     for attempt in range(3):
@@ -163,7 +271,7 @@ tool_executor = ToolNode(tools)#直接执行不思考
 # 同时抓取本次搜索拿到的图片链接 + 是否为 AI 生成图两个标记
 # 返回三个值：组装好的文本上下文、真实图片URL、是否AI生成图片布尔值
 # --------------------------------------------------------------------------- #
-def _build_structure_context(messages):#解析出了图片链接和来源和文本是进入LCEL之前的准备工作
+def _build_structure_context(messages, isolate_old_context=False):#解析出了图片链接和来源和文本是进入LCEL之前的准备工作
     """给结构化链组装上下文：最近一条真实用户需求 + 本轮 web_search 的搜索结果。
     返回 (context_text, real_image_url, real_image_ai)：
       - real_image_url：最近一次搜索真实拿到的图片链接（可能为 None），
@@ -171,11 +279,15 @@ def _build_structure_context(messages):#解析出了图片链接和来源和文�
       - real_image_ai：该图是否由通义万相 AI 生成（image_source=="ai"），
         用于下游透明标注「AI 生成示意图」，防止把生成图当用户实拍图误导。
     注意：real_image_url 与 real_image_ai 始终成对赋值，保证"有图"与"是否 AI 图"口径一致。"""
+    context_messages = _messages_for_current_turn(
+        messages,
+        isolate_old_context=isolate_old_context,
+    )
     parts = []#存储上下文的纯文本
     real_image_url = None#存储真实图片链接
     real_image_ai = False#存储真实图片是否由 AI 生成
     # 最近一条真实用户消息（跳过压缩节点注入的"历史对话摘要"，图文混合消息只取文字）
-    for m in reversed(messages):#是用户文档并且不是历史对话摘要的消息
+    for m in reversed(context_messages):#是用户文档并且不是历史对话摘要的消息
         if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
             if isinstance(m.content, list):#图文混合：图片已识别进对话，只取文字部分
                 text = " ".join(#用户发图 + 文字提问时，只保留文字需求，图片不塞进给 LLM 的文本上下文
@@ -186,9 +298,20 @@ def _build_structure_context(messages):#解析出了图片链接和来源和文�
                 text = str(m.content)
             parts.append("用户需求：" + text)
             break
+    # 把本轮 Agent 已经确认的自然语言回答交给结构化模型。
+    # 这样卡片使用同一轮已经识别出的菜名，不会根据旧搜索结果重新猜一道菜。
+    for m in reversed(context_messages):
+        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+            ai_text = str(m.content).strip()
+            if ai_text and not ai_text.startswith('{"opening"'):
+                parts.append(
+                    "本轮 Agent 已确认的回答（菜名和食材以此为准）：\n"
+                    + ai_text
+                )
+            break
     # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []#2.有连坐删除，删的时候会把工具的返回结果也会删除不搞混
-    for m in messages:#把工具返回的搜索结果都塞进parts不搞混，1.只要最后3条并且是从最晚覆盖最早这样找的
+    for m in context_messages:#把工具返回的搜索结果都塞进parts不搞混，1.只要最后3条并且是从最晚覆盖最早这样找的
         if isinstance(m, ToolMessage) and getattr(m, "name", "") == "web_search":
             content = str(m.content)
             search_blocks.append(content)#存储搜索结果
@@ -211,6 +334,33 @@ def _build_structure_context(messages):#解析出了图片链接和来源和文�
     return "\n\n".join(parts), real_image_url, real_image_ai
 
 
+def _latest_user_text(messages):
+    """提取本轮用户的文字需求，图文消息只取文字部分。"""
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
+            return _current_request_text(_message_text(m))
+    return ""
+
+
+def _wants_multiple_recipes(messages):
+    """只有用户明确要求多个选择时才开启多菜模式。"""
+    text = _latest_user_text(messages)
+    multiple_words = (
+        "多几道", "多道菜", "几道菜", "多个选择", "多种选择",
+        "供我选择", "分别推荐", "多推荐几道", "多生成几道",
+    )
+    return any(word in text for word in multiple_words)
+
+
+def _search_recipe_image(recipe_name):
+    """按最终菜名搜索图片，返回 (url, 是否AI生成)。"""
+    try:
+        image_url, image_source = find_recipe_image(recipe_name)
+        return image_url, image_source == "ai"
+    except Exception:
+        return None, False
+
+
 def structure_answer_node(state: MessagesState):#结构化回答节点
     messages = state["messages"]
     # chef_think 最后一轮的自然语言回答 = 流式已经推给前端的正文，原样保留进 opening
@@ -218,24 +368,52 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     if messages and isinstance(messages[-1], AIMessage):
         opening = str(messages[-1].content)#这里已经传入前端了，所以比结构化卡片快
         #context是纯文本给了LCEL节构化链，其他的图片的链接和图片的来源在下文传出来的answer来赋值
-    context, real_image_url, real_image_ai = _build_structure_context(messages)#解包拿到
+    latest_text = _latest_user_text(messages)
+    is_new_image_request = (
+        _latest_user_has_image(messages)
+        and _is_new_ingredient_image_request(latest_text)
+    )
+    context, real_image_url, real_image_ai = _build_structure_context(
+        messages,
+        isolate_old_context=_latest_new_image_index(messages) is not None,
+    )#解包拿到
+    allow_multiple = _wants_multiple_recipes(messages)
     if not context.strip():#没有可整理的上下文（理论上不会走到这），直接结束
         return {"messages": []}
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
         answer = build_structured_answer(context)#会返回一个实例
-        answer = rank_recipes(answer)#将实例中的菜谱进行排序
+        answer = rank_recipes(answer, allow_multiple=allow_multiple)#将实例中的菜谱进行排序
+        if allow_multiple:
+            for index, recipe in enumerate(answer.recipes):
+                recipe.image_url, recipe.image_ai_generated = _search_recipe_image(recipe.name)
+                # 第一道菜兼容本轮已经拿到的图片，避免重复搜索失败时整轮无图。
+                if not recipe.image_url and index == 0:
+                    recipe.image_url = real_image_url
+                    recipe.image_ai_generated = real_image_ai
+        elif answer.recipes:
+            # 单道菜模式按最终菜名重新搜索，避免把泛食材搜索结果误绑到菜品卡片。
+            answer.recipes[0].image_url, answer.recipes[0].image_ai_generated = (
+                _search_recipe_image(answer.recipes[0].name)
+            )
         # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
         # 杜绝"正文说找到图、卡片却没图"的口径不一
-        answer.image_url = real_image_url#赋值图片路径
-        # 透明标注（项目亮点）：图片若由通义万相生成，强制让前端知道，绝不伪装成实拍图
-        answer.image_ai_generated = real_image_ai#赋值图片是否由 AI 生成
-        if real_image_ai:
+        if allow_multiple and answer.recipes:
+            # 多道菜时顶层字段只保留第一道，供旧前端/旧历史兼容；新前端读取每道菜自己的 image_url。
+            answer.image_url = answer.recipes[0].image_url
+            answer.image_ai_generated = answer.recipes[0].image_ai_generated
+        else:
+            answer.image_url = answer.recipes[0].image_url if answer.recipes else None#赋值图片路径
+            # 透明标注（项目亮点）：图片若由通义万相生成，强制让前端知道，绝不伪装成实拍图
+            answer.image_ai_generated = (
+                answer.recipes[0].image_ai_generated if answer.recipes else False
+            )#赋值图片是否由 AI 生成
+        if answer.image_ai_generated:
             # 强制图注带「AI 生成示意图」，防止模型漏写导致误导用户/评委
             if not answer.image_note:#图片注为空
                 answer.image_note = "AI 生成示意图（非真实成品照，仅供样式参考）"
             elif "AI 生成示意图" not in answer.image_note:#图片注不是这个
                 answer.image_note = "AI 生成示意图：" + answer.image_note#给他加上
-        elif real_image_url is None and not answer.image_note:#图片注为空并且没有图片
+        elif answer.image_url is None and not answer.image_note:#图片注为空并且没有图片
             answer.image_note = "未找到可正常展示的成品图片。"
         payload = {"opening": opening, **answer.model_dump()}
         return {
