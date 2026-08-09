@@ -1,6 +1,6 @@
 # agent_schemas.py：结构化输出的"数据形状"定义（pydantic 模型）
 # 职责单一：只规定最终回答长什么样，不含任何 LLM 调用、不含任何图逻辑
-# 配套关系：agent_chains.py 里的 JsonOutputParser(pydantic_object=ChefAnswer) 按这里
+# 配套关系：agent_chains.py 里的 PydanticOutputParser(pydantic_object=ChefAnswer) 按这里
 #           的 schema 生成 format_instructions（告诉模型输出格式），并校验/解析模型输出
 #整条链路：Field 描述 → Parser 提取格式指令 → 填充进 Prompt 模板 → LLM 按规则输出 JSON → Pydantic 校验解析。
 from typing import Optional

@@ -179,31 +179,6 @@ def inject_styles():
             30% { transform: translateY(-5px); opacity: 1; }
         }
 
-        /* ---------- 侧栏「回答方式」radio 高亮：选中用主题橙，未选中用棕色，一眼看清 ---------- */
-        [data-testid="stRadio"] label p,
-        [data-testid="stRadio"] div[data-testid="stWidgetLabel"] p {
-            color: var(--orange) !important;
-            font-weight: 700 !important;
-            font-size: 1.05rem !important;
-        }
-        [data-testid="stRadio"] input[type="radio"] + div {
-            border-color: var(--brown-light) !important;
-            width: 20px !important;
-            height: 20px !important;
-        }
-        [data-testid="stRadio"] input[type="radio"]:checked + div {
-            border-color: var(--orange) !important;
-            background-color: var(--orange) !important;
-            box-shadow: 0 0 0 4px rgba(255, 112, 67, .18) !important;
-        }
-        [data-testid="stRadio"] input[type="radio"]:checked + div > div {
-            background-color: #fff !important;
-        }
-        [data-testid="stRadio"] div[role="radiogroup"] > div {
-            align-items: center;
-            gap: .35rem;
-        }
-
         /* ---------- 成品图加载占位：6 秒没收起就切换文案，避免用户以为卡死 ---------- */
         /* 注意：不能用 onload/onerror 内联事件——st.markdown 的 HTML 走 React 渲染，
            字符串事件属性会触发 React error #231 导致整个组件崩溃。只能用纯 CSS 时序。 */
@@ -1210,9 +1185,12 @@ def render_conversation():
         # 旧回答是 markdown → 走原来的 md_to_html 渲染
         structured = parse_structured_answer(item["answer"])
         if structured:
-            # opening 是 Agent 的原始自然语言回答，可能包含多道备选菜；
-            # 结构化卡片已经包含最终菜名、调料、步骤和图片，因此这里不再重复渲染 opening。
-            body_html = recipe_card_html(structured)
+            # 双格式渲染：开场白（聊天样式）先画，结构化卡片作为叠加层放在其下方，
+            # 保证卡片出现后聊天样式不消失；图片由卡片按菜名渲染（有图即穿插）。
+            opening = (structured.get("opening") or "").strip()
+            chat_html = md_to_html(opening) if opening else ""
+            card_html = recipe_card_html(structured)
+            body_html = chat_html + card_html
         else:
             body_html = md_to_html(item["answer"])
         st.markdown(
@@ -1388,8 +1366,7 @@ def render_sidebar():
                 • 同一会话里的连续问答会自动归在一起<br>
                 • 上传食材图片让 AI 识别<br>
                 • 选择口味偏好获取个性化推荐<br>
-                • 🎙️ 边说边出：像直播一样逐字显示 AI 思考过程；<br>
-                • ⚡ 一次性出完整菜谱：直接拿到完整卡片，适合想快速看结果
+                • 🎙️ 流式输出：像直播一样逐字显示 AI 思考过程，并最终生成结构化菜谱卡片
             </div>
             """,
             unsafe_allow_html=True,

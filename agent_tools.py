@@ -49,7 +49,7 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
     只要无法确认是目标菜品，就返回 False，让上层继续尝试下一张候选图。
     这样宁可暂时无图，也不把建筑、风景或其他菜品错配到当前菜谱。
     """
-    global _IMAGE_CHECK_LLM
+    global _IMAGE_CHECK_LLM#用外部定义的语言模型
     try:
         if _IMAGE_CHECK_LLM is None:
             _IMAGE_CHECK_LLM = get_langchain_llm(
@@ -151,7 +151,7 @@ def _image_candidate_text(img) -> str:
     ).lower()
 
 
-def to_data_url(img_list, recipe_name=None):
+def to_data_url(img_list, recipe_name=None):#候选图片验证并上传 OSS
     # 内部函数：过滤国内无法访问的海外图源，并把能成功下载的图片转成 OSS URL 返回
     # 这里只返回真正可展示的图片 URL；找不到合适图片就返回空字符串，不再硬塞
     for img in img_list:
@@ -265,7 +265,7 @@ def _bing_images(query: str, limit: int = 5):
         return []
 
 
-def find_recipe_image(recipe_name: str):
+def find_recipe_image(recipe_name: str):#搜索一张对应成品图
     """只为已经确定的最终菜名搜索一张对应成品图，返回 (OSS URL, 图源)。"""
     base_query = recipe_name.strip()
     if not base_query:

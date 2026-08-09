@@ -195,7 +195,7 @@ def append_message(
     with _lock:
         data = _read_session(sid)
         if data is None:
-            # 防御性：正常流程会先 create_session；这里兜底新建
+            # 防御性：正常流程会先 create_session；这里
             now = datetime.now().strftime("%H:%M")
             data = {"session_id": sid, "title": "新对话", "created_at": now, "messages": []}
         new_id = (max((m["id"] for m in data["messages"]), default=0)) + 1

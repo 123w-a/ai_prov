@@ -249,7 +249,7 @@ def chef_agent_node(state: MessagesState):
         messages,
         isolate_old_context=_latest_new_image_index(messages) is not None,
     )
-    payload = [prompt_msg] + _drop_orphan_tool_messages(model_messages)#提示词+历史对话消息，括号是转换成列表
+    payload = [prompt_msg] + _drop_orphan_tool_messages(model_messages)#提示词+历史对话消息，中括号是转换成列表调用的涵数是把孤立的toolmessage删除
     # 上游 LLM 偶发 502/超时，加重试避免整轮对话直接 500 崩掉
     last_err = None
     for attempt in range(3):
