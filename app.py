@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 
 
 st.set_page_config(
-    page_title="AI 私厨",
+    page_title="小膳管家",
     page_icon="🍳",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -30,6 +30,8 @@ QUICK_PROMPTS = [
 ]
 
 TASTE_OPTIONS = ["重辣", "清淡", "减脂", "增肌"]
+HEALTH_OPTIONS = ["高血压", "糖尿病", "高脂血症", "肥胖", "痛风/高尿酸",
+                  "慢性肾脏病", "儿童青少年", "孕产妇", "老年人", "无特殊"]
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +153,7 @@ def inject_styles():
             font-size: .8rem;
         }
 
-        /* ---------- 厨师烹饪等待动画（三个跳动的点，防"变白像卡住"） ---------- */
+        /* ---------- 膳食管家烹饪等待动画（三个跳动的点，防"变白像卡住"） ---------- */
         .cooking-indicator {
             display: inline-flex;
             align-items: center;
@@ -487,6 +489,20 @@ def api_delete_message(api_url, session_id, message_id, timeout=30):
     response.raise_for_status()
 
 
+def api_transcribe(api_url, audio_bytes, filename, content_type, timeout=60):
+    """把录音发给后端 /api/transcribe，返回识别文字；任何失败都返回空串（不阻断主流程）。"""
+    endpoint = f"{api_url.rstrip('/')}/api/transcribe"
+    try:
+        files = {"audio": (filename or "audio.wav", audio_bytes, content_type or "audio/wav")}
+        resp = requests.post(endpoint, files=files, timeout=timeout)
+        data = resp.json()
+        if data.get("code") == 200 and data.get("data", {}).get("available"):
+            return data["data"].get("text", "")
+        return ""
+    except requests.exceptions.RequestException:
+        return ""
+
+
 def refresh_sessions(preferred_session_id=None):
     """从后端重新读取会话，前端 session_state 只保存临时缓存。"""
     try:
@@ -536,6 +552,9 @@ def init_state():
         "uploaded_image": None,
         "uploader_version": 0,
         "taste_prefs": [],
+        "health_conditions": [],
+        "body_weight": 60,
+        "daily_budget": 50,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -1019,7 +1038,7 @@ def recipe_card_html(data):
         tip_block = (
             '<div style="margin-top:8px;font-size:13px;background:#fdf6ec;'
             'border-radius:10px;padding:8px 10px;">'
-            f"👨‍🍳 <b>私厨建议：</b>{tip}</div>"
+            f"👨‍🍳 <b>管家建议：</b>{tip}</div>"
         )
     recipe_blocks = "".join(
         block.replace(f"<!--RECIPE_IMAGE_{recipe_index}-->", image_blocks[recipe_index])
@@ -1058,7 +1077,7 @@ def render_streaming_exchange(pending):
         unsafe_allow_html=True,
     )
 
-    # ---- AI 气泡（先放"厨师烹饪中"动画占位，拿到 token 再逐字换成正文）----
+    # ---- AI 气泡（先放"膳食管家烹饪中"动画占位，拿到 token 再逐字换成正文）----
     # 搜索阶段后台要跑好几秒，空白气泡会让用户以为卡死，动画占位给出明确反馈
     ai_placeholder = st.empty()
     card_placeholder = st.empty()  # 结构化卡片单独一个占位：骨架屏 → 卡片
@@ -1067,7 +1086,7 @@ def render_streaming_exchange(pending):
         return (
             f'<div class="chat-row ai-row">'
             f'<div class="bubble ai-bubble">'
-            f'<div class="bubble-meta">🍳 AI 私厨 · {time_str}</div>'
+            f'<div class="bubble-meta">🍳 小膳管家 · {time_str}</div>'
             f'<div class="bubble-body">'
             f'<span class="cooking-indicator">👨‍🍳 {text}'
             f'<span class="cooking-dots"><i></i><i></i><i></i></span>'
@@ -1077,7 +1096,7 @@ def render_streaming_exchange(pending):
 
     # 统一走流式：SSE 逐事件推，正文打字机 + 卡片整包 JSON
     ai_placeholder.markdown(
-        cooking_html("私厨正在识别食材、联网搜菜谱"), unsafe_allow_html=True
+        cooking_html("正在识别食材、联网搜菜谱"), unsafe_allow_html=True
     )
     full_parts = []
     try:
@@ -1094,7 +1113,7 @@ def render_streaming_exchange(pending):
                 ai_placeholder.markdown(
                     f'<div class="chat-row ai-row">'
                     f'<div class="bubble ai-bubble">'
-                    f'<div class="bubble-meta">🍳 AI 私厨 · {time_str}</div>'
+                    f'<div class="bubble-meta">🍳 小膳管家 · {time_str}</div>'
                     f'<div class="bubble-body">{answer_html}</div>'
                     f'</div></div>',
                     unsafe_allow_html=True,
@@ -1137,7 +1156,7 @@ def render_conversation():
             <div class="chat-empty">
                 <div class="icon">🍳</div>
                 <strong>厨房还很安静</strong>
-                上传食材图片或告诉我你想做什么菜，<br>AI 私厨会为你识别食材、搜索食谱、给出详细做法。
+                上传食材图片或告诉我你想做什么菜，<br>小膳管家会为你识别食材、搜索食谱、给出详细做法。
             </div>
             """,
             unsafe_allow_html=True,
@@ -1196,7 +1215,7 @@ def render_conversation():
         st.markdown(
             f'<div class="chat-row ai-row">'
             f'<div class="bubble ai-bubble">'
-            f'<div class="bubble-meta">🍳 AI 私厨 · {item["time"]}</div>'
+            f'<div class="bubble-meta">🍳 小膳管家 · {item["time"]}</div>'
             f'<div class="bubble-body">{body_html}</div>'
             f'</div></div>',
             unsafe_allow_html=True,
@@ -1305,6 +1324,48 @@ def render_sidebar():
         )
         st.session_state["taste_prefs"] = taste or []
 
+        # ---- 健康画像（波次 P0②：慢病约束 + 体重 + 预算，自动带入提问用于护栏）----
+        st.markdown("## 🩺 健康画像")
+        health = st.multiselect(
+            "慢病 / 饮食约束（自动带入提问，用于健康护栏）",
+            HEALTH_OPTIONS,
+            default=st.session_state.get("health_conditions", []),
+            key="health_select",
+        )
+        st.session_state["health_conditions"] = health or []
+        bw = st.number_input(
+            "体重(kg，用于热量-运动当量，默认60)",
+            min_value=30, max_value=150, step=1,
+            value=st.session_state.get("body_weight", 60),
+            key="bw_input",
+        )
+        st.session_state["body_weight"] = int(bw)
+        budget = st.number_input(
+            "每餐预算(元，用于外食筛选，默认50)",
+            min_value=0, max_value=500, step=5,
+            value=st.session_state.get("daily_budget", 50),
+            key="budget_input",
+        )
+        st.session_state["daily_budget"] = int(budget)
+
+        # ---- 场景模式（波次 A4：在外/懒人点单入口）----
+        scene = st.pills(
+            "当前场景",
+            ["在家做饭", "外食/懒人点单"],
+            selection_mode="single",
+            default=st.session_state.get("scene_mode", "在家做饭"),
+            key="scene_pills",
+        )
+        st.session_state["scene_mode"] = scene or "在家做饭"
+        if st.session_state["scene_mode"] == "外食/懒人点单":
+            city = st.text_input(
+                "城市 / 商圈（用于附近餐厅推荐，可不填）",
+                value=st.session_state.get("city_district", ""),
+                key="city_input",
+                placeholder="如：上海浦东 / 北京中关村",
+            )
+            st.session_state["city_district"] = city.strip()
+
         st.markdown("---")
 
         # ---- 会话操作区 ----
@@ -1387,6 +1448,18 @@ def render_input_bar():
     if uploaded_file is not None:
         st.session_state["uploaded_image"] = uploaded_file
 
+    # ---- 手动勾选常见食材（波次 A3：拍照降级入口）----
+    MANUAL_FOODS = ["鸡蛋", "鸡胸肉", "番茄", "黄瓜", "米饭", "豆腐", "牛奶", "燕麦",
+                    "青菜", "土豆", "牛肉", "猪肉", "鱼", "苹果", "香蕉", "面包"]
+    manual = st.multiselect(
+        "🥬 没有食材照片？手动勾选你有的食材（可多选）",
+        MANUAL_FOODS,
+        default=st.session_state.get("manual_ingredients", []),
+        key="manual_ingredients",
+        help="图片不清或不想拍照时，直接勾选也能让管家帮你搭菜",
+    )
+
+
     current_image = st.session_state.get("uploaded_image")
 
     # ---- 缩略图预览 ----
@@ -1413,6 +1486,23 @@ def render_input_bar():
             st.session_state["question"] = text
             st.rerun()
 
+    # ---- 语音输入 ----
+    audio = st.audio_input("🎤 说出你的需求")
+    if audio is not None:
+        akey = f"{audio.name}:{len(audio.getvalue())}"
+        if st.session_state.get("audio_done_key") != akey:
+            with st.spinner("🎤 语音识别中…"):
+                text = api_transcribe(
+                    DEFAULT_API_URL, audio.getvalue(), audio.name, audio.type
+                )
+            if text:
+                st.session_state["question"] = text
+                st.toast("🎤 已识别为文字，可在下方编辑后发送")
+            else:
+                st.warning("语音识别未返回文字（可能未配置 DASHSCOPE_API_KEY，或音频无有效语音）。")
+            st.session_state["audio_done_key"] = akey
+            st.rerun()
+
     # ---- 文本输入 + 发送 ----
     question = st.text_area(
         "烹饪问题",
@@ -1434,7 +1524,7 @@ def render_input_bar():
         else "输入问题或上传图片后点击发送。"
     )
     send_clicked = st.button(
-        "✨ 发送给 AI 私厨",
+        "✨ 发送给 小膳管家",
         type="primary",
         use_container_width=True,
         disabled=not can_submit,
@@ -1447,7 +1537,28 @@ def render_input_bar():
             st.error("请先在左侧点击「➕ 新建会话」开始一轮新对话。")
         else:
             taste_prefs = st.session_state.get("taste_prefs", [])
-            raw_question = question.strip() or "请识别图片中的食材，并推荐适合的家常菜。"
+            scene_mode = st.session_state.get("scene_mode", "在家做饭")
+            city = st.session_state.get("city_district", "")
+            manual = st.session_state.get("manual_ingredients", [])
+            # 拼装上下文前缀：场景 + 城市 + 手动食材，让后端提示词感知
+            prefix_parts = []
+            if scene_mode == "外食/懒人点单":
+                prefix_parts.append("【场景：外食/懒人点单，请走附近推荐】")
+                if city:
+                    prefix_parts.append(f"【地点：{city}】")
+            if manual:
+                prefix_parts.append("【我有的食材：" + "、".join(manual) + "】")
+            # 健康画像 + 体重 + 预算：让后端提示词能定向触发护栏、精确算运动当量
+            health = st.session_state.get("health_conditions", [])
+            if health and "无特殊" not in health:
+                prefix_parts.append("【健康画像：慢病约束=" + "、".join(health) + "】")
+            prefix_parts.append(f"【体重 {st.session_state.get('body_weight', 60)}kg】")
+            prefix_parts.append(f"【每餐预算 {st.session_state.get('daily_budget', 50)}元】")
+            user_text = question.strip()
+            raw_question = " ".join(prefix_parts)
+            if user_text:
+                raw_question = (raw_question + " " + user_text).strip()
+            raw_question = raw_question or "请识别图片中的食材，并推荐适合的家常菜。"
             # 把当前问题+图片登记为 pending_stream，rerun 后由 render_conversation
             # 在"对话食谱"容器内统一渲染流式 Q&A，避免出现在容器外/不居中
             st.session_state["pending_stream"] = {
@@ -1474,7 +1585,7 @@ def main():
     st.markdown(
         """
         <div class="hero-bar">
-            <h1>🍳 AI 私厨</h1>
+            <h1>🍳 小膳管家</h1>
             <p>您的智能烹饪伴侣<br>把冰箱里的灵感变成餐桌上的美味</p>
             <span class="hero-emojis">🥕 🍅 🥬 🥩</span>
         </div>

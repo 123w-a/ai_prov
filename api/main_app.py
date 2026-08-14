@@ -1,11 +1,38 @@
 # main_app.py：FastAPI 总入口。只做三件事：建 app 实例、初始化 DB、挂载子路由。
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sessions_store import init_db
+import os
 
-app = FastAPI(title="ai私厨")#创键fastapi对象
+app = FastAPI(title="小膳管家")#创键fastapi对象
+
+# 跨域：前端（React 5173 / 本地调试）调用 /api/* 需要放行；同源页面无需跨域也兼容
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 重要：必须在 app 创建后、接收请求前初始化会话目录，否则首次插入会找不到 sessions/ 目录
 init_db()
+
+# 自建三栏『健康膳食决策工作台』页面入口（同源，免跨域）：GET /workbench
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WORKBENCH_PAGE = os.path.join(_PROJECT_ROOT, "frontend", "evidence_view.html")
+
+@app.get("/workbench")
+def workbench():
+    if os.path.exists(_WORKBENCH_PAGE):
+        return FileResponse(_WORKBENCH_PAGE)
+    return {"code": 404, "message": "前端页面未构建（frontend/evidence_view.html 不存在）"}
 
 # 重要：子路由放在文件末尾导入，避免循环依赖
 from api.routes.chat_route import router as chat_router
@@ -15,3 +42,12 @@ from api.routes.session_route import router as session_router
 #统一向外面暴露接口
 app.include_router(chat_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
+
+from api.routes.service_route import router as service_router
+
+app.include_router(service_router, prefix="/api")
+
+# 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
+from api.routes.speech_route import router as speech_router
+
+app.include_router(speech_router, prefix="/api")

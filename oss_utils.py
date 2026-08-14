@@ -23,8 +23,12 @@ cfg.endpoint = ENDPOINT
 client = oss.Client(cfg)
 
 
-def upload_to_oss(file_bytes: bytes, content_type: str) -> str:
-    ext = mimetypes.guess_extension(content_type) or ".jpg"
+def upload_to_oss(file_bytes: bytes, content_type: str, ext: str = None) -> str:
+    # ext 允许调用方显式指定扩展名。默认仍用 mimetypes 推断，
+    # 但 mimetypes 对 audio/mp3 等不识别会退化成 .jpg，语音场景需显式传 .mp3/.wav 等，
+    # 否则 DashScope 会按图片媒体类型误判导致识别为空。
+    if not ext:
+        ext = mimetypes.guess_extension(content_type) or ".jpg"
     object_key = f"upload/{int(time.time())}_{uuid.uuid4().hex}{ext}"
     try:
         resp = client.put_object(

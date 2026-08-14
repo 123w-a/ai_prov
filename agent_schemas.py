@@ -38,8 +38,37 @@ class Recipe(BaseModel):#菜谱结构
     )
 
 
+class SourceRef(BaseModel):#权威信息
+    """一条权威引文出处，来自 nutrition_kb_search 的检索结果，体现可溯源与 AIGC 透明标注。"""
+    source: str = Field(description="出处文件名，如《成人高血压食养指南（2023年版）》")
+    snippet: str = Field(default="", description="该出处命中片段的简短摘录，证明结论有据可依")
+    category: str = Field(default="", description="知识库分层类别，如 1_慢病食养指南 / 2_营养素参考摄入量DRI")
+
+
+class GuardrailItem(BaseModel):
+    """健康护栏的一项审计结论（前端右侧『本轮健康护栏』面板的数据来源）。
+
+    由 ``agent_graph.structure_answer_node`` 依据 ``verify_answer_node`` 的确定性
+    审计结果**运行时注入**，而不是让 LLM 自由生成——保证硬约束结论 100% 可信、
+    可溯源，是项目『健康链透明』亮点的数据底座。
+    """
+
+    condition: str = Field(description="适用人群/病种标签，如：高血压、糖尿病、孕期")
+    rule: str = Field(
+        default="",
+        description="对该人群的核心膳食约束，如：限盐（每日<5g）、忌高嘌呤",
+    )
+    status: str = Field(
+        description=(
+            "审计结论：pass=已符合 / warn=需注意（已达重生成上限仍存风险）/ "
+            "adjusted=初始方案命中硬禁忌、已被健康护栏自动调整至合规"
+        )
+    )
+    reason: str = Field(default="", description="一句中文说明，解释为什么是这个结论")
+
+
 class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
-    """AI 私厨最终回答的完整结构（对应前端一张完整的回答卡片）"""
+    """小膳管家最终回答的完整结构（对应前端一张完整的回答卡片）"""
     recipes: list[Recipe] = Field(#列表元素类型 Recipe，列表中嵌套列表
         min_length=1,#最少1道菜
         description="最终只返回最合适的一道菜；排序不用模型管，Python 会按营养降序、难度升序重排"
@@ -61,7 +90,19 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
         description="有图：一句话图注（若 image_ai_generated 为 true，应说明这是 AI 生成示意图、非真实成品照）；"
                     "无图：明确说没找到合适图片，并用文字描述这道菜应有的口感"
     )
-    chef_tip: str = Field(#厨师小建议
+    chef_tip: str = Field(#膳食管家小建议
         default="",
-        description="作为厨师的小建议，简短 3 句以内"
+        description="作为膳食管家的小建议，简短 3 句以内"
+    )
+    sources: list[SourceRef] = Field(
+        default_factory=list,
+        description="本次回答引用的权威依据出处列表，来自 nutrition_kb_search 检索结果；"
+                    "凡涉及健康/忌口/标签的结论都必须在此列出对应出处文件名与片段，体现可溯源与 AIGC 透明标注；"
+                    "无健康相关结论时可为空列表",
+    )
+    guardrails: list[GuardrailItem] = Field(
+        default_factory=list,
+        description="本次回答针对各健康标签的护栏审计结论列表，由图后端确定性注入（非 LLM 生成）；"
+                    "前端右侧面板据此渲染『本轮健康护栏』，把 RAG/护栏能力变成用户可感知的产品能力。"
+                    "无健康相关标签时为空列表。",
     )

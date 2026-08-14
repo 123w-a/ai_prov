@@ -22,7 +22,7 @@ chef_parser = PydanticOutputParser(pydantic_object=ChefAnswer)#做出实例按�
 STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示词
     (#按照我定义的规则定义的最终提示词
         "system",
-        "你是 AI 私厨的结构化整理员。根据对话上下文（用户食材/口味需求 + 工具搜索结果），"
+        "你是 小膳管家的结构化整理员。根据对话上下文（用户食材/口味需求 + 工具搜索结果），"
         "整理出最终回答。规则：\n"
         "1. 菜谱必须来自上下文中的搜索结果，禁止编造上下文之外的菜；\n"
         "2. 难度/营养星级只给 1-5 的整数；调料用量必须带生活化比喻；"
@@ -32,6 +32,8 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "4. 默认 recipes 只包含最合适的一道菜；只有当用户明确要求多个选择、几道菜或供选择时，才允许输出多道菜；\n"
         "5. image_url 必须对应 recipes 中的菜名；没有可靠图片就填 null；\n"
         "6. 只输出符合以下格式的 JSON，不要输出任何额外文字、解释或代码围栏。\n"
+        "7. 若上下文中出现『权威健康依据检索结果（来自 nutrition_kb_search）』块，必须将其中的 source 文件名与命中片段填入 sources 字段，"
+        "每条含 source（文件名）与 snippet（片段摘录）；凡健康/忌口/标签类结论都要有对应出处，无则 sources 留空列表。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题
@@ -57,7 +59,7 @@ MAX_STRUCTURE_RETRIES = 2#最大尝试次数
 _STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提示词
     (
         "system",
-        "你是 AI 私厨的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"
+        "你是 小膳管家的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"
         "重新输出：默认只保留最合适的一道菜；如果原始上下文明确要求多道菜，才保留对应的多道菜；"
         "不要输出任何额外文字、解释或代码围栏。\n{format_instructions}",
     ),
@@ -67,7 +69,7 @@ _STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提
         "上一次解析报错信息：\n{error}\n\n"
         "请根据上面报错修正，并重新输出完全符合格式的 JSON。",
     ),
-]).partial(format_instructions=chef_parser.get_format_instructions())
+]).partial(format_instructions=chef_parser.get_format_instructions())#在提取这个实例对象里面的结构化输出规则
 
 # ValidationError
 # 来自 Pydantic，JSON 结构合法，但字段不符合 ChefAnswer 模型约束：

@@ -90,8 +90,10 @@ def _stream_agent(message, session_id):
         content = getattr(message_chunk, "content", "")
         if not content:
             continue
-        # chef_think 的流式增量块(AIMessageChunk) → 正文逐字流给前端
-        if node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
+        # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
+        if node == "ask_user":
+            yield ("token", content)
+        elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
             yield ("token", content)
         # structure_answer 节点返回的完整 JSON 消息 → 整包给前端；
         # 注意 AIMessageChunk 是 AIMessage 子类，必须显式排除链内部的流式碎片

@@ -20,9 +20,11 @@ from langgraph.prebuilt import ToolNode, tools_condition  # 内置工具节点 +
 from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断点续跑、循环状态保存）
 
 from agent_prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
-from agent_tools import find_recipe_image, tools, web_search
+from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
+from agent_schemas import GuardrailItem  # 健康护栏审计结论（运行时注入 ChefAnswer.guardrails）
 #build_structured_answer标准链+parser检查出错误后再进行重试
+from nutrition_rules import detect_conditions, audit, describe, RULES  # L3 硬护栏：确定性健康禁忌审计
 
 # 稳定输出规则：覆盖旧提示词中的多菜分支，保证流式正文和结构化卡片一致。
 SINGLE_RECIPE_RULE = (
@@ -37,6 +39,22 @@ SINGLE_RECIPE_RULE = (
 # 本文件不硬编码任何模型名，切换模型只改 .env，无需动代码。
 provider = resolve_provider()#不写默认是.env中设置的第一个key
 llm = get_langchain_llm(provider)#获取模型对象
+
+# 检索侧思考（查询改写 / 多查询 / HyDE）用便宜的 deepseek，不占用贵的主模型额度。
+# 检索是高频、低难度任务，deepseek 足够且成本远低于 gpt，默认即走 deepseek。
+try:
+    retrieval_llm = get_langchain_llm("deepseek", temperature=0.3, max_tokens=200)
+except Exception:
+    retrieval_llm = llm
+
+def _query_transform_adapter(system: str, user: str) -> str:
+    try:
+        return retrieval_llm.invoke(
+            [SystemMessage(content=system), HumanMessage(content=user)]
+        ).content
+    except Exception:
+        return ""
+set_query_transform_llm(_query_transform_adapter, mode="multi")
 
 # 历史摘要专用模型：用廉价 deepseek 做长对话压缩（省成本），无 key 时自动回退主模型
 try:
@@ -61,7 +79,7 @@ checkpointer.setup()
 # --------------------------------------------------------------------------- #
 #  3. 长对话压缩节点（替代原 SummarizationMiddleware）：LLM 推理前触发
 #  历史消息超过阈值时，把更老的"用户/AI 对话"总结成要点、删掉原文，防上下文溢出
-#  只总结 user/AI，跳过 ToolMessage 工具返回；总结 Prompt 针对厨师场景定制
+#  只总结 user/AI，跳过 ToolMessage 工具返回；总结 Prompt 针对膳食管家场景定制
 # --------------------------------------------------------------------------- #
 MAX_HISTORY_KEEP = 6  # 保留最近约 3 轮(user+ai)，更早的参与总结（调大以减少压缩触发、保住菜品编号上下文）
 #MessagesState是所有的状态消息，包含 messages 属性
@@ -82,7 +100,7 @@ def maybe_condense(state: MessagesState):#压缩历史对话
         for m in old#循环把每一条旧对话转为字符串并拼接在一起
     )
     summary_prompt = (#提示词
-        "请把这段私厨对话历史压缩成极简要点，严格按以下规则：\n"
+        "请把这段小膳管家对话历史压缩成极简要点，严格按以下规则：\n"
         "①用户拥有的食材；②口味/忌口偏好（甜/辣/酸/控糖等）；\n"
         "③已推荐或已做的菜谱——【必须按用户原始提问顺序，逐道列出 第1道=… 第2道=… 第3道=… "
         "（有多道务必保留编号），并标注关键改动（如换甜口/换清淡）；不得合并、重命名、捏造菜名，"
@@ -146,7 +164,7 @@ def _drop_orphan_tool_messages(messages):#过滤AIMessage tool_calls
 def _latest_user_has_image(messages):
     """判断最近一条用户消息是否包含图片。"""
     for m in reversed(messages):
-        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
+        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要") and not str(m.content).startswith("[健康护栏审核"):
             return _message_has_image(m)
     return False
 
@@ -194,6 +212,7 @@ def _latest_user_index(messages):
         if (
             isinstance(message, HumanMessage)
             and not str(message.content).startswith("[历史对话摘要")
+            and not str(message.content).startswith("[健康护栏审核")
         ):
             return index
     return None
@@ -288,7 +307,7 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
     real_image_ai = False#存储真实图片是否由 AI 生成
     # 最近一条真实用户消息（跳过压缩节点注入的"历史对话摘要"，图文混合消息只取文字）
     for m in reversed(context_messages):#是用户文档并且不是历史对话摘要的消息
-        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
+        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要") and not str(m.content).startswith("[健康护栏审核"):
             if isinstance(m.content, list):#图文混合：图片已识别进对话，只取文字部分
                 text = " ".join(#用户发图 + 文字提问时，只保留文字需求，图片不塞进给 LLM 的文本上下文
                     part.get("text", "") for part in m.content
@@ -331,6 +350,16 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
             "image_source 为图源 real/ai）：\n"
             + "\n\n".join(search_blocks[-3:])#最多取最近3次搜索，
         )
+    # 本轮所有 nutrition_kb_search 工具返回（权威健康依据，JSON 含 source 文件名与命中片段 text）
+    kb_blocks = []
+    for m in context_messages:
+        if isinstance(m, ToolMessage) and getattr(m, "name", "") == "nutrition_kb_search":
+            kb_blocks.append(str(m.content))
+    if kb_blocks:
+        parts.append(
+            "权威健康依据检索结果（来自 nutrition_kb_search，每条 JSON 含 source 文件名与命中片段 text）：\n"
+            + "\n\n".join(kb_blocks[-3:])
+        )
     return "\n\n".join(parts), real_image_url, real_image_ai
 
 
@@ -361,6 +390,32 @@ def _search_recipe_image(recipe_name):
         return None, False
 
 
+def _build_guardrails(user_text, verify_status, verify_violated):
+    """依据 verify 节点真实审计结论，为前端右栏拼出『本轮健康护栏』列表（健康链可见化的核心）。
+
+    - 对每个检测到的健康标签，给出 pass / warn / adjusted 结论与一句理由；
+    - 不依赖 LLM，以 verify 的确定性审计口径为准，避免关键字子串误判
+      （如『少盐』被『盐』误命中导致合规方案被误标为已调整）；
+    - 与 verify_answer_node 共用同一套 RULES，口径一致。
+    """
+    conditions = detect_conditions(user_text)
+    if not conditions:
+        return []
+    violated = set(verify_violated or [])
+    items = []
+    for cond in conditions:
+        rule_msg = RULES.get(cond, {}).get("message", "")
+        if cond in violated and verify_status == "degraded":
+            status, reason = "warn", "经多次重生成仍有需注意项，请谨慎：" + rule_msg
+        elif cond in violated:
+            # 曾被硬护栏命中、但最终通过了审计（已重生成至合规）
+            status, reason = "adjusted", "初始方案命中硬禁忌，已由健康护栏自动调整至合规：" + rule_msg
+        else:
+            status, reason = "pass", "已符合" + cond + "膳食原则"
+        items.append(GuardrailItem(condition=cond, rule=rule_msg, status=status, reason=reason))
+    return items
+
+
 def structure_answer_node(state: MessagesState):#结构化回答节点
     messages = state["messages"]
     # chef_think 最后一轮的自然语言回答 = 流式已经推给前端的正文，原样保留进 opening
@@ -383,13 +438,23 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
         answer = build_structured_answer(context)#会返回一个实例
         answer = rank_recipes(answer, allow_multiple=allow_multiple)#将实例中的菜谱进行排序
-        if allow_multiple:
+        # 健康护栏可见化：把 verify 的确定性审计结论注入卡片，供前端右栏渲染『健康链』
+        answer.guardrails = _build_guardrails(
+            latest_text,
+            state.get("verify_status", ""),
+            state.get("verify_violated", []),
+        )
+        # 健康护栏：若多次重生成仍不通过，把安全警示带进卡片（绝不静默放行）
+        warning = state.get("verify_warning", "")
+        if warning:
+            answer.chef_tip = (answer.chef_tip + " " + warning).strip()
+        if allow_multiple:#recipe是单个食谱对象
             for index, recipe in enumerate(answer.recipes):
                 recipe.image_url, recipe.image_ai_generated = _search_recipe_image(recipe.name)
                 # 第一道菜兼容本轮已经拿到的图片，避免重复搜索失败时整轮无图。
                 if not recipe.image_url and index == 0:
-                    recipe.image_url = real_image_url
-                    recipe.image_ai_generated = real_image_ai
+                    recipe.image_url = real_image_url#这里就直接把图片赋值给他结构化的时候就会变成图片
+                    recipe.image_ai_generated = real_image_ai#看是否有AI标
         elif answer.recipes:
             # 单道菜模式按最终菜名重新搜索，避免把泛食材搜索结果误绑到菜品卡片。
             answer.recipes[0].image_url, answer.recipes[0].image_ai_generated = (
@@ -425,32 +490,220 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         return {"messages": []}#不变成节构卡片了
 
 # --------------------------------------------------------------------------- #
+#  4.5 健康护栏节点（L3 硬护栏）：chef_think 输出后、结构化前做确定性审计
+# --------------------------------------------------------------------------- #
+MAX_VERIFY = 3  # 打回重生成的上限，防无限循环
+
+# 自定义状态：在 MessagesState 基础上扩展护栏所需的计数字段
+class ChefState(MessagesState):
+    verify_attempts: int      # 已打回重生成次数
+    verify_warning: str       # 超限仍不通过时带给前端的安全警示
+    verify_status: str        # ok / retry / degraded，供条件边路由
+    verify_violated: list = []  # 本轮被硬护栏命中的病种列表（供右栏『健康链』如实展示）
+    profile_ready: bool = True  # 充分性门控：健康画像是否足够进入检索/审计（AgentMental 范式）
+    profile_missing: list = []  # 充分性门控：本轮尚未确认的高风险病种
+
+def verify_answer_node(state: ChefState):
+    """输出前硬审计：发现硬禁忌则带反馈打回 chef_think 重生成（最多 MAX_VERIFY 次）。"""
+    attempts = state.get("verify_attempts", 0)
+    # 取最新一条 chef_think 的自然语言回答做审计
+    answer_text = ""
+    for m in reversed(state["messages"]):
+        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+            answer_text = str(m.content)
+            break
+    user_text = _latest_user_text(state["messages"])
+    conditions = detect_conditions(user_text)
+    violations = audit(answer_text, conditions)
+    violated_conditions = sorted({v["condition"] for v in violations})
+    if not violations:
+        return {"verify_status": "ok", "verify_attempts": attempts + 1,
+                "verify_warning": "", "verify_violated": []}
+    if attempts < MAX_VERIFY:
+        feedback = HumanMessage(content=(
+            "[健康护栏审核] 你给出的方案违反了以下硬禁忌，必须重新生成一道合规的菜：\n"
+            + describe(violations)
+            + "\n请换用符合该人群膳食原则的食材与调料，保持菜谱可执行，只输出一道菜。"
+        ))
+        return {"verify_status": "retry", "verify_attempts": attempts + 1,
+                "verify_violated": violated_conditions, "messages": [feedback]}
+    # 已达上限仍不通过：放行但附安全警示，绝不静默放行
+    warn = "⚠️ 健康护栏提示：本方案经多次重生成仍含需注意项——" + "；".join(
+        f"{v['condition']}忌{v['keyword']}" for v in violations
+    )
+    return {"verify_status": "degraded", "verify_warning": warn,
+            "verify_violated": violated_conditions}
+
+def verify_route(state: ChefState) -> str:
+    """根据审计状态路由：ok/degraded → 结构化收尾；retry → 回到思考节点。"""
+    return state.get("verify_status", "ok")#创键的类中有这个字符，兜底是ok进入结果化输出
+
+# --------------------------------------------------------------------------- #
+#  4.5 充分性门控（AgentMental 范式）：高风险健康决策前先确定性判断画像是否足够
+# --------------------------------------------------------------------------- #
+def _parse_declared_conditions(user_text: str) -> set:
+    """从注入的健康画像前缀【健康画像：慢病约束=高血压、糖尿病】解析已声明病种。"""
+    import re
+    m = re.search(r"慢病约束\s*=\s*([^】\n]*)", user_text)
+    if not m:
+        return set()
+    seg = m.group(1).strip()
+    if seg in ("无", "无特殊", ""):
+        return set()
+    return {i.strip() for i in re.split(r"[、,，;；\s]+", seg) if i.strip()}
+
+def _declared_covers(condition: str, declared: set) -> bool:
+    """模糊匹配：declared 任一包含/被包含于 condition 即视为已声明该约束。"""
+    return any(condition in d or d in condition for d in declared)
+
+
+def _self_declared_conditions(user_text: str) -> set:
+    """解析用户本轮原话中明确自述的健康状态，避免重复追问。"""
+
+    text = (user_text or "").replace(" ", "")
+    out = set()
+    pairs = [
+        ("高血压", ("我有高血压", "我患有高血压", "我血压高", "我是高血压")),
+        ("糖尿病", ("我有糖尿病", "我患有糖尿病", "我糖尿病", "我是糖尿病")),
+        ("高脂血症", ("我有高血脂", "我有高脂血症", "我血脂高")),
+        ("痛风", ("我有痛风", "我痛风", "我尿酸高")),
+        ("慢性肾脏病", ("我有肾病", "我有慢性肾脏病", "我肾脏不好")),
+        ("肥胖", ("我肥胖", "我体重超标")),
+        ("孕期", ("我怀孕", "我是孕妇", "我孕期")),
+    ]
+    for condition, phrases in pairs:
+        if any(phrase in text for phrase in phrases):
+            out.add(condition)
+    return out
+
+
+def profile_gate_node(state: ChefState):
+    """充分性门控节点：进入 chef_think 前，确定性判断健康画像是否足够。
+
+    - 信息足够：profile_ready=True，放行到 chef_think；
+    - 信息不足：profile_ready=False，路由到 ask_user，不进入工具检索/审计。
+    """
+
+    messages = state["messages"]
+    latest_user_idx = _latest_user_index(messages)
+    recent_messages = messages[latest_user_idx:] if latest_user_idx is not None else messages
+
+    # 只检查最近一条用户消息之后是否已经触发过门控，避免历史门控影响后续轮次。
+    if any(
+        isinstance(m, SystemMessage)
+        and "充分性门控·必须追问" in str(m.content)
+        for m in recent_messages
+    ):
+        return {"profile_ready": True, "profile_missing": []}
+
+    user_text = _latest_user_text(messages)
+    conditions = detect_conditions(user_text)
+    if not conditions:
+        return {"profile_ready": True, "profile_missing": []}
+
+    declared = _parse_declared_conditions(user_text) | _self_declared_conditions(user_text)
+    missing = [c for c in conditions if not _declared_covers(c, declared)]
+    if not missing:
+        return {"profile_ready": True, "profile_missing": []}
+
+    return {"profile_ready": False, "profile_missing": missing}
+
+
+def ask_user_node(state: ChefState):
+    """生成一条面向用户的追问，不调用工具、不生成菜谱。"""
+
+    missing = list(state.get("profile_missing") or [])
+    if not missing:
+        return {
+            "messages": [
+                AIMessage(content="请补充一下你的健康情况，我才能给出更安全的饮食建议。")
+            ]
+        }
+
+    user_text = _latest_user_text(state["messages"])
+    try:
+        response = llm.invoke(
+            [
+                SystemMessage(
+                    content=(
+                        "你是小膳管家。当前只负责向用户提出一个简短澄清问题。"
+                        "禁止给出菜谱、禁止调用工具、禁止使用工具调用。"
+                        "只追问用户健康状态或忌口严格程度，1-2 句话，语气自然。"
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        "用户本轮说："
+                        + user_text
+                        + "\n\n尚未确认的高风险健康约束："
+                        + "、".join(missing)
+                    )
+                ),
+            ]
+        )
+        content = str(response.content).strip()
+    except Exception:
+        content = ""
+
+    if not content:
+        content = "想确认一下，你是否涉及" + "、".join(missing) + "？请简单告诉我你的饮食控制情况。"
+
+    return {"messages": [AIMessage(content=content)]}
+
+
+def profile_gate_route(state: ChefState) -> str:
+    """信息足够走主流程，信息不足走追问节点。"""
+
+    return "ask" if not state.get("profile_ready", True) else "ready"
+# --------------------------------------------------------------------------- #
 #  5. 构建图实例（状态图 + 条件边 + 回边 = LangGraph 循环 Agent）
 # --------------------------------------------------------------------------- #
 # 创建LangGraph图状态机，通过节点流转规则读写、操控全局上下文容器MessagesState
-workflow = StateGraph(MessagesState)#创建状态图，状态容器MessagesState作为参数
+workflow = StateGraph(ChefState)#创建状态图，状态容器扩展为带护栏字段的 ChefState
 # 注册两个节点，左是节点名，右是函数
 workflow.add_node("chef_think", chef_agent_node)#思考节点自己思考能看图片
 workflow.add_node("run_tools", tool_executor)#工具执行节点
 workflow.add_node("condense_history", maybe_condense)# 注册长对话压缩节点
+workflow.add_node("verify_answer", verify_answer_node)# 注册健康护栏审计节点
 workflow.add_node("structure_answer", structure_answer_node)# 注册结构化回答节点
+workflow.add_node("profile_gate", profile_gate_node)# 注册充分性门控节点（AgentMental 范式）
+workflow.add_node("ask_user", ask_user_node)# 注册健康画像追问节点
 workflow.set_entry_point("condense_history")# 设置入口：先压缩历史
-workflow.add_edge("condense_history", "chef_think")#连线长对话压缩→思考
+workflow.add_edge("condense_history", "profile_gate")#连线长对话压缩→充分性门控
+workflow.add_conditional_edges(
+    "profile_gate",
+    profile_gate_route,
+    {
+        "ready": "chef_think",
+        "ask": "ask_user",
+    },
+)
+workflow.add_edge("ask_user", END)#追问结束后本轮结束，等待用户下一轮回答
 
 # 核心循环逻辑：条件边
-# 1. LLM 思考完，判断是否要调用工具：要调用→去执行工具；不调用→去结构化收尾
+# 1. LLM 思考完，判断是否要调用工具：要调用→去执行工具；不调用→去健康护栏审计
 workflow.add_conditional_edges(#条件分支边
     source="chef_think",#源节点
     path=tools_condition,# LangGraph 内置工具判断函数上面调的库：会返回有tools或常量END
     path_map={#条件分支二选一对应目标节点
         "tools": "run_tools",#有就执行工具
-        END: "structure_answer",#不调用工具→去结构化节点整理最终回答
+        END: "verify_answer",#不调用工具→先过健康护栏审计，再结构化收尾
     },
 )
 
 # 2. 工具执行完毕，**回流到 LLM 节点再次思考（实现循环！）**
 #    这就是 create_agent 做不到的闭环：工具结果回来重新让 LLM 校验、二次搜索、反思修
 workflow.add_edge("run_tools", "chef_think")#再连线将工具执行结果回溯到思考节点
+
+# 2.5 健康护栏审计后的路由：
+#   ok / degraded → 结构化收尾；retry → 打回 chef_think 重新生成（带次数上限）
+workflow.add_conditional_edges(#新增一个条件边分支
+    source="verify_answer",
+    path=verify_route,
+    path_map={"ok": "structure_answer", #下一步进入结构化输出
+              "retry": "chef_think",#回去重新生成
+              "degraded": "structure_answer"},#能用就节构化输出
+)
 # 3. 结构化回答完毕，整轮才真正结束
 workflow.add_edge("structure_answer", END)
 # 编译可运行的图，挂载 Sqlite 断点持久化
