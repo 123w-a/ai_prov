@@ -69,3 +69,10 @@ resources/cleaned_preview/
 
 # RAG 原始语料 PDF（官方食养指南/国标，体积大且可外部获取，本地保留、不入库）
 kb/**/*.pdf
+
+# 前端依赖与构建产物
+node_modules/
+dist/
+
+# 本地 API Key 配置（含密钥，禁止入库）
+配置key.md

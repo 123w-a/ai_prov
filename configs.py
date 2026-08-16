@@ -15,3 +15,15 @@ MODEL_CONFIGS = {#模型配置
         "model_name": os.getenv("DEEPSEEK_MODE_NAME"),
     },
 }
+
+# RAG 知识库配置（rag/ingest.py 与 rag/retriever.py 均从 configs.KB_CONFIG 读取，
+# 未定义时它们各自使用默认值；这里按 配置key.md 统一收口）
+KB_CONFIG = {
+    "corpus_dir": os.getenv("KB_CORPUS_DIR", "kb"),
+    "kb_dir": os.getenv("KB_DIR", "kb/chroma"),
+    "collection_name": os.getenv("KB_COLLECTION", "dietary_kb"),
+    "embedding_backend": os.getenv("KB_EMBEDDING", "bge"),
+    "chunk_size": int(os.getenv("KB_CHUNK_SIZE", "1200")),
+    "chunk_overlap": int(os.getenv("KB_CHUNK_OVERLAP", "120")),
+    "preview_dir": os.getenv("KB_PREVIEW_DIR", "resources/cleaned_preview"),
+}
