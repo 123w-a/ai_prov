@@ -782,7 +782,15 @@ def nutrition_kb_search(query: str, top_k: int = 3) -> str:
     for h in result.hits:
         items.append({
             "source": h.source,
-            "category": str(h.metadata.get("category", "")),
+            "section": h.section,
+            "distance": round(float(getattr(h, "distance", 0.0)), 4),
+            "excerpt": h.text[:200],
+            "metadata": {
+                "category": h.metadata.get("category", ""),
+                "anchor": h.metadata.get("anchor", ""),
+                "doc": h.metadata.get("doc", ""),
+                "content_type": h.metadata.get("content_type", ""),
+            },
             "text": h.text[:600],
         })
     return json.dumps(

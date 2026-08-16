@@ -26,4 +26,5 @@ KB_CONFIG = {
     "chunk_size": int(os.getenv("KB_CHUNK_SIZE", "1200")),
     "chunk_overlap": int(os.getenv("KB_CHUNK_OVERLAP", "120")),
     "preview_dir": os.getenv("KB_PREVIEW_DIR", "resources/cleaned_preview"),
+    "enable_rerank": os.getenv("KB_ENABLE_RERANK", "1") == "1",
 }
