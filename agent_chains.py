@@ -56,7 +56,7 @@ chef_answer_chain = STRUCTURE_PROMPT | structure_llm | chef_parser#这里接受�
 MAX_STRUCTURE_RETRIES = 2#最大尝试次数
 
 # 修正提示：让模型看到原始上下文 + 上一次的具体报错，重新产出合规 JSON
-_STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提示词
+_STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提示词，对话提示词
     (
         "system",
         "你是 小膳管家的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"

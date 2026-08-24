@@ -21,12 +21,7 @@ import type {
   WorkspaceView,
 } from './types'
 
-const MODE_PREFIX: Record<DecisionMode, string> = {
-  home: '[场景：在家做饭]',
-  dining: '[场景：外出吃饭 / 懒人点单]',
-  fridge: '[场景：识别现有食材]',
-  health: '[场景：健康问答]',
-}
+// 场景前缀由后端按 mode 处理，前端只传原始文本与 mode。
 
 function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
   if (!raw) return null
@@ -195,7 +190,7 @@ export default function App() {
       const userId = crypto.randomUUID()
       const assistantId = crypto.randomUUID()
       const displayText = text || '请根据这张图片帮我做膳食决策'
-      const requestText = `${MODE_PREFIX[mode]}\n${displayText}`
+      const requestText = displayText
 
       setMessages((current) => [
         ...current,
@@ -217,7 +212,13 @@ export default function App() {
       setAppError('')
 
       try {
-        await sendChat(sessionId, requestText, image, {
+        await sendChat(sessionId, requestText, image, mode, {
+          onStage: (stage) =>
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId ? { ...message, stage: stage as ChatMessage["stage"] } : message,
+              ),
+            ),
           onWorking: () =>
             setMessages((current) =>
               current.map((message) =>

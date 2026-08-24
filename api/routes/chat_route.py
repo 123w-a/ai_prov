@@ -19,6 +19,20 @@ router = APIRouter()  # 分文件写接口的小路由
 # 图片 MIME 白名单：挡掉非图片和可能的恶意文件
 ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 
+MODE_PROMPTS = {
+    "home": "[场景：在家做饭，优先用现有食材给出可执行菜谱]",
+    "dining": "[场景：外出吃饭 / 懒人点单，优先给附近餐厅、点单搭配与预算建议]",
+    "fridge": "[场景：识别现有食材，优先基于图片或文字清单做菜谱决策]",
+    "health": "[场景：健康问答，优先检索权威营养知识并触发健康护栏]",
+}
+
+
+def _apply_mode_prompt(message: str, mode: str) -> str:
+    """把前端选择的决策场景转成后端可控的提示词前缀，而不是只把前缀当普通文本。"""
+    prompt = MODE_PROMPTS.get((mode or "home").strip(), MODE_PROMPTS["home"])
+    return f"{prompt}\n{message}"
+
+
 
 async def _handle_image(image: UploadFile | None, image_url: str | None):
     """统一处理图片上传：返回 (save_img_name, save_img_type, save_img_url)。
@@ -63,6 +77,7 @@ async def chat(
     message: str = Form(...),
     image: UploadFile | None = File(None),
     image_url: str | None = Form(None),
+    mode: str = Form("home"),
 ):
     """统一聊天入口：仅流式分支。
     - SSE 逐事件推：正文 token -> 打字机；'structuring' -> 卡片占位动画；'answer' -> 整包 ChefAnswer JSON 渲染卡片
@@ -71,8 +86,13 @@ async def chat(
     if not message.strip() and image is None and not image_url:
         raise HTTPException(status_code=400, detail="请至少输入文字、上传图片或提供图片 URL")
 
-    save_img_name, save_img_type, save_img_url = await _handle_image(image, image_url)
-    human_message = build_human_message(message, save_img_url)
+    try:
+        save_img_name, save_img_type, save_img_url = await _handle_image(image, image_url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"图片处理失败：{exc}") from exc
+    human_message = build_human_message(_apply_mode_prompt(message, mode), save_img_url)
     config = {"configurable": {"thread_id": session_id}}
 
     def event_generator():
@@ -112,6 +132,8 @@ async def chat(
                 if kind == "token":
                     full_parts.append(payload)
                     yield f"data: {json.dumps({'token': payload}, ensure_ascii=False)}\n\n"
+                elif kind == "stage":
+                    yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":
                     final_answer = payload
                     # 先通知前端"正文说完了，正在整理卡片"，再推整包 JSON

@@ -114,7 +114,7 @@ def generate_dish_image(dish_name: str):
               未命中 → 调通义万相生成 → 下载字节 → 上传 OSS → 写缓存 → 返回 URL。
 
     透明标注约定：本函数只负责「出图 + 返回 URL」，是否标「AI 生成示意图」由
-    agent_graph / 前端根据 image_ai_generated 字段决定（见 agent_schemas / app.py）。
+    agent_graph / 前端根据 image_ai_generated 字段决定（见 agent_schemas / frontend/web）。
     本函数绝不伪装这是真实成品照。
 
     Args:

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatMessage, DecisionMode } from '../types'
+import { fetchNearby } from '../api/client'
+import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import { RecipeCard } from './RecipeCard'
 
@@ -35,6 +36,9 @@ const QUICK_PROMPTS: Array<{ text: string; mode: DecisionMode; tag: string }> = 
 const STAGE_COPY = {
   thinking: '正在理解你的需求',
   writing: '正在形成膳食建议',
+  searching: '正在检索做法与营养依据',
+  auditing: '正在做健康护栏审计',
+  generating_image: '正在生成菜品图片',
   structuring: '正在完成健康审计与卡片整理',
 }
 
@@ -55,6 +59,9 @@ export function ChatArea({
   const [preview, setPreview] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [nearbyResult, setNearbyResult] = useState<NearbyResult | null>(null)
+  const [nearbyLoading, setNearbyLoading] = useState(false)
+  const [nearbyError, setNearbyError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -176,6 +183,19 @@ export function ChatArea({
       recordingStreamRef.current = null
       setVoiceState('idle')
       setNotice(error instanceof Error ? `无法使用麦克风：${error.message}` : '无法使用麦克风。')
+    }
+  }
+
+  const loadNearby = async () => {
+    setNearbyLoading(true)
+    setNearbyError('')
+    try {
+      const data = await fetchNearby({ query: text.trim(), budget: 50 })
+      setNearbyResult(data)
+    } catch (error) {
+      setNearbyError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setNearbyLoading(false)
     }
   }
 
@@ -344,6 +364,41 @@ export function ChatArea({
             </button>
           ))}
         </div>
+
+        {mode === 'dining' && (
+          <section className="nearby-panel" aria-label="附近餐厅建议">
+            <header className="nearby-panel-head">
+              <div>
+                <Icon name="concierge" size={18} />
+                <span>附近餐厅</span>
+              </div>
+              <button type="button" onClick={() => void loadNearby()} disabled={nearbyLoading}>
+                {nearbyLoading ? '查询中' : '查询附近'}
+              </button>
+            </header>
+
+            {nearbyError && <p className="nearby-error">{nearbyError}</p>}
+
+            {nearbyResult && (
+              <div className="nearby-list">
+                {nearbyResult.restaurants.map((restaurant) => (
+                  <article key={restaurant.name} className="nearby-card">
+                    <div className="nearby-card-title">
+                      <strong>{restaurant.name}</strong>
+                      <span>{restaurant.cuisine}</span>
+                    </div>
+                    <div className="nearby-meta">
+                      <span>人均 ¥{restaurant.avg_price ?? '?'}</span>
+                      {restaurant.distance_km != null && <span>{restaurant.distance_km}km</span>}
+                      {restaurant.address && <span>{restaurant.address}</span>}
+                    </div>
+                    {restaurant.guardrail && <p>{restaurant.guardrail}</p>}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {preview && (
           <div className="attachment-preview">

@@ -4,7 +4,7 @@ from pydantic import BaseModel#所有类的父类
 #模型响应参数模板
 class ChatData(BaseModel):
     session_id: str#会话 ID
-    answer: str  # AI 的回答文本；前端 app.py 读的是 data.answer
+    answer: str  # AI 的回答文本；前端 React 读的是 data.answer
 
 
 class ApiResponse(BaseModel):#传入前端的响应参数模板

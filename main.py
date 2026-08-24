@@ -78,15 +78,32 @@ def build_human_message(text, image_url=None):
 #    ("answer", JSON) ：structure_answer 节点整理好的 ChefAnswer 整包 JSON，前端画卡片
 #  structure_answer 节点里结构化链自身的 token 碎片被丢弃（半截 JSON 没意义）。
 # --------------------------------------------------------------------------- #
+
+
+def _stage_for_node(node, message_chunk):
+    """把 LangGraph 节点名映射成前端可展示的进度阶段。"""
+    if node == "run_tools":
+        return "searching"
+    if node == "verify_answer":
+        return "auditing"
+    if node == "structure_answer":
+        return "generating_image"
+    return None
+
 def _stream_agent(message, session_id):
     """公共流式生成器：按"消息来自哪个节点"分流输出。"""
     config = {"configurable": {"thread_id": session_id}}
+    last_stage = None
     for message_chunk, metadata in agent.stream(
         {"messages": [message]},
         config=config,
         stream_mode="messages",
     ):
         node = metadata.get("langgraph_node")
+        stage = _stage_for_node(node, message_chunk)
+        if stage and stage != last_stage:
+            yield ("stage", stage)
+            last_stage = stage
         content = getattr(message_chunk, "content", "")
         if not content:
             continue

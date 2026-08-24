@@ -1,5 +1,7 @@
 import type {
   ChefAnswer,
+  NearbyResult,
+  PreferencesData,
   ServicePreviewRequest,
   ServicePreviewResult,
   ServiceVision,
@@ -14,6 +16,10 @@ interface ApiEnvelope<T> {
   data: T
 }
 
+function cleanError(message: string): string {
+  return message.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240)
+}
+
 async function readError(resp: Response): Promise<string> {
   let detail = `HTTP ${resp.status}`
   try {
@@ -22,7 +28,7 @@ async function readError(resp: Response): Promise<string> {
   } catch {
     // 非 JSON 响应保留 HTTP 状态码。
   }
-  return detail
+  return cleanError(detail)
 }
 
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -90,6 +96,7 @@ export interface ChatHandlers {
   onToken: (token: string) => void
   onStructuring: () => void
   onAnswer: (answer: ChefAnswer) => void
+  onStage?: (stage: string) => void
   onFinish?: () => void
 }
 
@@ -97,12 +104,14 @@ export async function sendChat(
   sessionId: string,
   message: string,
   image: File | null,
+  mode: string,
   handlers: ChatHandlers,
 ): Promise<void> {
   const body = new FormData()
   body.append('session_id', sessionId)
   body.append('message', message)
   if (image) body.append('image', image)
+  body.append('mode', mode)
 
   const resp = await fetch(`${API_BASE}/api/chat`, { method: 'POST', body })
   if (!resp.ok) throw new Error(await readError(resp))
@@ -135,8 +144,41 @@ export async function sendChat(
       else if (event.token != null) handlers.onToken(String(event.token))
       else if (event.structuring) handlers.onStructuring()
       else if (event.answer) handlers.onAnswer(event.answer as ChefAnswer)
+      else if (typeof event.stage === 'string') handlers.onStage?.(event.stage)
       else if (event.finish) handlers.onFinish?.()
       else if (event.error) throw new Error(String(event.error))
     }
   }
+}
+
+
+export async function fetchNearby(params?: {
+  query?: string
+  city?: string
+  district?: string
+  budget?: number
+  location?: string
+}): Promise<NearbyResult> {
+  const search = new URLSearchParams()
+  if (params?.query) search.set("query", params.query)
+  if (params?.city) search.set("city", params.city)
+  if (params?.district) search.set("district", params.district)
+  if (params?.budget != null) search.set("budget", String(params.budget))
+  if (params?.location) search.set("location", params.location)
+  const result = await jsonRequest<ApiEnvelope<NearbyResult>>(`/api/nearby?${search.toString()}`)
+  return result.data
+}
+
+export async function fetchPreferences(): Promise<string> {
+  const result = await jsonRequest<ApiEnvelope<PreferencesData>>("/api/preferences")
+  return result.data.preferences
+}
+
+export async function updatePreferences(preferences: string): Promise<string> {
+  const result = await jsonRequest<ApiEnvelope<PreferencesData>>("/api/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preferences }),
+  })
+  return result.data.preferences
 }

@@ -1,7 +1,8 @@
 # main_app.py：FastAPI 总入口。只做三件事：建 app 实例、初始化 DB、挂载子路由。
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
+from fastapi import Request
 from sessions_store import init_db
 import os
 
@@ -24,15 +25,14 @@ app.add_middleware(
 # 重要：必须在 app 创建后、接收请求前初始化会话目录，否则首次插入会找不到 sessions/ 目录
 init_db()
 
-# 自建三栏『健康膳食决策工作台』页面入口（同源，免跨域）：GET /workbench
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WORKBENCH_PAGE = os.path.join(_PROJECT_ROOT, "frontend", "evidence_view.html")
 
-@app.get("/workbench")
-def workbench():
-    if os.path.exists(_WORKBENCH_PAGE):
-        return FileResponse(_WORKBENCH_PAGE)
-    return {"code": 404, "message": "前端页面未构建（frontend/evidence_view.html 不存在）"}
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """兜底把未处理异常转成 JSON，避免 nginx 的 HTML 500 直接暴露给前端。"""
+    return JSONResponse(status_code=500, content={"code": 500, "messages": "服务内部错误，请稍后重试", "data": None})
+
+
 
 # 重要：子路由放在文件末尾导入，避免循环依赖
 from api.routes.chat_route import router as chat_router
@@ -45,7 +45,12 @@ app.include_router(session_router, prefix="/api")
 
 from api.routes.service_route import router as service_router
 
+from api.routes.nearby_route import router as nearby_router
+from api.routes.preferences_route import router as preferences_router
+
 app.include_router(service_router, prefix="/api")
+app.include_router(nearby_router, prefix="/api")
+app.include_router(preferences_router, prefix="/api")
 
 # 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
 from api.routes.speech_route import router as speech_router

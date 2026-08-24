@@ -60,6 +60,7 @@ def _load_legacy_tools():#简化导入包要取的名字，即可用旧导入也
 _legacy = _load_legacy_tools()
 #为了外部兼容这个使用方法
 web_search = _legacy.web_search
+nearby_food = _legacy.nearby_food
 get_file = _legacy.get_file
 find_recipe_image = _legacy.find_recipe_image
 
@@ -102,11 +103,12 @@ def nutrition_kb_search(query: str, n_results: int = 3, source_filter: str = "")
     return json.dumps({"found": True, "hits": hits}, ensure_ascii=False)
 
 
-tools = [web_search, get_file, nutrition_kb_search]
+tools = [web_search, get_file, nearby_food, nutrition_kb_search]
 
 __all__ = [
     "find_recipe_image",
     "get_file",
+    "nearby_food",
     "nutrition_kb_search",
     "tools",
     "web_search",

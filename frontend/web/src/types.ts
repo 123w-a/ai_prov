@@ -56,7 +56,7 @@ export interface Session {
 
 export type DecisionMode = 'home' | 'dining' | 'fridge' | 'health'
 
-export type StreamStage = 'thinking' | 'writing' | 'structuring'
+export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring'
 
 export interface ChatMessage {
   id: string
@@ -118,4 +118,24 @@ export interface ServicePreviewResult {
   voice_status?: string
   order_supported: boolean
   blocked_reason: string
+}
+
+
+export interface NearbyRestaurant {
+  name: string
+  cuisine: string
+  avg_price: number | null
+  distance_km?: number | null
+  address?: string
+  guardrail?: string
+}
+
+export interface NearbyResult {
+  source: string
+  amap_configured: boolean
+  restaurants: NearbyRestaurant[]
+}
+
+export interface PreferencesData {
+  preferences: string
 }

@@ -81,3 +81,6 @@ dist/
 
 # 本地 API Key 配置（含密钥，禁止入库）
 配置key.md
+
+# TypeScript 增量编译缓存
+*.tsbuildinfo

@@ -39,12 +39,10 @@ def upload_to_oss(file_bytes: bytes, content_type: str, ext: str = None) -> str:
                 content_type=content_type
             )
         )
-        print(f"✅ 上传成功，OSS路径：{object_key}")
         full_url = f"{BASE_URL}/{object_key}"
-        print(f"访问链接：{full_url}")
         return full_url
     except Exception as err:
-        print(f"❌ 上传失败：{err}")
+
         raise err
 
 
