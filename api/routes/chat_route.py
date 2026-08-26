@@ -108,6 +108,14 @@ async def chat(
                 return
             saved_flag[0] = True
             answer = final_answer if final_answer else "".join(full_parts)
+            # T2-P0 饮食记录：结构化答案产出菜品时自动记账（失败不阻塞聊天）
+            if final_answer:
+                try:
+                    import json as _json
+                    from api.routes.reports_route import record_meal
+                    record_meal(session_id, _json.loads(final_answer))
+                except Exception:
+                    pass
             if answer and answer.strip():
                 try:
                     _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
