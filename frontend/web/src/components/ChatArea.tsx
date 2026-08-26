@@ -67,6 +67,17 @@ export function ChatArea({
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
+  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; guardrail_triggers?: number } | null>(null)
+  const [reportOpen, setReportOpen] = useState(false)
+  const loadReport = async () => {
+    setReportOpen(true)
+    try {
+      const res = await fetch('/api/reports/weekly')
+      setReport(await res.json())
+    } catch {
+      setReport({ has_data: false, message: '周报加载失败，请稍后再试。' })
+    }
+  }
   useEffect(() => {
     if (!('geolocation' in navigator)) return
     navigator.geolocation.getCurrentPosition(
@@ -392,6 +403,29 @@ export function ChatArea({
           ))}
         </div>
 
+        {reportOpen && (
+          <section className="nearby-panel report-card" aria-label="本周周报">
+            <header className="nearby-panel-head">
+              <div>
+                <Icon name="concierge" size={18} />
+                <span>本周饮食周报</span>
+              </div>
+              <button type="button" aria-label="关闭周报" onClick={() => setReportOpen(false)}>×</button>
+            </header>
+            {!report ? (
+              <p>加载中…</p>
+            ) : !report.has_data ? (
+              <p>{report.message}</p>
+            ) : (
+              <div className="nearby-list">
+                <p>近 7 天共 <strong>{report.meals}</strong> 次饮食决策；护栏触发 {report.guardrail_triggers} 次。</p>
+                <p><strong>常吃：</strong>{(report.top_dishes || []).map(([d, n]) => `${d}×${n}`).join('、') || '—'}</p>
+                <p><strong>红绿灯合计：</strong>{Object.entries(report.lights || {}).map(([k, v]) => `${k} ${v}`).join('　') || '—'}</p>
+              </div>
+            )}
+          </section>
+        )}
+
         {mode === 'dining' && panelOpen && (
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
@@ -498,6 +532,9 @@ export function ChatArea({
                 🍽 附近餐厅
               </button>
             )}
+            <button type="button" className="tool-btn" onClick={() => void loadReport()}>
+              📊 本周周报
+            </button>
             {STATUS_TAGS.map((tag) => {
               const active = statusTags.includes(tag)
               return (

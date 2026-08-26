@@ -3179,6 +3179,13 @@ img {
   }
 }
 
+.report-card {
+  right: 26px;
+  bottom: 190px;
+  width: min(420px, calc(100vw - 48px));
+  max-height: 46vh;
+}
+
 .nearby-reopen {
   position: fixed;
   right: 26px;
