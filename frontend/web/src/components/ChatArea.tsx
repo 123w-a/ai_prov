@@ -463,10 +463,37 @@ export function ChatArea({
             ) : !report.has_data ? (
               <p>{report.message}</p>
             ) : (
-              <div className="nearby-list">
-                <p>近 7 天共 <strong>{report.meals}</strong> 次饮食决策；护栏触发 {report.guardrail_triggers} 次。</p>
-                <p><strong>常吃：</strong>{(report.top_dishes || []).map(([d, n]) => `${d}×${n}`).join('、') || '—'}</p>
-                <p><strong>红绿灯合计：</strong>{Object.entries(report.lights || {}).map(([k, v]) => `${k} ${v}`).join('　') || '—'}</p>
+              <div className="report-body">
+                <div className="report-hero">
+                  <div className="hero-num">{report.meals}<span>餐</span></div>
+                  <div className="hero-sub">近 7 天饮食决策 · 护栏触发 {report.guardrail_triggers} 次</div>
+                </div>
+                {(report.top_dishes || []).length > 0 && (
+                  <div className="report-block">
+                    <div className="block-label">常吃 TOP</div>
+                    <div className="dish-chips">
+                      {(report.top_dishes as [string, number][]).map(([d, n]) => (
+                        <span key={d} className="dish-chip">{d}{n > 1 && <em>×{n}</em>}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {Object.keys(report.lights || {}).length > 0 && (
+                  <div className="report-block">
+                    <div className="block-label">红绿灯合计</div>
+                    <div className="dish-chips">
+                      {Object.entries(report.lights).map(([k, v]) => {
+                        const idx = k.lastIndexOf(':')
+                        const name = idx >= 0 ? k.slice(0, idx) : k
+                        const color = idx >= 0 ? k.slice(idx + 1) : 'green'
+                        return <span key={k} className={`light-pill light-${color}`}>{name} ×{v as number}</span>
+                      })}
+                    </div>
+                  </div>
+                )}
+                {report.range && (
+                  <div className="report-range">{report.range[0]} ~ {report.range[1]}</div>
+                )}
               </div>
             )}
           </section>
