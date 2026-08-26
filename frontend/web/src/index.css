@@ -3179,6 +3179,19 @@ img {
   }
 }
 
+.nearby-reopen {
+  position: fixed;
+  right: 26px;
+  bottom: 190px;
+  z-index: 40;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  box-shadow: 0 8px 20px rgba(60, 58, 50, 0.16);
+  cursor: pointer;
+}
+
 .nearby-panel {
   /* 出去吃模式：悬浮卡片，脱离文档流——出现与否都不挤压消息区高度 */
   position: fixed;
