@@ -660,6 +660,9 @@ img {
 
 .chat-workspace {
   display: flex;
+  /* 撑满 app-shell 剩余高度：此前未显式占位，消息区被内容高度压扁，看几条就要滚动 */
+  flex: 1 1 auto;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
