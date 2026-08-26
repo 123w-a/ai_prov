@@ -154,10 +154,31 @@ def healthy_remix(recipe_text: str) -> str:
     )
 
 
-tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix]
+@tool
+def fridge_gap(recipe_name: str, inventory_text: str) -> str:
+    """对照上门私厨标准菜谱库，检查用户已有食材相对目标菜谱还缺什么。当用户报出手头/冰箱食材并想知道做某道菜缺哪些料、或希望私厨补齐时调用。Args: recipe_name: 目标菜名（如 番茄炒蛋）；inventory_text: 已有食材的文字清单（逗号/空格分隔）。"""
+    import json
+    from api.routes.service_route import HOME_CHEF_RECIPES, _has_ingredient, _split_inventory_text
+
+    key = next((k for k in HOME_CHEF_RECIPES if k in recipe_name or recipe_name in k), None)
+    required = list(HOME_CHEF_RECIPES.get(key, []))
+    owned = _split_inventory_text(inventory_text)
+    missing = [item for item in required if not _has_ingredient(owned, item)]
+    return json.dumps({
+        "recipe_name": key or recipe_name,
+        "recipe_matched": key is not None,
+        "required_ingredients": required,
+        "owned": owned,
+        "missing": missing,
+        "note": "missing 为空表示食材齐全；否则可在回复中建议用户补买，或说明上门私厨可携带这些原料。",
+    }, ensure_ascii=False)
+
+
+tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix, fridge_gap]
 
 __all__ = [
     "find_recipe_image",
+    "fridge_gap",
     "get_file",
     "healthy_remix",
     "nearby_food",
