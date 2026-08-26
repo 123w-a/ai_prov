@@ -65,6 +65,7 @@ export function ChatArea({
   const [statusTags, setStatusTags] = useState<string[]>([])
   // 浏览器定位（附近餐厅用）：拿不到就静默降级，不阻塞输入
   const [coords, setCoords] = useState('')
+  const [locating, setLocating] = useState(false)
   useEffect(() => {
     if (!('geolocation' in navigator)) return
     navigator.geolocation.getCurrentPosition(
@@ -468,6 +469,26 @@ export function ChatArea({
           />
 
           <div className="composer-tools" role="group" aria-label="实时状态打卡">
+            <button
+              type="button"
+              className={coords ? 'tool-btn' : 'tool-btn mood-active'}
+              disabled={locating}
+              title={coords ? `已定位：${coords}` : '点击重新请求浏览器定位授权（附近餐厅需要）'}
+              onClick={() => {
+                if (!('geolocation' in navigator)) return
+                setLocating(true)
+                navigator.geolocation.getCurrentPosition(
+                  (pos) => {
+                    setCoords(`${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`)
+                    setLocating(false)
+                  },
+                  () => setLocating(false),
+                  { timeout: 8000 },
+                )
+              }}
+            >
+              {locating ? '定位中…' : coords ? '📍 已定位' : '📍 未定位·点此授权'}
+            </button>
             {STATUS_TAGS.map((tag) => {
               const active = statusTags.includes(tag)
               return (
