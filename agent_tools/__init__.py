@@ -94,7 +94,7 @@ def nutrition_kb_search(query: str, n_results: int = 3, source_filter: str = "")
     hits = [
         {
             "source": hit.source,
-            "section": hit.section,
+            "section": _legacy._resolve_section(hit.source, hit.section),
             "distance": round(hit.distance, 3),
             "excerpt": hit.text[:240],
             "metadata": hit.metadata,

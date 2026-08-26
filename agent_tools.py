@@ -317,6 +317,480 @@ def find_recipe_image(recipe_name: str):#搜索一张对应成品图
     return None, "none"
 
 
+def web_search(query: str) -> str:
+    """当用户询问某道菜、食材搭配或家常菜做法时调用。
+    工具只负责联网搜索文字做法；最终菜名确定后，由 find_recipe_image 单独搜索对应成品图。
+    这样可以避免用户输入的食材名、口味词或泛查询直接被当成菜名搜图。"""
+    # 保留原始菜名查询，用于「AI 生图兜底」的提示词（不希望把"美食 成品图"后缀带进生图）
+    base_query = query
+    # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
+    image_friendly_query = f"{query} 美食 成品图"
+    if tavily is None:
+        return json.dumps(
+            {"text": "联网搜索未启用：缺少 TAVILY_API_KEY，请在 .env 中配置后重启后端。",
+             "image_url": None, "image_source": "real"},
+            ensure_ascii=False,
+        )
+    result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
+
+    items = result.get("results", [])#拿到result这个列表中的几条结果
+    if not items:
+        # 结构化空结果：image_url 为 None，下游节点据此在卡片里明说"没找到图"
+        # image_source 标 "real" 表示并非 AI 生成（这里本来就无图）
+        return json.dumps(
+            {"text": "没有搜索到可靠结果", "image_url": None, "image_source": "real"},
+            ensure_ascii=False,
+        )
+
+    lines = []#用来存初始化好了的结果
+    for index, item in enumerate(items, start=1):#遍历结果的同时拿上序号
+        url = item.get("url", "")
+        # 长 URL 会撑破前端气泡，截断显示 + 做成可点击链接
+        display_url = url if len(url) <= 50 else url[:47] + "..."
+        lines.append(
+            f"{index}. 标题：{item.get('title', '')}\n"
+            f"来源：[{display_url}]({url})\n"
+            f"摘要：{item.get('content', '')[:200]}"
+        )
+    # 图片不要在这里处理：此时 query 可能只是食材/口味，尚未确定最终菜名。
+    # 等结构化节点选出唯一菜品后，再由 find_recipe_image 按最终菜名搜索，避免图文错配。
+    image_url = None
+    image_source = "none"
+
+    # 关键：图片 URL 独立成字段，不再以 markdown 形式混进文本，
+    # 从源头杜绝乱码 URL/二进制流被铺进回答；没图就老实给 None，不硬塞
+    # image_source 随图返回，供 structure_answer 节点判定是否需要透明标注
+    return json.dumps(
+        {"text": "\n\n".join(lines), "image_url": image_url, "image_source": image_source},
+        ensure_ascii=False,
+    )
+
+@tool
+def get_file(file_path):
+    """读取本地文本文件内容（受沙箱限制：仅允许 data/、recipes/、resources/uploads/ 下的
+    txt/md/json/csv/yaml 文件，单文件 ≤200KB）。用于加载用户私房菜谱、偏好文件等本地知识。"""
+    safe = _resolve_safe_path(file_path)
+    if safe is None:
+        return "读取被拒绝：该路径不在允许读取的目录内，或文件类型/大小超出限制。"
+    try:
+        if not safe.exists():
+            return "文件不存在"
+        if not safe.is_file():
+            return "这不是一个文件"
+        if safe.stat().st_size > _MAX_FILE_BYTES:
+            return "文件过大，已拒绝读取（上限 200KB）"
+        return safe.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"读取失败：{e}"
+
+
+# --------------------------------------------------------------------------- #
+#  外食 / 懒人点单导航（波次 A4）：附近餐厅推荐 + 菜系护栏
+#  真实部署：接入高德 Web 服务 POI API（.env 配置 AMAP_KEY）。
+#  无 key / 断网 / 接口报错时自动回退内置 mock 数据集，保证 demo 不挂。
+# --------------------------------------------------------------------------- #
+_MOCK_RESTAURANTS = [
+    {"name": "轻食说·沙拉碗", "cuisine": "轻食", "avg_price": 38, "distance_km": 0.6,
+     "guardrail": "优先油醋汁、少酱；避开培根/芝士增量"},
+    {"name": "老街家常菜", "cuisine": "家常菜", "avg_price": 45, "distance_km": 1.2,
+     "guardrail": "点蒸煮炖、避开红烧/干锅；叮嘱少油少盐"},
+    {"name": "渝味火锅", "cuisine": "火锅", "avg_price": 80, "distance_km": 0.9,
+     "guardrail": "清汤/番茄锅底；多涮菜少肉丸；蘸料避芝麻酱用醋+蒜"},
+    {"name": "街角烧烤", "cuisine": "烧烤", "avg_price": 60, "distance_km": 1.5,
+     "guardrail": "高血压/痛风避开啤酒+内脏+海鲜；多选烤蔬菜"},
+    {"name": "幸福食堂快餐", "cuisine": "快餐", "avg_price": 25, "distance_km": 0.4,
+     "guardrail": "选杂粮饭+清炒时蔬+蒸蛋；避开油炸窗口"},
+]
+
+
+def _infer_guardrail(name: str, ptype: str, cost=None) -> str:
+    """按店名/餐饮类型粗判点单红线（健康护栏）。高德不提供，是我们产品的差异点。"""
+    text = f"{name} {ptype}"
+    if "火锅" in text:
+        return "清汤/番茄锅底；多涮菜少肉丸；蘸料避芝麻酱用醋+蒜"
+    if "烧烤" in text or "烤肉" in text:
+        return "高血压/痛风避开啤酒+内脏+海鲜；多选烤蔬菜"
+    if "轻食" in text or "沙拉" in text or "西餐" in text:
+        return "优先油醋汁、少酱；避开培根/芝士增量"
+    if "快餐" in text or "小吃" in text or "炸" in text:
+        return "选杂粮饭+清炒时蔬+蒸蛋；避开油炸窗口"
+    if "家常" in text or "中餐" in text or "炒菜" in text:
+        return "点蒸煮炖、避开红烧/干锅；叮嘱少油少盐"
+    return "优先蒸煮炖凉拌、少油少盐；控制份量与主食比例"
+
+
+def _amap_poi_search(city, district, query, budget, location=""):
+    import re as _re
+    # 坐标清洗：模型可能把「[当前位置：经度,纬度]」整串塞进 location，只提取两个浮点数，
+    # 否则 amap 判定非法坐标退化为城市文本搜索，距离全是错位数字（如 128km）。
+    _m = _re.search(r"(\d{1,3}\.\d{3,})[,\s，]+(\d{1,3}\.\d{3,})", str(location or ""))
+    location = f"{_m.group(1)},{_m.group(2)}" if _m else ""
+    """调用高德 POI 接口，返回标准化候选列表；无 key / 断网 / 接口报错返回 None（触发 mock 兜底）。
+    location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。"""
+    if not AMAP_KEY:
+        return None
+    keyword = query.strip() if query else "餐厅"
+    city_param = (city or "").strip()
+    if district and district.strip():
+        city_param = f"{city_param}{district.strip()}" if city_param else district.strip()
+
+    around = bool(location) and "," in str(location)
+    common = {
+        "key": AMAP_KEY,
+        "keywords": keyword,
+        "types": "050000",          # 餐饮服务大类
+        "extensions": "all",        # 要拿 biz_ext.cost（人均）
+        "offset": 25,
+        "page": 1,
+    }
+    if around:
+        # 周边搜索：需要圆心经纬度，返回真实 distance（米）
+        url = "https://restapi.amap.com/v3/place/around"
+        params = {**common, "location": location, "radius": 3000}
+    else:
+        url = "https://restapi.amap.com/v3/place/text"
+        params = {**common, "city": city_param,
+                  "citylimit": "true" if city_param else "false"}
+
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        data = resp.json()
+    except Exception:
+        return None
+    if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
+        return None
+    pois = data.get("pois", []) or []
+    results = []
+    for p in pois:
+        biz = p.get("biz_ext") or {}
+        if not isinstance(biz, dict):
+            biz = {}
+        cost_str = (biz.get("cost") or "").strip()
+        try:
+            cost = int(float(cost_str))
+        except Exception:
+            cost = None
+        raw_type = p.get("type", "") or ""
+        cuisine = raw_type.split(";")[-1] if raw_type else "餐饮"
+        dist_m = p.get("distance")   # 仅周边搜索返回（米）
+        try:
+            distance_km = round(int(dist_m) / 1000, 1) if dist_m not in (None, "") else None
+        except Exception:
+            distance_km = None
+        results.append({
+            "name": p.get("name", ""),
+            "cuisine": cuisine,
+            "avg_price": cost if cost is not None else 0,
+            "distance_km": distance_km,
+            "address": p.get("address", "") or "",
+            "guardrail": _infer_guardrail(p.get("name", ""), raw_type, cost),
+        })
+    return results
+
+
+@tool
+def nearby_food(city: str = "", district: str = "", budget: int = 50, query: str = "", location: str = "") -> str:
+    """当用户说"附近/随便/不知道吃啥/外卖/点单/懒得做"等在外或懒得做饭场景时调用。
+    按预算(budget,单位元)与菜系护栏过滤附近餐厅，返回店名、人均、距离与点单红线。
+    真实环境接入高德 POI API（.env 配 AMAP_KEY）；无 key / 断网时自动回退内置 mock 兜底。
+    location 可传 '经度,纬度'（如前端定位），传了就走周边搜索给出真实距离；不传则按城市文本搜索。"""
+    try:
+        budget = int(budget) if budget else 50
+    except Exception:
+        budget = 50
+
+    real = _amap_poi_search(city, district, query, budget, location)
+    if real is None:
+        candidates = _MOCK_RESTAURANTS
+        source = "mock"          # 无 key / 断网 / 接口报错 → 兜底
+    elif real:
+        candidates = real
+        source = "amap"
+    else:
+        candidates = _MOCK_RESTAURANTS
+        source = "mock_empty"    # 联网成功但 0 命中 → 仍用 mock 顶上
+
+    # 预算过滤：amap 仅保留有人均且≤预算者（无人均不误杀）；mock 按原价位
+    if source == "amap":
+        priced = [c for c in candidates if c["avg_price"] and c["avg_price"] <= budget]
+        candidates = priced if priced else candidates
+    else:
+        under = [c for c in candidates if c["avg_price"] <= budget]
+        candidates = under if under else _MOCK_RESTAURANTS[:3]
+
+    # query 命中菜系/店名/地址时优先排前
+    if query:
+        q = query.strip()
+        candidates.sort(
+            key=lambda c: (
+                q not in c["name"]
+                and q not in c["cuisine"]
+                and q not in c.get("address", "")
+            )
+        )
+    if not candidates:
+        candidates = _MOCK_RESTAURANTS[:3]
+
+    lines = []
+    for i, c in enumerate(candidates[:5], 1):
+        dist = c.get("distance_km")
+        dist_text = f"{dist}km" if dist is not None else "约—（未定位）"
+        addr = c.get("address", "")
+        addr_text = f"｜{addr}" if addr else ""
+        lines.append(
+            f"{i}. {c['name']}（{c['cuisine']}）｜人均约¥{c['avg_price'] or '?'}｜{dist_text}{addr_text}\n"
+            f"   点单红线：{c['guardrail']}"
+        )
+    return json.dumps(
+        {"city": city, "district": district, "budget": budget,
+         "count": len(lines), "source": source, "text": "\n\n".join(lines)},
+        ensure_ascii=False,
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  营养计算辅助（波次 A5）：食物热量查表 + 运动当量换算
+#  数据源（双表）：
+#   ① 主表 data/china_food_components.csv —— 国标《中国食物成分表》常用食材（258 种，13 字段，最权威）
+#   ② 兜底 data/nutrition_table.csv —— 含主表未收的加工/快餐/饮料（炸鸡/可乐/奶茶等）
+#  口语别名 _FOOD_ALIAS 桥接"米饭↔大米（粳米）"等细化名，避免查不到。
+#  均未收录时如实说明，不臆造数值。
+# --------------------------------------------------------------------------- #
+_FOOD_KCAL_PER_100G = {
+    "蛋挞": 290, "米饭": 116, "馒头": 223, "面条": 110, "白面包": 265,
+    "鸡胸肉": 133, "鸡蛋": 144, "牛奶": 54, "苹果": 52, "香蕉": 93,
+    "可乐": 43, "奶茶": 70, "炸鸡": 280, "薯条": 298, "番茄": 18,
+    "黄瓜": 16, "牛肉": 250, "猪肉": 395, "三文鱼": 208, "豆腐": 76,
+    "酸奶": 72, "啤酒": 43, "西瓜": 30, "燕麦": 389, "花生": 567,
+}
+
+# 口语名 → 权威表里的"细化名"别名（解决 米饭↔大米（粳米） 这类查不到的问题）
+_FOOD_ALIAS = {
+    "米饭": "大米（粳米）", "白米饭": "大米（粳米）", "白米": "大米（粳米）",
+    "米": "大米（粳米）", "馒头": "馒头（蒸）", "面条": "面条（挂面）",
+}
+
+
+def _load_china_food_table():
+    """从 data/china_food_components.csv（国标《中国食物成分表》）加载权威营养表。
+    中文表头映射为统一字段；文件缺失/读失败返回空列表（触发兜底，不报错）。"""
+    rows = []
+    csv_path = _PROJECT_ROOT / "data" / "china_food_components.csv"
+    try:
+        if not csv_path.exists():
+            return rows
+        with csv_path.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                name = (r.get("食物名称") or "").strip()
+                if not name:
+                    continue
+
+                def _num(v):
+                    try:
+                        return float(v)
+                    except Exception:
+                        return None
+
+                rows.append({
+                    "name": name,
+                    "kcal": _num(r.get("能量kcal")),
+                    "protein": _num(r.get("蛋白质g")),
+                    "fat": _num(r.get("脂肪g")),
+                    "carb": _num(r.get("碳水化合物g")),
+                    "fiber": _num(r.get("膳食纤维g")),
+                    "sodium": _num(r.get("钠mg")),
+                    "calcium": _num(r.get("钙mg")),
+                    "iron": _num(r.get("铁mg")),
+                    "vitamin_c": _num(r.get("维生素Cmg")),
+                    "category": (r.get("分类") or "").strip(),
+                })
+    except Exception:
+        return []
+    return rows
+
+
+_CHINA_FOOD_TABLE = _load_china_food_table()
+
+
+def _load_nutrition_table():
+    """从 data/nutrition_table.csv 加载结构化营养表；文件缺失/读失败返回空列表（触发兜底）。"""
+    rows = []
+    csv_path = _PROJECT_ROOT / "data" / "nutrition_table.csv"
+    try:
+        if not csv_path.exists():
+            return rows
+        with csv_path.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                name = (r.get("name") or "").strip()
+                if not name:
+                    continue
+
+                def _num(v):
+                    try:
+                        return float(v)
+                    except Exception:
+                        return None
+
+                rows.append({
+                    "name": name,
+                    "kcal": _num(r.get("kcal_per_100g")),
+                    "protein": _num(r.get("protein_g")),
+                    "fat": _num(r.get("fat_g")),
+                    "carb": _num(r.get("carb_g")),
+                    "category": (r.get("category") or "").strip(),
+                })
+    except Exception:
+        return []
+    return rows
+
+
+_NUTRITION_TABLE = _load_nutrition_table()
+
+
+@tool
+def calorie_lookup(food: str, portion_g: int = 100) -> str:
+    """查询某食物的热量与营养素。food=食物名，portion_g=份量(克,默认100)。
+    优先查国标《中国食物成分表》(data/china_food_components.csv)，再回退营养骨架表(加工/快餐类)，
+    口语名经 _FOOD_ALIAS 桥接；返回份量 kcal + 已收录营养素 + source 透明标注。
+    配合 exercise_equiv 换算运动量；未收录/无数值时如实说明，不臆造。"""
+    key = food.strip()
+    # 口语别名桥接（米饭→大米（粳米）等），解决权威表"细化名"查不到
+    key = _FOOD_ALIAS.get(key, key)
+
+    # 第一优先：国标权威表 china_food_components.csv（258 种，字段最全）
+    hit = None
+    for row in _CHINA_FOOD_TABLE:
+        if row["name"] == key:
+            hit = row
+            break
+    if hit is None:
+        for row in _CHINA_FOOD_TABLE:
+            if key in row["name"] or row["name"] in key:
+                hit = row
+                break
+
+    if hit is not None:
+        per100 = hit["kcal"]
+        if per100 is None:
+            return json.dumps(
+                {"food": food, "kcal": None,
+                 "note": "该食物热量未录入，请用权威食物成分表查询；此处不臆造数值"},
+                ensure_ascii=False,
+            )
+        kcal = round(per100 * portion_g / 100)
+        result = {
+            "food": food, "portion_g": portion_g, "kcal": kcal,
+            "per_100g": per100, "source": "china_food_table",
+            "note": "数据来自国标《中国食物成分表》，权威值",
+        }
+        for label, val in (("protein_g", hit["protein"]), ("fat_g", hit["fat"]),
+                           ("carb_g", hit["carb"]), ("fiber_g", hit["fiber"]),
+                           ("sodium_mg", hit["sodium"]), ("calcium_mg", hit["calcium"]),
+                           ("iron_mg", hit["iron"]), ("vitamin_c_mg", hit["vitamin_c"])):
+            if val is not None:
+                result[label] = round(val * portion_g / 100, 1)
+        if hit["category"]:
+            result["category"] = hit["category"]
+        return json.dumps(result, ensure_ascii=False)
+
+    # 第二优先：营养骨架表 nutrition_table.csv（含权威表未收的加工/快餐/饮料，如炸鸡/可乐/奶茶）
+    hit = None
+    for row in _NUTRITION_TABLE:
+        if row["name"] == key:
+            hit = row
+            break
+    if hit is None:
+        for row in _NUTRITION_TABLE:
+            if key in row["name"] or row["name"] in key:
+                hit = row
+                break
+
+    if hit is not None:
+        per100 = hit["kcal"]
+        if per100 is None:
+            return json.dumps(
+                {"food": food, "kcal": None,
+                 "note": "该食物热量未录入，请用权威食物成分表查询；此处不臆造数值"},
+                ensure_ascii=False,
+            )
+        kcal = round(per100 * portion_g / 100)
+        result = {
+            "food": food, "portion_g": portion_g, "kcal": kcal,
+            "per_100g": per100, "source": "builtin",
+            "note": "营养骨架表估算值（加工/快餐类），精确值以《中国食物成分表》为准",
+        }
+        macros = {}
+        for label, val in (("protein_g", hit["protein"]),
+                           ("fat_g", hit["fat"]),
+                           ("carb_g", hit["carb"])):
+            if val is not None:
+                macros[label] = round(val * portion_g / 100, 1)
+        if macros:
+            result["macros"] = macros
+        if hit["category"]:
+            result["category"] = hit["category"]
+        return json.dumps(result, ensure_ascii=False)
+
+    # 都未命中 → 如实说明，不臆造
+    return json.dumps(
+        {"food": food, "kcal": None,
+         "note": "权威表与营养骨架表均未收录，请用《中国食物成分表》查询；此处不臆造数值"},
+        ensure_ascii=False,
+    )
+
+
+@tool
+def exercise_equiv(kcal: int, weight_kg: float = 60.0) -> str:
+    """把摄入热量换算成运动当量，让用户直观感受。kcal=摄入千卡，weight_kg=体重(默认60)。
+    用常见运动燃脂速率估算：慢跑≈0.115 kcal/kg/分钟，骑车≈0.08，快走≈0.06。
+    返回各项运动约需分钟数。写"约"，强调估算性质。"""
+    try:
+        kcal = float(kcal)
+        weight_kg = float(weight_kg) or 60.0
+    except Exception:
+        return json.dumps({"error": "kcal/weight 需为数字"}, ensure_ascii=False)
+    rates = {"慢跑": 0.115, "骑车": 0.08, "快走": 0.06}
+    result = {act: max(1, round(kcal / (rate * weight_kg))) for act, rate in rates.items()}
+    return json.dumps(
+        {"kcal": kcal, "weight_kg": weight_kg, "minutes": result,
+         "note": "约算值（中等强度），仅作直观参考"},
+        ensure_ascii=False,
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  权威知识检索（波次 P0①）：把已索引的国家膳食/慢病指南接进 Agent
+#  这是"权威护栏 / 可溯源"的落地关键——Agent 从此能查那 11 份权威 PDF，
+#  而不是只靠联网搜索。rag.search 已含混合检索 + 重排，返回带 source 文件名。
+# --------------------------------------------------------------------------- #
+
+_TOC_MAP_CACHE = None
+
+
+def _resolve_section(source: str, anchor: str) -> str:
+    """T2-P2：把「文件_p页码」升级为「章节名（第N页）」。
+    查 data/toc_map.json（由 scripts/build_toc_map.py 从 PDF 内嵌书签构建）；
+    无书签或未命中时原样返回页码锚点。"""
+    global _TOC_MAP_CACHE
+    try:
+        if _TOC_MAP_CACHE is None:
+            p = Path(__file__).resolve().parent / "data" / "toc_map.json"
+            import json as _json
+            _TOC_MAP_CACHE = _json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        import re as _re
+        m = _re.search(r"_p(\d+)\s*$", anchor or "")
+        if not m:
+            return anchor
+        page = int(m.group(1))
+        for entry in _TOC_MAP_CACHE.get(source, []):
+            if entry["s"] <= page <= entry["e"]:
+                title = entry["t"][:40]
+                return f"{title}（第{page}页）"
+    except Exception:
+        pass
+    return anchor
+
+
 @tool
 def web_search(query: str) -> str:
     """当用户询问某道菜、食材搭配或家常菜做法时调用。
@@ -764,6 +1238,8 @@ def exercise_equiv(kcal: int, weight_kg: float = 60.0) -> str:
 #  这是"权威护栏 / 可溯源"的落地关键——Agent 从此能查那 11 份权威 PDF，
 #  而不是只靠联网搜索。rag.search 已含混合检索 + 重排，返回带 source 文件名。
 # --------------------------------------------------------------------------- #
+
+
 @tool
 def nutrition_kb_search(query: str, top_k: int = 3) -> str:
     """当用户询问与"健康饮食原则、慢病忌口、营养标签、某种食物能不能吃"相关的问题时调用。
@@ -799,7 +1275,7 @@ def nutrition_kb_search(query: str, top_k: int = 3) -> str:
     for h in result.hits:
         items.append({
             "source": h.source,
-            "section": h.section,
+            "section": _resolve_section(h.source, h.section),
             "distance": round(float(getattr(h, "distance", 0.0)), 4),
             "excerpt": h.text[:200],
             "metadata": {
