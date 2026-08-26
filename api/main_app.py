@@ -75,6 +75,8 @@ app.include_router(nearby_router, prefix="/api")
 app.include_router(preferences_router, prefix="/api")
 from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
+from api.routes.shopping_route import router as shopping_router
+app.include_router(shopping_router, prefix="/api")
 
 # 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
 from api.routes.speech_route import router as speech_router
