@@ -66,6 +66,7 @@ export function ChatArea({
   // 浏览器定位（附近餐厅用）：拿不到就静默降级，不阻塞输入
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(true)
   useEffect(() => {
     if (!('geolocation' in navigator)) return
     navigator.geolocation.getCurrentPosition(
@@ -391,16 +392,19 @@ export function ChatArea({
           ))}
         </div>
 
-        {mode === 'dining' && (
+        {mode === 'dining' && panelOpen && (
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
               <div>
                 <Icon name="concierge" size={18} />
                 <span>附近餐厅</span>
               </div>
-              <button type="button" onClick={() => void loadNearby()} disabled={nearbyLoading}>
-                {nearbyLoading ? '查询中' : '查询附近'}
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" onClick={() => void loadNearby()} disabled={nearbyLoading}>
+                  {nearbyLoading ? '查询中' : '查询附近'}
+                </button>
+                <button type="button" aria-label="关闭面板" onClick={() => setPanelOpen(false)}>×</button>
+              </div>
             </header>
 
             {nearbyError && <p className="nearby-error">{nearbyError}</p>}

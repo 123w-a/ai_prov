@@ -421,6 +421,11 @@ def _infer_guardrail(name: str, ptype: str, cost=None) -> str:
 
 
 def _amap_poi_search(city, district, query, budget, location=""):
+    import re as _re
+    # 坐标清洗：模型可能把「[当前位置：经度,纬度]」整串塞进 location，只提取两个浮点数，
+    # 否则 amap 判定非法坐标退化为城市文本搜索，距离全是错位数字（如 128km）。
+    _m = _re.search(r"(\d{1,3}\.\d{3,})[,\s，]+(\d{1,3}\.\d{3,})", str(location or ""))
+    location = f"{_m.group(1)},{_m.group(2)}" if _m else ""
     """调用高德 POI 接口，返回标准化候选列表；无 key / 断网 / 接口报错返回 None（触发 mock 兜底）。
     location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。"""
     if not AMAP_KEY:
