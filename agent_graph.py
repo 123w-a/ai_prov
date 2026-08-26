@@ -535,8 +535,17 @@ def verify_answer_node(state: ChefState):
             "verify_violated": violated_conditions}
 
 def verify_route(state: ChefState) -> str:
-    """根据审计状态路由：ok/degraded → 结构化收尾；retry → 回到思考节点。"""
-    return state.get("verify_status", "ok")#创键的类中有这个字符，兜底是ok进入结果化输出
+    """根据审计状态路由：ok/degraded → 结构化收尾；retry → 回到思考节点。
+    P3 性能二段：本轮完全没调工具（纯健康问答/闲聊，规则3.7轻量通道）时，
+    流式文本已是完整答案，跳过 structure_answer 省一次 LLM 调用直接 END。"""
+    status = state.get("verify_status", "ok")
+    if status == "ok":
+        has_tool_result = any(
+            isinstance(m, ToolMessage) for m in state.get("messages", [])[-8:]
+        )
+        if not has_tool_result:
+            return "plain"
+    return status
 
 # --------------------------------------------------------------------------- #
 #  4.5 充分性门控（AgentMental 范式）：高风险健康决策前先确定性判断画像是否足够
@@ -702,7 +711,8 @@ workflow.add_conditional_edges(#新增一个条件边分支
     path=verify_route,
     path_map={"ok": "structure_answer", #下一步进入结构化输出
               "retry": "chef_think",#回去重新生成
-              "degraded": "structure_answer"},#能用就节构化输出
+              "degraded": "structure_answer",#能用就节构化输出
+              "plain": END},#P3：无工具纯问答直接结束，跳过结构化 LLM
 )
 # 3. 结构化回答完毕，整轮才真正结束
 workflow.add_edge("structure_answer", END)
