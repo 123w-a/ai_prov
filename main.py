@@ -140,6 +140,7 @@ def _stream_agent(message, session_id):
     """公共流式生成器：按"消息来自哪个节点"分流输出。"""
     config = {"configurable": {"thread_id": session_id}}
     last_stage = None
+    gate_asked = False  # 充分性门控已追问时，抑制后续节点的重复正文
     for message_chunk, metadata in agent.stream(
         {"messages": [message]},
         config=config,
@@ -155,8 +156,11 @@ def _stream_agent(message, session_id):
             continue
         # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
         if node == "ask_user":
+            gate_asked = True
             yield ("token", content)
         elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
+            if gate_asked:
+                continue
             yield ("token", content)
         # structure_answer 节点返回的完整 JSON 消息 → 整包给前端；
         # 注意 AIMessageChunk 是 AIMessage 子类，必须显式排除链内部的流式碎片
