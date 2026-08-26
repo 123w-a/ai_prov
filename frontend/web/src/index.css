@@ -736,7 +736,7 @@ img {
 }
 
 .chat-feed {
-  min-height: 0;
+  min-height: 460px;
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;

@@ -63,6 +63,19 @@ export function ChatArea({
   const [notice, setNotice] = useState('')
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [statusTags, setStatusTags] = useState<string[]>([])
+  // 浏览器定位（附近餐厅用）：拿不到就静默降级，不阻塞输入
+  const [coords, setCoords] = useState('')
+  useEffect(() => {
+    if (!('geolocation' in navigator)) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        setCoords(
+          `${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`,
+        ),
+      () => {},
+      { timeout: 8000 },
+    )
+  }, [])
   const [nearbyResult, setNearbyResult] = useState<NearbyResult | null>(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyError, setNearbyError] = useState('')
@@ -95,9 +108,13 @@ export function ChatArea({
 
   const submit = () => {
     if (!canSend) return
-    // 即时状态打卡：一次性前缀注入，发送后清空
-    const prefix = statusTags.length > 0 ? `[实时状态：${statusTags.join('、')}]
-` : ''
+    // 即时状态打卡（一次性）+ 当前位置（外食查询用）前缀注入
+    const parts: string[] = []
+    if (statusTags.length > 0) parts.push(`[实时状态：${statusTags.join('、')}]
+`)
+    if (coords) parts.push(`[当前位置：${coords}]
+`)
+    const prefix = parts.join('')
     onSend(`${prefix}${text.trim()}`, image, mode, preview)
     setText('')
     setStatusTags([])
