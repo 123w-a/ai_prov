@@ -11,6 +11,13 @@ from fastapi import APIRouter
 
 from api.routes.service_route import HOME_CHEF_RECIPES, _has_ingredient, _split_inventory_text
 
+try:
+    from agent_chains import structure_llm
+except Exception as _e:
+    import sys
+    print("[shopping] structure_llm import FAILED:", repr(_e)[:200], file=sys.stderr)
+    structure_llm = None
+
 router = APIRouter()
 _SEASONINGS = {"盐", "糖", "食用油", "生抽", "老抽", "醋", "料酒", "蚝油"}
 
@@ -35,9 +42,8 @@ def shopping_list(dishes: str = "", inventory: str = ""):
 
     # LLM 兜底：菜谱库没有的菜，让模型列常见必备食材，同样并入清单。
     # 失败静默跳过——unknown_dishes 里仍如实可见，不假装覆盖。
-    if unknown:
+    if unknown and structure_llm is not None:
         try:
-            from agent_chains import structure_llm
             from langchain_core.messages import HumanMessage
             prompt = (
                 "列出这些家常菜的常见必备食材（不要做法步骤）。每行一道菜，格式严格为："
@@ -48,7 +54,10 @@ def shopping_list(dishes: str = "", inventory: str = ""):
             for line in str(resp.content).splitlines():
                 if ":" not in line and "：" not in line:
                     continue
-                name, _, body = _re.split(r"[:：]", line, maxsplit=1)
+                parts = _re.split(r"[:：]", line, maxsplit=1)
+                if len(parts) != 2 or not parts[1].strip():
+                    continue
+                name, body = parts
                 name = name.strip().split("（")[0]
                 key2 = next((k for k in unknown if k in name or name in k), None)
                 if not key2:
@@ -60,8 +69,10 @@ def shopping_list(dishes: str = "", inventory: str = ""):
                         continue
                     seen.add(item)
                     (seasoning_items if item in _SEASONINGS else main_items).append(item)
-        except Exception:
-            pass
+        except Exception as _ex:
+            import sys, traceback
+            print("[shopping] llm fallback FAILED:", repr(_ex)[:300], file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
     return json.loads(json.dumps({
         "matched_dishes": matched,
         "unknown_dishes": unknown,
