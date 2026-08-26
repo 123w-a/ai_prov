@@ -35,6 +35,7 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "7. 若上下文中出现『权威健康依据检索结果（来自 nutrition_kb_search）』块，必须将其中的 source 文件名与命中片段填入 sources 字段，"
         "每条含 source（文件名）、section（章节/条目名，原样照抄工具返回的 section 字段，没有则留空串）与 snippet（片段摘录）；凡健康/忌口/标签类结论都要有对应出处，无则 sources 留空列表。\n"
         "9. health_lights：依据 recipes 实际用料给钠/糖/脂肪三盏灯（level 取 green/yellow/red，附一句话 reason）；拿不准的维度可省略。\n"
+        "10. 场景化：外出就餐/食堂/外卖场景时 recipes 填推荐的档口食物，steps 留空数组、不写烹饪说明，改在 tips 里写「点什么、怎么搭配、避雷什么」及忌口原因；自炊场景才写步骤。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题
