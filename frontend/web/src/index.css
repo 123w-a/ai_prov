@@ -736,7 +736,8 @@ img {
 }
 
 .chat-feed {
-  min-height: 460px;
+  /* 自适应下限：大屏给足高度，小屏自动收缩，保证输入框永远在可视区内 */
+  min-height: clamp(220px, calc(100dvh - 380px), 560px);
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
