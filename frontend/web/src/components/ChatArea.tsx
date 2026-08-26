@@ -392,12 +392,6 @@ export function ChatArea({
           ))}
         </div>
 
-        {mode === 'dining' && !panelOpen && (
-          <button type="button" className="nearby-reopen" onClick={() => setPanelOpen(true)}>
-            🍽 附近餐厅
-          </button>
-        )}
-
         {mode === 'dining' && panelOpen && (
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
@@ -499,6 +493,11 @@ export function ChatArea({
             >
               {locating ? '定位中…' : coords ? '📍 已定位' : '📍 未定位·点此授权'}
             </button>
+            {mode === 'dining' && !panelOpen && (
+              <button type="button" className="tool-btn" onClick={() => setPanelOpen(true)}>
+                🍽 附近餐厅
+              </button>
+            )}
             {STATUS_TAGS.map((tag) => {
               const active = statusTags.includes(tag)
               return (
