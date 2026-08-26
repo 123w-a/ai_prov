@@ -8,6 +8,7 @@ Python 导入 ``agent_tools`` 时优先进入这个包：普通工具仍复用�
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 from langchain_core.tools import tool
@@ -103,11 +104,62 @@ def nutrition_kb_search(query: str, n_results: int = 3, source_filter: str = "")
     return json.dumps({"found": True, "hits": hits}, ensure_ascii=False)
 
 
-tools = [web_search, get_file, nearby_food, nutrition_kb_search]
+# 健康化改造规则库（T1）：正则命中食谱元素 → 替/调建议 + 知识库检索关键词。
+# 建议文案是通用营养原则；证据必须来自 RAG 命中，无命中时如实标注「通用原则」。
+_REMIX_RULES = [
+    (re.compile(r"冰糖|白糖|白砂糖|砂糖"), "精制糖换赤藓糖醇/罗汉果糖等天然代糖，等量甜度大幅减热量", "添加糖 限量"),
+    (re.compile(r"油炸|深炸|宽油"), "改空气炸锅或少油煎，表面喷薄油即可上色，避免反复高温", "油炸 能量"),
+    (re.compile(r"五花肉|肥膘|肥肉"), "换去皮鸡腿肉或瘦牛腩，饱和脂肪明显下降且蛋白不减", "饱和脂肪"),
+    (re.compile(r"奶油|淡奶油"), "换希腊酸奶或低脂酸奶，口感近似、蛋白质更高脂肪更低", "乳制品"),
+    (re.compile(r"酱油|生抽|老抽|蚝油"), "用量减半并换薄盐生抽，用花椒/八角/姜蒜等香料补足风味", "钠 限量"),
+    (re.compile(r"米饭|面条|馒头"), "主食减三分之一并混入杂粮/魔芋米，降低升糖负荷增加膳食纤维", "全谷物 膳食纤维"),
+]
+
+
+@tool
+def healthy_remix(recipe_text: str) -> str:
+    """对用户给出的完整菜谱做「健康化改造」：替（食材替换）、调（做法调整），每条改造尽量附知识库出处。当用户粘贴食谱文本并希望吃得更健康时调用本工具。Args: recipe_text: 用户提供的原始菜谱全文。"""
+    import json
+
+    swaps = []
+    for pat, advice, kw in _REMIX_RULES:
+        m = pat.search(recipe_text)
+        if not m:
+            continue
+        evidence = None
+        try:
+            res = search_knowledge_base(kw, n_results=1, transform=_build_transform())
+            if not res.error and res.hits:
+                h = res.hits[0]
+                evidence = {
+                    "source": h.source,
+                    "section": getattr(h, "section", "") or "",
+                    "excerpt": h.text[:120],
+                }
+        except Exception:
+            evidence = None
+        swaps.append({
+            "type": "调" if ("改" in advice or "减" in advice) else "替",
+            "match": m.group(0),
+            "advice": advice,
+            "evidence": evidence,
+        })
+    return json.dumps(
+        {
+            "found": bool(swaps),
+            "swaps": swaps,
+            "note": "以上为食养参考，不替代执业医师或营养师；无出处的条目为通用烹饪原则。",
+        },
+        ensure_ascii=False,
+    )
+
+
+tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix]
 
 __all__ = [
     "find_recipe_image",
     "get_file",
+    "healthy_remix",
     "nearby_food",
     "nutrition_kb_search",
     "tools",
