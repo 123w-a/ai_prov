@@ -69,6 +69,19 @@ export function ChatArea({
   const [panelOpen, setPanelOpen] = useState(true)
   const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; guardrail_triggers?: number } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
+  const [shopDishes, setShopDishes] = useState('')
+  const [shopInv, setShopInv] = useState('')
+  const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[] } | null>(null)
+  const [shopOpen, setShopOpen] = useState(false)
+  const loadShopping = async () => {
+    setShopOpen(true)
+    try {
+      const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(shopInv)}`)
+      setShopResult(await res.json())
+    } catch {
+      setShopResult(null)
+    }
+  }
   const loadReport = async () => {
     setReportOpen(true)
     try {
@@ -403,6 +416,39 @@ export function ChatArea({
           ))}
         </div>
 
+        {shopOpen && mode === 'fridge' && (
+          <section className="nearby-panel report-card" aria-label="采购清单">
+            <header className="nearby-panel-head">
+              <div><Icon name="concierge" size={18} /><span>采购清单</span></div>
+              <button type="button" aria-label="关闭清单" onClick={() => setShopOpen(false)}>×</button>
+            </header>
+            <input
+              value={shopDishes}
+              onChange={(e) => setShopDishes(e.target.value)}
+              placeholder="想吃的菜，逗号分隔：番茄炒蛋,青椒肉丝"
+              style={{ width: '100%', marginBottom: 6 }}
+            />
+            <input
+              value={shopInv}
+              onChange={(e) => setShopInv(e.target.value)}
+              placeholder="家里已有的（可选）：鸡蛋,盐"
+              style={{ width: '100%', marginBottom: 8 }}
+            />
+            <button type="button" className="tool-btn" onClick={() => void loadShopping()} disabled={!shopDishes.trim()}>
+              {shopResult ? '重新生成' : '生成清单'}
+            </button>
+            {shopResult && (
+              <div className="nearby-list" style={{ marginTop: 10 }}>
+                <p><strong>主料：</strong>{shopResult.main.join('、') || '—'}</p>
+                <p><strong>调味料：</strong>{shopResult.seasoning.join('、') || '—'}</p>
+                {shopResult.unknown_dishes.length > 0 && (
+                  <p style={{ opacity: 0.7 }}>未收录菜谱：{shopResult.unknown_dishes.join('、')}</p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {reportOpen && (
           <section className="nearby-panel report-card" aria-label="本周周报">
             <header className="nearby-panel-head">
@@ -535,6 +581,11 @@ export function ChatArea({
             <button type="button" className="tool-btn" onClick={() => void loadReport()}>
               📊 本周周报
             </button>
+            {mode === 'fridge' && (
+              <button type="button" className="tool-btn" onClick={() => setShopOpen(!shopOpen)}>
+                🛒 采购清单
+              </button>
+            )}
             {STATUS_TAGS.map((tag) => {
               const active = statusTags.includes(tag)
               return (
