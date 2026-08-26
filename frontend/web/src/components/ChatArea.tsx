@@ -42,6 +42,9 @@ const STAGE_COPY = {
   structuring: '正在完成健康审计与卡片整理',
 }
 
+// T1 即时状态打卡：一次性生效，随下次发送注入消息前缀并自动清空
+const STATUS_TAGS = ['昨晚没睡好', '今天肌肉酸痛', '肠胃不太舒服', '很累没力气'] as const
+
 type VoiceState = 'idle' | 'recording' | 'transcribing'
 
 export function ChatArea({
@@ -59,6 +62,7 @@ export function ChatArea({
   const [preview, setPreview] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [statusTags, setStatusTags] = useState<string[]>([])
   const [nearbyResult, setNearbyResult] = useState<NearbyResult | null>(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyError, setNearbyError] = useState('')
@@ -91,8 +95,12 @@ export function ChatArea({
 
   const submit = () => {
     if (!canSend) return
-    onSend(text.trim(), image, mode, preview)
+    // 即时状态打卡：一次性前缀注入，发送后清空
+    const prefix = statusTags.length > 0 ? `[实时状态：${statusTags.join('、')}]
+` : ''
+    onSend(`${prefix}${text.trim()}`, image, mode, preview)
     setText('')
+    setStatusTags([])
     setImage(null)
     setPreview(null)
     setNotice('')
@@ -441,6 +449,28 @@ export function ChatArea({
               }
             }}
           />
+
+          <div className="composer-tools" role="group" aria-label="实时状态打卡">
+            {STATUS_TAGS.map((tag) => {
+              const active = statusTags.includes(tag)
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  className={active ? 'tool-btn mood-active' : 'tool-btn'}
+                  disabled={sending}
+                  aria-pressed={active}
+                  onClick={() =>
+                    setStatusTags((prev) =>
+                      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+                    )
+                  }
+                >
+                  {active ? `✓ ${tag}` : tag}
+                </button>
+              )
+            })}
+          </div>
 
           <div className="composer-toolbar">
             <div className="composer-tools">
