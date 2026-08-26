@@ -41,6 +41,7 @@ class Recipe(BaseModel):#菜谱结构
 class SourceRef(BaseModel):#权威信息
     """一条权威引文出处，来自 nutrition_kb_search 的检索结果，体现可溯源与 AIGC 透明标注。"""
     source: str = Field(description="出处文件名，如《成人高血压食养指南（2023年版）》")
+    section: str = Field(default="", description="出处章节/条目名，原样取自 nutrition_kb_search 返回的 section 字段，如『三、生活方式指导』；工具未返回则留空，禁止编造")
     snippet: str = Field(default="", description="该出处命中片段的简短摘录，证明结论有据可依")
     category: str = Field(default="", description="知识库分层类别，如 1_慢病食养指南 / 2_营养素参考摄入量DRI")
 

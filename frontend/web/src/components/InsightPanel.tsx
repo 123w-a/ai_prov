@@ -1,4 +1,5 @@
 import type { ChefAnswer } from '../types'
+import { formatSourceSection } from '../utils/sourceFormat'
 import { Icon } from './Icon'
 
 const STATUS_COPY: Record<string, string> = {
@@ -96,7 +97,7 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
                 {sources.map((source, index) => (
                   <article key={`${source.source}-${index}`} className="source-card">
                     {source.category && <span>{source.category}</span>}
-                    <h4>{source.source}</h4>
+                    <h4>{source.source}{source.section ? ` · ${formatSourceSection(source.source, source.section)}` : ''}</h4>
                     <p>{source.snippet || '该来源未附带命中片段。'}</p>
                   </article>
                 ))}

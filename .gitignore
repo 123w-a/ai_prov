@@ -84,3 +84,9 @@ dist/
 
 # TypeScript 增量编译缓存
 *.tsbuildinfo
+
+# 本地模型缓存（bge / reranker，体积大可重建）
+models/
+
+# 会话内临时探针脚本与产物
+.tmp-*

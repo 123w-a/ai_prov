@@ -33,7 +33,7 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "5. image_url 必须对应 recipes 中的菜名；没有可靠图片就填 null；\n"
         "6. 只输出符合以下格式的 JSON，不要输出任何额外文字、解释或代码围栏。\n"
         "7. 若上下文中出现『权威健康依据检索结果（来自 nutrition_kb_search）』块，必须将其中的 source 文件名与命中片段填入 sources 字段，"
-        "每条含 source（文件名）与 snippet（片段摘录）；凡健康/忌口/标签类结论都要有对应出处，无则 sources 留空列表。\n"
+        "每条含 source（文件名）、section（章节/条目名，原样照抄工具返回的 section 字段，没有则留空串）与 snippet（片段摘录）；凡健康/忌口/标签类结论都要有对应出处，无则 sources 留空列表。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题

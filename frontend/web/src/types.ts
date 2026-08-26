@@ -16,6 +16,7 @@ export interface Recipe {
 
 export interface SourceRef {
   source: string
+  section?: string
   snippet?: string
   category?: string
 }

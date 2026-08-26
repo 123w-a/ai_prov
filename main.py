@@ -11,13 +11,59 @@ from pathlib import Path
 
 # 用户长期偏好文件路径（白名单目录 data/ 下）
 _PREFS_PATH = str(Path(__file__).resolve().parent / "data" / "preferences.txt")
+# 结构化健康画像（P2 升级）：存在时优先于自由文本偏好
+_PROFILE_PATH = Path(__file__).resolve().parent / "data" / "profile.json"
+
+
+def _render_health_profile(profile: dict) -> str:
+    """把结构化画像 dict 渲染成注入 prompt 的确定性中文段落。
+    数值原样回显（BMI 代算），过敏原显式标注硬约束——
+    不让 LLM 自行解释 JSON，保证「记得你」的注入内容可预测、可验收。"""
+    lines = ["【结构化健康画像（每次对话自动加载，务必严格遵守）】"]
+    basic = profile.get("basic") or {}
+    h, w = basic.get("height_cm"), basic.get("weight_kg")
+    if h and w:
+        try:
+            bmi = round(float(w) / (float(h) / 100) ** 2, 1)
+            lines.append(f"- 身高体重：{h}cm / {w}kg（BMI {bmi}）")
+        except Exception:
+            pass
+    age, sex = basic.get("age"), basic.get("sex") or ""
+    if age or sex:
+        sex_cn = {"male": "男", "female": "女"}.get(sex, "")
+        seg = " ".join(x for x in [f"{age}岁" if age else "", sex_cn] if x)
+        lines.append(f"- 年龄性别：{seg}")
+    cond = [c for c in (profile.get("conditions") or []) if c]
+    if cond:
+        lines.append(f"- 慢病情况：{'、'.join(cond)}（相关忌口按硬约束执行，推荐前先过健康护栏）")
+    alg = [a for a in (profile.get("allergens") or []) if a]
+    if alg:
+        lines.append(f"- 过敏原：{'、'.join(alg)}（绝对禁止出现在任何推荐与食谱中）")
+    if profile.get("goal"):
+        lines.append(f"- 当前目标：{profile['goal']}")
+    if profile.get("diet_style"):
+        lines.append(f"- 饮食流派：{profile['diet_style']}")
+    dis = [d for d in (profile.get("dislikes") or []) if d]
+    if dis:
+        lines.append(f"- 不喜欢的食材：{'、'.join(dis)}（尽量避免）")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def load_preferences() -> str:
-    """会话初始化时读取用户长期偏好（忌口/辣度/减脂/糖尿病忌糖等）。
-    用 get_file 工具读取（复用沙箱能力，自动受目录白名单保护）；
-    文件不存在/读取被拒时返回空串，绝不阻断主流程。
-    过滤注释行（# 开头）与空行，只把有效偏好注入模型上下文。"""
+    """会话初始化时读取用户长期偏好。
+    P2 升级：存在 data/profile.json 时优先渲染结构化健康画像（确定性段落）；
+    不存在或渲染为空则回落旧自由文本 preferences.txt（向后兼容）。
+    文件不存在/读取被拒时返回空串，绝不阻断主流程。"""
+    try:
+        if _PROFILE_PATH.exists():
+            import json
+            profile = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
+            if isinstance(profile, dict):
+                rendered = _render_health_profile(profile)
+                if rendered:
+                    return rendered
+    except Exception:
+        pass
     try:
         content = get_file.invoke({"file_path": _PREFS_PATH})
         if content and not content.startswith(("文件不存在", "读取被拒绝", "读取失败")):

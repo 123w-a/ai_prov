@@ -1,4 +1,5 @@
 import type { ChefAnswer, GuardrailItem, Recipe, SourceRef } from '../types'
+import { formatSourceSection } from '../utils/sourceFormat'
 import { Icon } from './Icon'
 
 const GUARD_LABEL: Record<string, string> = {
@@ -159,7 +160,7 @@ function InlineEvidence({
           <div key={`${source.source}-${index}`} className="inline-source">
             <Icon name="book" size={16} />
             <div>
-              <strong>{source.source}</strong>
+              <strong>{source.source}{source.section ? ` · ${formatSourceSection(source.source, source.section)}` : ''}</strong>
               {source.snippet && <p>{source.snippet}</p>}
             </div>
           </div>
