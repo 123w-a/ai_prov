@@ -392,6 +392,12 @@ export function ChatArea({
           ))}
         </div>
 
+        {mode === 'dining' && !panelOpen && (
+          <button type="button" className="nearby-reopen" onClick={() => setPanelOpen(true)}>
+            🍽 附近餐厅
+          </button>
+        )}
+
         {mode === 'dining' && panelOpen && (
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
