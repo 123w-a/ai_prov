@@ -3180,6 +3180,10 @@ img {
 }
 
 .nearby-panel {
+  /* 出去吃模式：面板限高内部滚动，防止餐厅列表把输入框顶出可视区 */
+  max-height: 230px;
+  overflow-y: auto;
+  flex: 0 0 auto;
   margin-top: 12px;
   padding: 14px;
   border: 1px solid var(--line);
