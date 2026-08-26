@@ -32,6 +32,36 @@ def shopping_list(dishes: str = "", inventory: str = ""):
                 continue
             seen.add(item)
             (seasoning_items if item in _SEASONINGS else main_items).append(item)
+
+    # LLM 兜底：菜谱库没有的菜，让模型列常见必备食材，同样并入清单。
+    # 失败静默跳过——unknown_dishes 里仍如实可见，不假装覆盖。
+    if unknown:
+        try:
+            from agent_chains import structure_llm
+            from langchain_core.messages import HumanMessage
+            prompt = (
+                "列出这些家常菜的常见必备食材（不要做法步骤）。每行一道菜，格式严格为："
+                "菜名:食材1、食材2\n只输出这几行，不要任何解释。菜：" + "、".join(unknown)
+            )
+            resp = structure_llm.invoke([HumanMessage(content=prompt)])
+            import re as _re
+            for line in str(resp.content).splitlines():
+                if ":" not in line and "：" not in line:
+                    continue
+                name, _, body = _re.split(r"[:：]", line, maxsplit=1)
+                name = name.strip().split("（")[0]
+                key2 = next((k for k in unknown if k in name or name in k), None)
+                if not key2:
+                    continue
+                unknown.remove(key2)
+                matched.append(key2 + "（模型补录）")
+                for item in [x.strip()[:12] for x in _re.split(r"[、,，]", body) if x.strip()]:
+                    if item in seen or _has_ingredient(owned, item):
+                        continue
+                    seen.add(item)
+                    (seasoning_items if item in _SEASONINGS else main_items).append(item)
+        except Exception:
+            pass
     return json.loads(json.dumps({
         "matched_dishes": matched,
         "unknown_dishes": unknown,
