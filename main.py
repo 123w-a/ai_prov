@@ -155,7 +155,9 @@ def _stream_agent(message, session_id):
         if not content:
             continue
         # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
-        if node == "ask_user":
+        # ask_user 节点：只放行 LLM 流式块；节点最终返回的完整 AIMessage 会再次
+        # 出现在 messages 流里，不过滤就会把同一句追问推给前端两遍。
+        if node == "ask_user" and isinstance(message_chunk, AIMessageChunk):
             gate_asked = True
             yield ("token", content)
         elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
