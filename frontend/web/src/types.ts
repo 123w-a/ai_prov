@@ -14,6 +14,12 @@ export interface Recipe {
   image_ai_generated: boolean
 }
 
+export interface HealthLight {
+  label: string
+  level: 'green' | 'yellow' | 'red'
+  reason?: string
+}
+
 export interface SourceRef {
   source: string
   section?: string

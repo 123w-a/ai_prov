@@ -174,10 +174,22 @@ export function RecipeCard({ answer }: { answer: ChefAnswer }) {
   const recipes = answer.recipes ?? []
   const guards = answer.guardrails ?? []
   const sources = answer.sources ?? []
+  const lights = answer.health_lights ?? []
+  const LIGHT_ICON: Record<string, string> = { green: '🟢', yellow: '🟡', red: '🔴' }
   if (recipes.length === 0) return null
 
   return (
     <div className="recipe-stack">
+      {lights.length > 0 && (
+        <div className="health-lights" role="status" aria-label="健康红绿灯">
+          {lights.map((l, i) => (
+            <span key={`${l.label}-${i}`} title={l.reason || ''}>
+              {LIGHT_ICON[l.level] || '⚪'} {l.label}
+              {l.reason ? `：${l.reason}` : ''}
+            </span>
+          ))}
+        </div>
+      )}
       {recipes.map((recipe, index) => (
         <RecipeSheet
           key={`${recipe.name}-${index}`}

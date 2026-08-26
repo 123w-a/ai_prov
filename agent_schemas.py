@@ -38,6 +38,14 @@ class Recipe(BaseModel):#菜谱结构
     )
 
 
+class HealthLight(BaseModel):
+    """健康红绿灯：一道菜在钠/糖/脂三个维度的直观标注。
+    level: green=可放心 / yellow=注意量 / red=本餐其他餐次需补偿。"""
+    label: str = Field(description="维度名：钠 / 糖 / 脂肪")
+    level: str = Field(description="green | yellow | red")
+    reason: str = Field(default="", description="一句话理由，如『酱油蚝油合计钠较高』")
+
+
 class SourceRef(BaseModel):#权威信息
     """一条权威引文出处，来自 nutrition_kb_search 的检索结果，体现可溯源与 AIGC 透明标注。"""
     source: str = Field(description="出处文件名，如《成人高血压食养指南（2023年版）》")
@@ -97,9 +105,11 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
     )
     sources: list[SourceRef] = Field(
         default_factory=list,
-        description="本次回答引用的权威依据出处列表，来自 nutrition_kb_search 检索结果；"
-                    "凡涉及健康/忌口/标签的结论都必须在此列出对应出处文件名与片段，体现可溯源与 AIGC 透明标注；"
-                    "无健康相关结论时可为空列表",
+        description="权威依据列表；无则留空",
+    )
+    health_lights: list[HealthLight] = Field(
+        default_factory=list,
+        description="健康红绿灯：钠/糖/脂肪三盏灯，依据菜谱实际用料判定；拿不准的维度可省略",
     )
     guardrails: list[GuardrailItem] = Field(
         default_factory=list,
