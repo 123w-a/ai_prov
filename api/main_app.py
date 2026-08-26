@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi import Request
 from sessions_store import init_db
 import os
+import threading
 
 app = FastAPI(title="小膳管家")#创键fastapi对象
 
@@ -24,6 +25,27 @@ app.add_middleware(
 
 # 重要：必须在 app 创建后、接收请求前初始化会话目录，否则首次插入会找不到 sessions/ 目录
 init_db()
+
+
+# —— RAG 知识库预热：在启动阶段后台加载向量库、bge 嵌入与重排模型 ——
+# 否则首个用户提问要独自承担全部冷启动耗时（实测 30~170 秒），表现为“点了没反应”。
+def _warmup_knowledge_base() -> None:
+    import time
+
+    started = time.time()
+    try:
+        from rag.retriever import get_retriever
+
+        retriever = get_retriever()          # 打开 Chroma 并加载 bge 嵌入模型
+        retriever._ensure_bm25()             # 构建 BM25 索引
+        retriever._ensure_reranker()         # 加载 bge-reranker 重排模型（失败自动跳过）
+        retriever.store.search("知识库预热", n_results=1)  # 走一次真实向量检索
+        print(f"[warmup] 知识库预热完成，用时 {time.time() - started:.1f}s（reranker={'on' if retriever._reranker else 'off'}）", flush=True)
+    except Exception as exc:  # 预热失败不阻塞服务启动，首次提问时再惰性加载
+        print(f"[warmup] 知识库预热失败（将在首次提问时重试）：{exc}", flush=True)
+
+
+threading.Thread(target=_warmup_knowledge_base, name="kb-warmup", daemon=True).start()
 
 
 

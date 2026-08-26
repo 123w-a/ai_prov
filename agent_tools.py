@@ -15,15 +15,21 @@ from model_name import get_langchain_llm  # 获取用于图片审核的视觉模
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
 
-# Tavily 搜索客户端（联网菜谱检索）
-tavily = TavilySearch(
-    max_results=2,                # 最多返回2条搜索结果
-    search_depth="basic",         # 基础搜索深度（快速摘要，advanced会爬网页全文）
-    include_answer=False,         # 不返回Tavily自带的总结答案
-    include_raw_content=False,     # 不抓取网页原始完整HTML正文（省token、省钱）
-    include_images=True,          # 开启搜索返回图片链接
-    include_image_descriptions=True, # 给返回的每张图片附加文本描述
-)
+# Tavily 搜索客户端（联网菜谱检索）。
+# 未配置 TAVILY_API_KEY 时优雅降级：tavily 置 None，web_search 返回友好提示、
+# 成品图自动走 Bing/Unsplash/AI 生图兜底链；在 .env 补上 key 重启即可恢复。
+tavily = None
+try:
+    tavily = TavilySearch(
+        max_results=2,                # 最多返回2条搜索结果
+        search_depth="basic",         # 基础搜索深度（快速摘要，advanced会爬网页全文）
+        include_answer=False,         # 不返回Tavily自带的总结答案
+        include_raw_content=False,     # 不抓取网页原始完整HTML正文（省token、省钱）
+        include_images=True,          # 开启搜索返回图片链接
+        include_image_descriptions=True, # 给返回的每张图片附加文本描述
+    )
+except Exception as _tavily_exc:
+    print(f"[agent_tools] Tavily 未配置或不可用，web_search 已降级：{_tavily_exc}")
 
 # 国内无法访问或容易返回视频/乱码的海外图源黑名单（省去无谓超时）
 BLOCKED_DOMAINS = (
@@ -320,6 +326,12 @@ def web_search(query: str) -> str:
     base_query = query
     # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
     image_friendly_query = f"{query} 美食 成品图"
+    if tavily is None:
+        return json.dumps(
+            {"text": "联网搜索未启用：缺少 TAVILY_API_KEY，请在 .env 中配置后重启后端。",
+             "image_url": None, "image_source": "real"},
+            ensure_ascii=False,
+        )
     result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
 
     items = result.get("results", [])#拿到result这个列表中的几条结果

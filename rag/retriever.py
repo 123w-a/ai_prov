@@ -15,6 +15,7 @@ Agent 只依赖本文件的 ``search``，不依赖 Chroma 的 API。
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any, Callable, Optional, Sequence
 
@@ -158,9 +159,11 @@ class KnowledgeBaseRetriever:
         try:
             from sentence_transformers import CrossEncoder
 
-            self._reranker = CrossEncoder(
-                self.cfg.get("rerank_model", "BAAI/bge-reranker-v2-m3")
+            # 支持本地目录：KB_RERANK_MODEL 指向本地模型路径时优先使用（离线友好）
+            model_id = os.getenv("KB_RERANK_MODEL") or self.cfg.get(
+                "rerank_model", "BAAI/bge-reranker-v2-m3"
             )
+            self._reranker = CrossEncoder(model_id)
         except Exception:
             self._reranker = None
 

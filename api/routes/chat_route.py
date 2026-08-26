@@ -100,6 +100,19 @@ async def chat(
         final_answer = None  # structure_answer 节点产出的 ChefAnswer JSON 字符串
         events = queue.Queue()
         finished = object()
+        saved_flag = [False]  # 兜底落库幂等标记
+
+        def _persist_once():
+            """整轮结束或中途断流都把已获得的内容落库（幂等，只存一次）。"""
+            if saved_flag[0]:
+                return
+            saved_flag[0] = True
+            answer = final_answer if final_answer else "".join(full_parts)
+            if answer and answer.strip():
+                try:
+                    _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
+                except Exception:
+                    pass  # 落库失败不影响流式响应本身
 
         def run_agent():
             try:
@@ -142,11 +155,11 @@ async def chat(
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return
+        finally:
+            # 无论正常完成、后端异常还是客户端断开（GeneratorExit），都兜底落库一次
+            _persist_once()
 
-        # 整轮结束落库：有结构化 JSON 就存 JSON（前端画卡片）；
-        # 没有（结构化链降级/未触发）就存正文 markdown（前端走旧渲染），双格式兼容
-        answer = final_answer if final_answer else "".join(full_parts)
-        _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
+        # 整轮正常结束（持久化已由 finally 完成，此处幂等）
         yield f"data: {json.dumps({'finish': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

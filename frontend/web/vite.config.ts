@@ -10,6 +10,9 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8010',
         changeOrigin: true,
+        // SSE 长连接：禁用 http-proxy 的默认超时，避免长对话流被代理层掐断
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },
