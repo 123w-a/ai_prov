@@ -57,4 +57,24 @@ def weekly_report():
         "lights": dict(lights),
         "guardrail_triggers": sum(m.get("guardrails", 0) for m in recent),
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
+        "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
     }
+
+
+def _next_week_shopping(top_dishes: list) -> list[str]:
+    """T2-P1.5：把本周常吃菜对应的主料合并去重，作为下周购物参考清单。"""
+    try:
+        from api.routes.service_route import HOME_CHEF_RECIPES
+    except Exception:
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for dish, _n in top_dishes:
+        key = next((k for k in HOME_CHEF_RECIPES if k in dish or dish in k), None)
+        if not key:
+            continue
+        for ing in HOME_CHEF_RECIPES[key]:
+            if ing not in seen:
+                seen.add(ing)
+                items.append(ing)
+    return items

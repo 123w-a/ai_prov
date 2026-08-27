@@ -75,6 +75,8 @@ app.include_router(nearby_router, prefix="/api")
 app.include_router(preferences_router, prefix="/api")
 from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
+from api.routes.fridge_route import router as fridge_router
+app.include_router(fridge_router, prefix="/api")
 from api.routes.shopping_route import router as shopping_router
 app.include_router(shopping_router, prefix="/api")
 
