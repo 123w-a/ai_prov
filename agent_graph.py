@@ -444,10 +444,7 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
         answer = build_structured_answer(context)#会返回一个实例
         answer = rank_recipes(answer, allow_multiple=allow_multiple)
-        # T2-P3/UX：外出就餐场景禁止烹饪步骤，其实也是 schema 的 min_length 硬伤——改写清空。
-        if _is_dining_scene(latest_text):
-            for recipe in answer.recipes:
-                recipe.steps = []#将实例中的菜谱进行排序
+        # 外出就餐场景：不清空 steps，改在 Prompt 里要求模型产出「取餐/怎么吃」而非烹饪步骤。#将实例中的菜谱进行排序
         # 健康护栏可见化：把 verify 的确定性审计结论注入卡片，供前端右栏渲染『健康链』
         answer.guardrails = _build_guardrails(
             latest_text,
