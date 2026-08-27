@@ -484,6 +484,7 @@ export function ChatArea({
                           <i />
                         </span>
                         {STAGE_COPY[message.stage || 'thinking']}
+                        {message.elapsed != null && message.elapsed >= 15 && (message.stage === 'thinking' || message.stage === 'searching') && (` · 已等待 ${message.elapsed}s（上游模型响应较慢）`)}
                       </div>
                     )}
                   </div>

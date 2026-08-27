@@ -239,6 +239,12 @@ export default function App() {
                 message.id === assistantId ? { ...message, stage: 'structuring' } : message,
               ),
             ),
+          onHeartbeat: (elapsed) =>
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId ? { ...message, elapsed } : message,
+              ),
+            ),
           onAnswer: (answer) =>
             setMessages((current) =>
               current.map((message) =>

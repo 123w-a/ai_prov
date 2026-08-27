@@ -12,6 +12,7 @@ from main import (
     image_bytes_to_oss_url,
 )
 from sessions_store import append_message
+import time
 from datetime import datetime
 
 router = APIRouter()  # 分文件写接口的小路由
@@ -136,12 +137,14 @@ async def chat(
         threading.Thread(target=run_agent, daemon=True).start()
         yield f"data: {json.dumps({'status': 'working'}, ensure_ascii=False)}\n\n"
 
+        started = time.time()
         try:
             while True:
                 try:
                     event_type, event = events.get(timeout=10)
                 except queue.Empty:
-                    yield f"data: {json.dumps({'heartbeat': True}, ensure_ascii=False)}\n\n"
+                    elapsed = int(time.time() - started)
+                    yield f"data: {json.dumps({'heartbeat': {'elapsed': elapsed}}, ensure_ascii=False)}\n\n"
                     continue
 
                 if event_type == "error":

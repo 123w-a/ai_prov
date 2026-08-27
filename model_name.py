@@ -86,6 +86,8 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
         "base_url": final_base_url,
         "temperature": temperature,
         "streaming": True,  #意思是能流式但也不阻止invoken（）的阻塞式
+        "timeout": 75,  # 上游偶发黑洞(180s+无响应)，75s 剪断后由 max_retries 重试一次
+        "max_retries": 1,
     }
     # max_tokens=None 时不传入，避免部分厂商 API 因接收 null 而报错
     if max_tokens is not None:#如果传了参就传进去，没传参就是大模型去默认别写个null在这里

@@ -76,6 +76,7 @@ export interface ChatMessage {
   time?: string
   streaming?: boolean
   stage?: StreamStage
+  elapsed?: number
   error?: boolean
 }
 
