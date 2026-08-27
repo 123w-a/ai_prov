@@ -182,3 +182,33 @@ export async function updatePreferences(preferences: string): Promise<string> {
   })
   return result.data.preferences
 }
+
+export interface FridgeVisionItem {
+  name: string
+  quantity: string
+}
+
+export async function recognizeFridgePhoto(file: File): Promise<FridgeVisionItem[]> {
+  const body = new FormData()
+  body.append('image', file)
+  const result = await jsonRequest<{ items: FridgeVisionItem[]; draft: boolean; note: string }>(
+    '/api/fridge/vision',
+    { method: 'POST', body },
+  )
+  return result.items ?? []
+}
+
+export interface MealFeedbackPayload {
+  dish: string
+  rating: number
+  tags: string[]
+  comment: string
+}
+
+export async function submitMealFeedback(payload: MealFeedbackPayload): Promise<void> {
+  await jsonRequest('/api/reports/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}

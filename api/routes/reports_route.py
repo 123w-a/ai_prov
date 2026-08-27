@@ -7,12 +7,13 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api.routes.fridge_route import _PANTRY_LOG, get_fridge
 
 router = APIRouter()
 _MEALS = Path(__file__).resolve().parents[2] / "data" / "meals.json"
+_FEEDBACK_LOG = Path(__file__).resolve().parents[2] / "data" / "feedback.json"
 
 
 def record_meal(session_id: str, answer: dict) -> None:
@@ -62,7 +63,9 @@ def weekly_report():
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
         "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
         "recommendations": _weekly_recommendations(dishes.most_common(5), _light_trends(recent, since))
-                             + _pantry_restock_tips(_read_pantry_log(), set(get_fridge().get("items", []))),
+                             + _pantry_restock_tips(_read_pantry_log(), set(get_fridge().get("items", [])))
+                             + _feedback_tips(_read_feedback_log()),
+        "feedback_summary": _feedback_summary(_read_feedback_log()),
     }
 
 
@@ -125,6 +128,71 @@ def _read_pantry_log() -> list[dict]:
         return json.loads(_PANTRY_LOG.read_text(encoding="utf-8")) if _PANTRY_LOG.exists() else []
     except Exception:
         return []
+
+
+def _read_feedback_log() -> list[dict]:
+    try:
+        return json.loads(_FEEDBACK_LOG.read_text(encoding="utf-8")) if _FEEDBACK_LOG.exists() else []
+    except Exception:
+        return []
+
+
+_FEEDBACK_TAG_TIPS = {"偏咸": "主动再减盐", "偏油": "烹饪用油再收一收", "偏淡": "调味可稍补一点"}
+
+
+def _feedback_tips(entries: list[dict], today: datetime | None = None) -> list[str]:
+    """把最近一周的真实用餐反馈提炼成建议；没有反馈就一条不说。"""
+    today = today or datetime.now()
+    since = (today - timedelta(days=7)).date().isoformat()
+    recent = [e for e in entries if str(e.get("ts", ""))[:10] >= since]
+    tips: list[str] = []
+    tag_counts = Counter(t for e in recent for t in (e.get("tags") or []))
+    for tag, tip in _FEEDBACK_TAG_TIPS.items():
+        if tag_counts.get(tag, 0) >= 2:
+            tips.append(f"本周 {tag_counts[tag]} 餐反馈『{tag}』——{tip}。")
+        if len(tips) >= 2:
+            break
+    rated = [e for e in recent if isinstance(e.get("rating"), (int, float))]
+    if len(tips) < 2 and len(rated) >= 2:
+        avg = sum(e["rating"] for e in rated) / len(rated)
+        if avg <= 2:
+            tips.append(f"本周 {len(rated)} 餐平均评分仅 {avg:.1f} 分——建议换换菜式或调整做法。")
+    return tips
+
+
+def _feedback_summary(entries: list[dict], today: datetime | None = None) -> dict:
+    today = today or datetime.now()
+    since = (today - timedelta(days=7)).date().isoformat()
+    recent = [e for e in entries if str(e.get("ts", ""))[:10] >= since]
+    tags = Counter(t for e in recent for t in (e.get("tags") or []))
+    return {"count": len(recent), "tags": dict(tags)}
+
+
+@router.post("/reports/feedback")
+def save_feedback(payload: dict):
+    """记录一次用餐反馈：{dish, rating(1-5), tags?, comment?}。"""
+    dish = str(payload.get("dish") or "").strip()[:40]
+    rating = payload.get("rating")
+    if not dish:
+        raise HTTPException(status_code=400, detail="dish 不能为空")
+    if not isinstance(rating, int) or not 1 <= rating <= 5:
+        raise HTTPException(status_code=400, detail="rating 必须是 1-5 的整数")
+    tags = [str(t).strip()[:8] for t in (payload.get("tags") or []) if str(t).strip()][:4]
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "dish": dish,
+        "rating": rating,
+        "tags": tags,
+        "comment": str(payload.get("comment") or "").strip()[:120],
+    }
+    data = _read_feedback_log()
+    data.append(entry)
+    try:
+        _FEEDBACK_LOG.parent.mkdir(parents=True, exist_ok=True)
+        _FEEDBACK_LOG.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"反馈写入失败：{exc}")
+    return {"saved": True, "count": len(data)}
 
 
 def _pantry_restock_tips(log: list[dict], owned: set[str], today: datetime | None = None) -> list[str]:

@@ -3340,6 +3340,30 @@ img {
   line-height: 1.5;
 }
 
+/* 拍照清点与用餐反馈（P0 双闭环） */
+.vision-row{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.vision-row .tool-btn{width:auto;padding:6px 12px}
+.vision-draft{margin-top:8px;align-items:center}
+.vision-chip{display:inline-flex;align-items:center;gap:4px}
+.vision-chip button{border:none;background:none;cursor:pointer;font-size:12px;opacity:.6;padding:0 2px}
+.vision-chip button:hover{opacity:1}
+.meal-feedback{margin-top:12px;border-top:1px dashed rgba(0,0,0,.12);padding-top:10px}
+.feedback-open{border:none;background:none;cursor:pointer;color:#8a6d3b;font-size:13px;padding:0}
+.feedback-open:hover{text-decoration:underline}
+.meal-feedback.done{color:#2e7d32;font-size:13px}
+.meal-feedback.form{display:flex;flex-direction:column;gap:8px}
+.feedback-rating{display:flex;gap:4px}
+.feedback-rating .star{border:none;background:none;cursor:pointer;font-size:20px;color:#ddd;padding:0 2px}
+.feedback-rating .star.filled{color:#f5a623}
+.feedback-tags{display:flex;gap:6px;flex-wrap:wrap}
+.feedback-tags .tag,.feedback-actions .tag{border:1px solid rgba(0,0,0,.15);background:#fff;border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer}
+.feedback-tags .tag.chosen{background:#8a6d3b;color:#fff;border-color:#8a6d3b}
+.feedback-comment{border:1px solid rgba(0,0,0,.15);border-radius:8px;padding:6px 10px;font-size:13px}
+.feedback-actions{display:flex;gap:8px;justify-content:flex-end}
+.feedback-submit{border:none;background:#8a6d3b;color:#fff;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer}
+.feedback-submit:disabled{opacity:.5;cursor:not-allowed}
+.feedback-error{color:#c62828;font-size:12px;margin:0}
+
 .report-shopping {
   margin-top: 8px;
   padding-top: 8px;

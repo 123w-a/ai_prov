@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { ChefAnswer, GuardrailItem, Recipe, SourceRef } from '../types'
 import { formatSourceSection } from '../utils/sourceFormat'
+import { submitMealFeedback } from '../api/client'
 import { Icon } from './Icon'
 
 const GUARD_LABEL: Record<string, string> = {
@@ -23,6 +25,93 @@ function ScoreMeter({ label, value }: { label: string; value: number }) {
         ))}
       </div>
       <strong>{score}.0</strong>
+    </div>
+  )
+}
+
+const FEEDBACK_TAGS = ['偏咸', '偏淡', '偏油', '刚好', '好吃'] as const
+
+function MealFeedback({ dish }: { dish: string }) {
+  const [open, setOpen] = useState(false)
+  const [rating, setRating] = useState(0)
+  const [tags, setTags] = useState<string[]>([])
+  const [comment, setComment] = useState('')
+  const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle')
+
+  if (!open) {
+    return (
+      <div className="meal-feedback">
+        <button
+          type="button"
+          className="feedback-open"
+          onClick={() => setOpen(true)}
+        >
+          🍽 我做了这道菜，给个反馈
+        </button>
+      </div>
+    )
+  }
+
+  if (state === 'done') {
+    return (
+      <div className="meal-feedback done" role="status">✓ 反馈已记录，周报会记住你的口味</div>
+    )
+  }
+
+  const submit = async () => {
+    if (!rating || state === 'sending') return
+    setState('sending')
+    try {
+      await submitMealFeedback({ dish, rating, tags, comment })
+      setState('done')
+    } catch {
+      setState('error')
+    }
+  }
+
+  return (
+    <div className="meal-feedback form">
+      <div className="feedback-rating" role="radiogroup" aria-label="评分">
+        {[1, 2, 3, 4, 5].map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={value <= rating ? 'star filled' : 'star'}
+            aria-label={`${value} 星`}
+            onClick={() => setRating(value)}
+          >★</button>
+        ))}
+      </div>
+      <div className="feedback-tags">
+        {FEEDBACK_TAGS.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            className={tags.includes(tag) ? 'tag chosen' : 'tag'}
+            aria-pressed={tags.includes(tag)}
+            onClick={() => setTags(tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag])}
+          >{tag}</button>
+        ))}
+      </div>
+      <input
+        className="feedback-comment"
+        placeholder="一句话感受（可选）"
+        maxLength={60}
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+      />
+      <div className="feedback-actions">
+        <button type="button" className="tag" onClick={() => setOpen(false)}>收起</button>
+        <button
+          type="button"
+          className="feedback-submit"
+          disabled={!rating || state === 'sending'}
+          onClick={() => void submit()}
+        >
+          {state === 'sending' ? '提交中…' : '提交反馈'}
+        </button>
+      </div>
+      {state === 'error' && <p className="feedback-error">提交失败，请稍后重试。</p>}
     </div>
   )
 }
@@ -122,6 +211,7 @@ function RecipeSheet({
             <p>{imageNote}</p>
           </div>
         )}
+        {recipe.name && <MealFeedback dish={recipe.name} />}
       </div>
     </article>
   )

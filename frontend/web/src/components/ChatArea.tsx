@@ -77,6 +77,9 @@ export function ChatArea({
   const [fridgeItems, setFridgeItems] = useState<string[]>([])
   const [shopNotice, setShopNotice] = useState('')
   const [savingFridge, setSavingFridge] = useState(false)
+  const [visionBusy, setVisionBusy] = useState(false)
+  const [visionDraft, setVisionDraft] = useState<Array<{ name: string; quantity: string }> | null>(null)
+  const visionInputRef = useRef<HTMLInputElement>(null)
   const loadShopping = async () => {
     setShopOpen(true)
     try {
@@ -140,6 +143,48 @@ export function ChatArea({
     const height = Math.min((canvas.height * width) / canvas.width, 277)
     pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, width, height)
     pdf.save(`饮食周报_${new Date().toISOString().slice(0, 10)}.pdf`)
+  }
+  const pickFridgePhoto = async (file: File) => {
+    if (visionBusy) return
+    setVisionBusy(true)
+    setShopNotice('正在识别照片中的食材…')
+    try {
+      const body = new FormData()
+      body.append('image', file)
+      const res = await fetch('/api/fridge/vision', { method: 'POST', body })
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null) as { detail?: string } | null
+        throw new Error(detail?.detail || 'vision failed')
+      }
+      const payload = await res.json() as { items: Array<{ name: string; quantity: string }> }
+      if (!payload.items.length) {
+        setShopNotice('照片里没有识别出食材，请换一张更清晰的照片。')
+        return
+      }
+      setVisionDraft(payload.items)
+      setShopNotice('识别完成，请确认或删改后写入冰箱。')
+    } catch (exc) {
+      setShopNotice(`识别失败：${exc instanceof Error ? exc.message : '请稍后重试'}`)
+    } finally {
+      setVisionBusy(false)
+    }
+  }
+  const confirmVisionDraft = async () => {
+    if (!visionDraft?.length || savingFridge) return
+    setSavingFridge(true)
+    try {
+      const names = visionDraft.map((item) => item.name)
+      const res = await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: names.join(',') }) })
+      if (!res.ok) throw new Error('fridge save failed')
+      const saved = await res.json() as { items?: string[] }
+      setFridgeItems(saved.items || [])
+      setVisionDraft(null)
+      setShopNotice(`已把识别的 ${names.length} 项写入冰箱。`)
+    } catch {
+      setShopNotice('写入失败，请检查后端服务后重试。')
+    } finally {
+      setSavingFridge(false)
+    }
   }
   const saveFridge = async () => {
     if (!selectedItems.length || savingFridge) return
@@ -495,6 +540,44 @@ export function ChatArea({
                   <strong>已拥有（冰箱 {fridgeItems.length} 项）：</strong>
                   {fridgeItems.length > 0 ? fridgeItems.map((ing) => <span key={ing} className="ingredient-chip owned-chip">{ing}</span>) : <span className="shopping-empty">暂无已记录库存</span>}
                 </div>
+                <div className="vision-row">
+                  <input
+                    ref={visionInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: 'none' }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void pickFridgePhoto(f); e.currentTarget.value = '' }}
+                    aria-label="选择冰箱照片"
+                  />
+                  <button
+                    type="button"
+                    className="tool-btn"
+                    disabled={visionBusy}
+                    onClick={() => visionInputRef.current?.click()}
+                  >
+                    {visionBusy ? '识别中…' : '📷 拍照清点冰箱'}
+                  </button>
+                  <span className="shopping-empty">拍一张冰箱内部照，AI 列出食材草稿</span>
+                </div>
+                {visionDraft && visionDraft.length > 0 && (
+                  <div className="shopping-ingredients vision-draft">
+                    <strong>识别草稿：</strong>
+                    {visionDraft.map((item, index) => (
+                      <span key={`${item.name}-${index}`} className="ingredient-chip vision-chip">
+                        {item.name}{item.quantity ? ` ${item.quantity}` : ''}
+                        <button
+                          type="button"
+                          aria-label={`删除 ${item.name}`}
+                          onClick={() => setVisionDraft(visionDraft.filter((_, i) => i !== index))}
+                        >×</button>
+                      </span>
+                    ))}
+                    <button type="button" className="tool-btn" disabled={savingFridge} onClick={() => void confirmVisionDraft()}>
+                      {savingFridge ? '写入中…' : '确认写入冰箱'}
+                    </button>
+                  </div>
+                )}
                 {(shopResult.main.length > 0 || shopResult.seasoning.length > 0) && <strong className="shopping-section-title">待购买</strong>}
                 {(shopResult.sections || []).length > 0 ? shopResult.sections!.map((sec) => (
                   <div key={sec.name} className="shopping-ingredients">
