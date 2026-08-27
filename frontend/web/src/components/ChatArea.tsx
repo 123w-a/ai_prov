@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchNearby } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
+import html2canvas from 'html2canvas'
 import { RecipeCard } from './RecipeCard'
 
 interface Props {
@@ -105,7 +106,27 @@ export function ChatArea({
   const [nearbyResult, setNearbyResult] = useState<NearbyResult | null>(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyError, setNearbyError] = useState('')
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [selectedItems, setSelectedItems] = useState<string[]>([])
+  const reportRef = useRef<HTMLDivElement>(null)
+  const toggleItem = (item: string) => setSelectedItems((p) => (p.includes(item) ? p.filter((i) => i !== item) : [...p, item]))
+  const exportReport = async () => {
+    if (!reportRef.current) return
+    const canvas = await html2canvas(reportRef.current, { scale: 2, useSVG: true })
+    const url = canvas.toDataURL('image/png')
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `饮食周报_${new Date().toISOString().slice(0, 10)}.png`
+    a.click()
+  }
+  const saveFridge = async () => {
+    if (!selectedItems.length) return
+    try {
+      await fetch('/api/fridge/set', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
+      setSelectedItems([])
+    } catch {
+      // ignore
+    }
+  }
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -450,7 +471,7 @@ export function ChatArea({
         )}
 
         {reportOpen && (
-          <section className="nearby-panel report-card" aria-label="本周周报">
+          <section className="nearby-panel report-card" aria-label="本周周报" ref={reportRef}>
             <header className="nearby-panel-head">
               <div>
                 <Icon name="concierge" size={18} />
@@ -493,6 +514,22 @@ export function ChatArea({
                 )}
                 {report.range && (
                   <div className="report-range">{report.range[0]} ~ {report.range[1]}</div>
+                )}
+                {(report.next_week_shopping || []).length > 0 && (
+                  <div className="report-shopping">
+                    <div className="block-label">下周购物清单</div>
+                    <div className="dish-chips">
+                      {report.next_week_shopping.map((ing: string) => (
+                        <label key={ing} className="ingredient-chip">
+                          <input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} />
+                          <span>{ing}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length} onClick={() => void saveFridge()}>
+                      保存选中到冰箱
+                    </button>
+                  </div>
                 )}
               </div>
             )}
