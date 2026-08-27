@@ -55,10 +55,42 @@ def weekly_report():
         "meals": len(recent),
         "top_dishes": dishes.most_common(5),
         "lights": dict(lights),
+        "light_trends": _light_trends(recent, since),
         "guardrail_triggers": sum(m.get("guardrails", 0) for m in recent),
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
         "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
     }
+
+
+def _light_trends(recent: list[dict], since: datetime) -> dict[str, str]:
+    """Compare risk-light ratios in the latest three days with the prior four.
+
+    A risk light is yellow or red. Trends require at least two observations in
+    each window so sparse history is shown honestly instead of over-interpreted.
+    """
+    split = since + timedelta(days=4)
+    windows: dict[str, list[str]] = {"previous": [], "latest": []}
+    for meal in recent:
+        bucket = "latest" if datetime.fromisoformat(meal["ts"]) >= split else "previous"
+        windows[bucket].extend(meal.get("lights", []))
+
+    labels = {light.rsplit(":", 1)[0] for values in windows.values() for light in values if ":" in light}
+    trends: dict[str, str] = {}
+    for label in labels:
+        previous = [light.rsplit(":", 1)[1] for light in windows["previous"] if light.startswith(label + ":")]
+        latest = [light.rsplit(":", 1)[1] for light in windows["latest"] if light.startswith(label + ":")]
+        if len(previous) < 2 or len(latest) < 2:
+            trends[label] = "insufficient"
+            continue
+        previous_risk = sum(level in {"yellow", "red"} for level in previous) / len(previous)
+        latest_risk = sum(level in {"yellow", "red"} for level in latest) / len(latest)
+        if latest_risk < previous_risk:
+            trends[label] = "improving"
+        elif latest_risk > previous_risk:
+            trends[label] = "worsening"
+        else:
+            trends[label] = "stable"
+    return trends
 
 
 def _next_week_shopping(top_dishes: list) -> list[str]:

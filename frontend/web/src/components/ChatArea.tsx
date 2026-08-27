@@ -68,7 +68,7 @@ export function ChatArea({
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[] } | null>(null)
+  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; light_trends?: Record<string, 'improving' | 'worsening' | 'stable' | 'insufficient'>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[] } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [shopDishes, setShopDishes] = useState('')
   const [shopInv, setShopInv] = useState('')
@@ -554,6 +554,17 @@ export function ChatArea({
                         const name = idx >= 0 ? k.slice(0, idx) : k
                         const color = idx >= 0 ? k.slice(idx + 1) : 'green'
                         return <span key={k} className={`light-pill light-${color}`}>{name} ×{v as number}</span>
+                      })}
+                    </div>
+                  </div>
+                )}
+                {Object.keys(report.light_trends || {}).length > 0 && (
+                  <div className="report-block">
+                    <div className="block-label">风险趋势 <small>近 3 天 vs 前 4 天</small></div>
+                    <div className="dish-chips">
+                      {Object.entries(report.light_trends || {}).map(([name, trend]) => {
+                        const label = trend === 'improving' ? '改善' : trend === 'worsening' ? '需关注' : trend === 'stable' ? '持平' : '数据不足'
+                        return <span key={name} className={`trend-pill trend-${trend}`}>{name} · {label}</span>
                       })}
                     </div>
                   </div>

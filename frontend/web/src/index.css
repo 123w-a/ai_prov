@@ -3294,6 +3294,41 @@ img {
   text-align: right;
 }
 
+.block-label small {
+  margin-left: 4px;
+  font-size: 0.78em;
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.trend-pill {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+
+.trend-improving {
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+}
+
+.trend-worsening {
+  color: #b26a00;
+  background: rgba(255, 167, 38, 0.16);
+}
+
+.trend-stable {
+  color: var(--ink);
+  background: var(--paper-muted);
+}
+
+.trend-insufficient {
+  color: var(--ink-muted);
+  background: var(--paper-muted);
+}
+
 .report-shopping {
   margin-top: 8px;
   padding-top: 8px;
