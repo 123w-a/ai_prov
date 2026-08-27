@@ -3,6 +3,7 @@ import { fetchNearby } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
 import { RecipeCard } from './RecipeCard'
 
 interface Props {
@@ -131,6 +132,15 @@ export function ChatArea({
     a.href = url
     a.download = `饮食周报_${new Date().toISOString().slice(0, 10)}.png`
     a.click()
+  }
+  const exportReportPdf = async () => {
+    if (!reportRef.current) return
+    const canvas = await html2canvas(reportRef.current, { scale: 2 })
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const width = 190
+    const height = Math.min((canvas.height * width) / canvas.width, 277)
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, width, height)
+    pdf.save(`饮食周报_${new Date().toISOString().slice(0, 10)}.pdf`)
   }
   const saveFridge = async () => {
     if (!selectedItems.length || savingFridge) return
@@ -522,6 +532,7 @@ export function ChatArea({
               </div>
               <div className="report-actions">
                 <button type="button" aria-label="导出周报图片" onClick={() => void exportReport()}>📤</button>
+                <button type="button" aria-label="导出周报PDF" onClick={() => void exportReportPdf()}>📄</button>
                 <button type="button" aria-label="关闭周报" onClick={() => setReportOpen(false)}>×</button>
               </div>
             </header>
