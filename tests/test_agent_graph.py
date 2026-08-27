@@ -2,6 +2,7 @@
 # 测试 agent_graph.py 的纯函数与新增 verify_answer 护栏节点（不触发 LLM 实时调用）
 import json
 import unittest
+from unittest.mock import patch
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -13,6 +14,8 @@ from agent_graph import (
     _drop_orphan_tool_messages,
     _build_structure_context,
     _latest_user_text,
+    _messages_for_current_turn,
+    maybe_condense,
     verify_answer_node,
 )
 
@@ -155,6 +158,54 @@ class TestVerifyAnswerNode(unittest.TestCase):
         }
         res = verify_answer_node(st)
         self.assertEqual(res["verify_status"], "retry")
+
+
+class TestHistoryIsolation(unittest.TestCase):
+    def test_new_image_excludes_old_recipe_and_tool_result(self):
+        new_image = HumanMessage(content=[
+            {"type": "text", "text": "这些新食材能做什么"},
+            {"type": "image_url", "image_url": {"url": "http://x/new.jpg"}},
+        ])
+        msgs = [
+            HumanMessage(content="做红烧肉"),
+            AIMessage(content="红烧肉方案"),
+            ToolMessage(content="old search", name="web_search", tool_call_id="old"),
+            new_image,
+            AIMessage(content="识别到番茄和鸡蛋"),
+        ]
+        current = _messages_for_current_turn(msgs, isolate_old_context=True)
+        self.assertIs(current[0], new_image)
+        self.assertNotIn("红烧肉方案", [str(m.content) for m in current])
+        self.assertNotIn("old search", [str(m.content) for m in current])
+
+    def test_condense_removes_tool_result_with_deleted_call(self):
+        msgs = [
+            HumanMessage(content="旧问题", id="h-old"),
+            AIMessage(content="", tool_calls=[{"id": "call-old", "name": "web_search", "args": {}}], id="a-old"),
+            ToolMessage(content="old result", name="web_search", tool_call_id="call-old", id="t-old"),
+        ]
+        for i in range(3):
+            msgs.extend([
+                AIMessage(content=f"回答{i}", id=f"a{i}"),
+                HumanMessage(content=f"问题{i}", id=f"h{i}"),
+            ])
+        with patch("agent_graph.summary_llm") as mock_llm:
+            mock_llm.invoke.return_value = AIMessage(content="摘要")
+            result = maybe_condense({"messages": msgs})
+        removed_ids = {m.id for m in result["messages"] if m.__class__.__name__ == "RemoveMessage"}
+        self.assertIn("a-old", removed_ids)
+        self.assertIn("t-old", removed_ids)
+
+
+class TestVerifyBoundary(unittest.TestCase):
+    def test_last_allowed_retry_before_degraded(self):
+        state = {
+            "messages": [HumanMessage(content="我有痛风"), AIMessage(content="老火汤炖猪肝")],
+            "verify_attempts": MAX_VERIFY - 1,
+        }
+        result = verify_answer_node(state)
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertEqual(result["verify_attempts"], MAX_VERIFY)
 
 
 if __name__ == "__main__":
