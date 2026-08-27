@@ -12,6 +12,7 @@
 #   audit(text, conditions) -> list[dict]     审计一段菜谱文本，返回违禁命中
 # ---------------------------------------------------------------------------
 from typing import List, Dict
+import re
 
 # 共享的高危食材词表（多个病种共用，避免重复）
 _ORGAN_MEAT = ["动物内脏", "猪肝", "鸡肝", "鸭肝", "猪肾", "鸡肾", "鸭肠", "脑", "腰子"]
@@ -87,21 +88,58 @@ _CONDITION_KEYWORDS = [
 ]
 
 
+_CONDITION_NEGATION_RE = re.compile(
+    r"(?:没有|没|不是|并非|未)(?:(?:被|明确|确诊|诊断|患有|得过|任何|为)){0,5}$"
+)
+_SALT_QUALIFIERS = ("不加", "不放", "少放", "少", "低", "减", "无")
+_FORBIDDEN_QUALIFIERS = ("不吃", "不喝", "不放", "不加", "不含", "不要", "避免", "禁用", "拒绝")
+_REVERSED_QUALIFIERS = (
+    "不", "不能", "不要", "不做", "不采用", "不接受", "拒绝",
+    "没有", "没", "不是", "并非", "未",
+)
+
+
+def _qualified_by_suffix(before: str, qualifiers) -> bool:
+    for qualifier in sorted(qualifiers, key=len, reverse=True):
+        if not before.endswith(qualifier):
+            continue
+        preceding = before[:-len(qualifier)]
+        if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+            return False
+        return True
+    return False
+
+
+def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
+    """Return True when at least one keyword occurrence expresses actual use/state."""
+    compact = re.sub(r"\s+", "", text or "")
+    for match in re.finditer(re.escape(keyword), compact):
+        before = compact[max(0, match.start() - 12):match.start()]
+        if mode == "condition" and _CONDITION_NEGATION_RE.search(before):
+            continue
+        if mode == "salt" and _qualified_by_suffix(before, _SALT_QUALIFIERS):
+            continue
+        if mode == "forbidden" and _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
+            continue
+        return True
+    return False
+
+
 def detect_conditions(text: str) -> List[str]:
     """从用户原话推断需要启用哪些硬护栏规则。"""
     found = []
     for cond, kws in _CONDITION_KEYWORDS:
-        if any(k in text for k in kws):
+        if any(_has_unqualified_occurrence(text, kw, "condition") for kw in kws):
             found.append(cond)
     return found
 
 
 def _salt_total_g(text: str) -> float:
     """尽力从菜谱文本里估算食盐/高钠调料的克数（最佳努力，非精确）。"""
-    import re
     total = 0.0
     for kw in ["盐", "酱油", "生抽", "老抽", "蚝油"]:
-        for m in re.finditer(rf"{kw}\D*?(\d+(?:\.\d+)?)\s*(?:g|克|ml|毫升)", text):
+        pattern = rf"{kw}\s*(?:约|大约)?\s*(\d+(?:\.\d+)?)\s*(?:g|克|ml|毫升)"
+        for m in re.finditer(pattern, text):
             try:
                 total += float(m.group(1))
             except ValueError:
@@ -121,7 +159,8 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
         if not rule:
             continue
         for kw in rule.get("forbidden", []):
-            if kw in text and (cond, kw) not in seen:
+            mode = "salt" if kw in _SALT_SEASONING else "forbidden"
+            if _has_unqualified_occurrence(text, kw, mode) and (cond, kw) not in seen:
                 seen.add((cond, kw))
                 violations.append({
                     "condition": cond,

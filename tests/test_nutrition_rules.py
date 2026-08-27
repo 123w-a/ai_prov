@@ -22,6 +22,21 @@ class TestDetectConditions(unittest.TestCase):
         self.assertIn("痛风", found)
         self.assertIn("高血压", found)
 
+    def test_explicit_negation_is_not_a_condition(self):
+        self.assertEqual(detect_conditions("我没有糖尿病，也不是高血压"), [])
+
+    def test_inserted_health_negation_is_not_a_condition(self):
+        self.assertEqual(detect_conditions("我没有确诊糖尿病，也并非患有高血压"), [])
+
+    def test_extended_inserted_health_negation(self):
+        self.assertEqual(
+            detect_conditions("我没有被确诊为糖尿病，也未被诊断患有高血压"),
+            [],
+        )
+
+    def test_negation_does_not_hide_later_positive_condition(self):
+        self.assertEqual(detect_conditions("我没有糖尿病，但我有痛风"), ["痛风"])
+
     def test_empty(self):
         self.assertEqual(detect_conditions("随便推荐个好吃的"), [])
 
@@ -37,6 +52,29 @@ class TestAuditGoodMenu(unittest.TestCase):
     def test_diabetes_clean(self):
         vs = audit("推荐凉拌黄瓜，用一点点生抽，无糖", ["糖尿病"])
         self.assertEqual(vs, [])
+
+    def test_compliant_salt_wording_is_not_forbidden(self):
+        vs = audit("推荐清蒸鱼，全程不加盐，少盐烹饪", ["高血压"])
+        self.assertEqual(vs, [])
+
+    def test_reversed_salt_qualifiers_remain_risky(self):
+        for text in (
+            "这道菜不少盐",
+            "不做低盐版本",
+            "不能不加盐",
+            "并非不加盐",
+            "不是少盐版本",
+        ):
+            vs = audit(text, ["高血压"])
+            self.assertTrue(any(v["keyword"] == "盐" for v in vs), text)
+
+    def test_unrelated_grams_are_not_counted_as_salt(self):
+        vs = audit("清蒸鱼不加盐，配鸡蛋10克", ["高血压"])
+        self.assertFalse(any("食盐" in v["keyword"] for v in vs))
+
+    def test_negated_salt_does_not_hide_real_excess(self):
+        vs = audit("本来想不加盐，但实际放盐10克", ["高血压"])
+        self.assertTrue(any("食盐" in v["keyword"] for v in vs))
 
     def test_no_condition_means_no_check(self):
         # 没识别到病种就不审计
