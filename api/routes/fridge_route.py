@@ -23,7 +23,6 @@ def get_fridge():
     return {"items": []}
 
 
-@router.post("/fridge/set")
 def _write_items(items: list[str]) -> dict:
     unique = list(dict.fromkeys(items))
     _FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +30,8 @@ def _write_items(items: list[str]) -> dict:
     return {"items": unique, "saved": True}
 
 
+
+@router.post("/fridge/set")
 def set_fridge(items: str = Form("")):
     """Replace the fridge list from comma-separated ingredients."""
     return _write_items(_split_inventory_text(items))
