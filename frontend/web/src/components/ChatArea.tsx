@@ -74,14 +74,18 @@ export function ChatArea({
   const [shopInv, setShopInv] = useState('')
   const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[] } | null>(null)
   const [shopOpen, setShopOpen] = useState(false)
+  const [fridgeItems, setFridgeItems] = useState<string[]>([])
   const [shopNotice, setShopNotice] = useState('')
   const [savingFridge, setSavingFridge] = useState(false)
   const loadShopping = async () => {
     setShopOpen(true)
     try {
       const fridgeRes = await fetch('/api/fridge')
+      if (!fridgeRes.ok) throw new Error('fridge request failed')
       const fridge = await fridgeRes.json() as { items?: string[] }
-      const inventory = [...(fridge.items || []), ...shopInv.split(',').map((item) => item.trim()).filter(Boolean)]
+      const savedInventory = fridge.items || []
+      setFridgeItems(savedInventory)
+      const inventory = [...savedInventory, ...shopInv.split(',').map((item) => item.trim()).filter(Boolean)]
       const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(inventory.join(','))}`)
       if (!res.ok) throw new Error('shopping request failed')
       setShopResult(await res.json())
@@ -134,9 +138,11 @@ export function ChatArea({
     try {
       const res = await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
       if (!res.ok) throw new Error('fridge save failed')
+      const saved = await res.json() as { items?: string[] }
       const savedCount = selectedItems.length
+      setFridgeItems(saved.items || [])
       setSelectedItems([])
-      setShopNotice(`已保存 ${savedCount} 项到冰箱。`)
+      setShopNotice(`已保存 ${savedCount} 项到冰箱，当前库存已刷新。`)
     } catch {
       setShopNotice('保存失败，请检查后端服务后重试。')
     } finally {
@@ -475,8 +481,13 @@ export function ChatArea({
               {shopResult ? '重新生成' : '生成清单'}
             </button>
             {shopResult && (
-              <div className="nearby-list" style={{ marginTop: 10 }}>
-                {(['主料', ...shopResult.main] as string[]).length > 1 && (
+              <div className="nearby-list shopping-result" style={{ marginTop: 10 }}>
+                <div className="shopping-ingredients owned-ingredients">
+                  <strong>已拥有（冰箱 {fridgeItems.length} 项）：</strong>
+                  {fridgeItems.length > 0 ? fridgeItems.map((ing) => <span key={ing} className="ingredient-chip owned-chip">{ing}</span>) : <span className="shopping-empty">暂无已记录库存</span>}
+                </div>
+                {(shopResult.main.length > 0 || shopResult.seasoning.length > 0) && <strong className="shopping-section-title">待购买</strong>}
+                {shopResult.main.length > 0 && (
                   <div className="shopping-ingredients">
                     <strong>主料：</strong>
                     {shopResult.main.map((ing) => (
@@ -488,6 +499,9 @@ export function ChatArea({
                   <div className="shopping-ingredients"><strong>调味料：</strong>{shopResult.seasoning.map((ing) => (
                     <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
                   ))}</div>
+                )}
+                {shopResult.main.length === 0 && shopResult.seasoning.length === 0 && (
+                  <p className="shopping-empty">当前库存已满足这份清单，无需采购。</p>
                 )}
                 {shopResult.unknown_dishes.length > 0 && (
                   <p style={{ opacity: 0.7 }}>未收录菜谱：{shopResult.unknown_dishes.join('、')}</p>

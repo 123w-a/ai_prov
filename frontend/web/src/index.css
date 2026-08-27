@@ -3317,6 +3317,38 @@ img {
   cursor: pointer;
 }
 
+.shopping-result {
+  display: block;
+}
+
+.shopping-ingredients {
+  margin-top: 8px;
+}
+
+.owned-ingredients {
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.owned-chip {
+  background: rgba(46, 125, 50, 0.1);
+  color: var(--forest-700);
+  cursor: default;
+}
+
+.shopping-section-title {
+  display: block;
+  margin-top: 10px;
+  color: var(--forest-900);
+}
+
+.shopping-empty {
+  display: inline-block;
+  margin: 8px 0 0;
+  color: var(--forest-700);
+  font-size: 0.86rem;
+}
+
 .nearby-reopen {
   position: fixed;
   right: 26px;
