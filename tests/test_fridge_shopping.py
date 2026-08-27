@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.routes import fridge_route
-from api.routes.shopping_route import shopping_list
+from api.routes.shopping_route import _classify_sections, shopping_list
 
 
 class FridgeInventoryTest(unittest.TestCase):
@@ -50,6 +50,25 @@ class ShoppingListTest(unittest.TestCase):
 
         self.assertEqual(len(result["main"]), len(set(result["main"])))
         self.assertEqual(len(result["seasoning"]), len(set(result["seasoning"])))
+
+
+
+
+class ShoppingSectionsTest(unittest.TestCase):
+    def test_classifies_aisles_with_honest_fallback(self):
+        sections = _classify_sections(["番茄", "鲈鱼", "馒头", "猪里脊"], ["食用油"])
+
+        by_name = {s["name"]: s["items"] for s in sections}
+        self.assertEqual(by_name["蔬菜区"], ["番茄"])
+        self.assertEqual(by_name["水产区"], ["鲈鱼"])
+        self.assertEqual(by_name["主食区"], ["馒头"])
+        self.assertEqual(by_name["肉蛋区"], ["猪里脊"])
+        self.assertEqual(by_name["调料区"], ["食用油"])
+
+    def test_unknown_item_lands_in_fallback_bucket(self):
+        sections = _classify_sections(["神秘食材"], [])
+
+        self.assertEqual(sections, [{"name": "其他食材", "items": ["神秘食材"]}])
 
 
 if __name__ == "__main__":

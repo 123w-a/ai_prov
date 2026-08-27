@@ -73,7 +73,7 @@ export function ChatArea({
   const [reportOpen, setReportOpen] = useState(false)
   const [shopDishes, setShopDishes] = useState('')
   const [shopInv, setShopInv] = useState('')
-  const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[] } | null>(null)
+  const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[]; sections?: Array<{ name: string; items: string[] }> } | null>(null)
   const [shopOpen, setShopOpen] = useState(false)
   const [fridgeItems, setFridgeItems] = useState<string[]>([])
   const [shopNotice, setShopNotice] = useState('')
@@ -497,18 +497,29 @@ export function ChatArea({
                   {fridgeItems.length > 0 ? fridgeItems.map((ing) => <span key={ing} className="ingredient-chip owned-chip">{ing}</span>) : <span className="shopping-empty">暂无已记录库存</span>}
                 </div>
                 {(shopResult.main.length > 0 || shopResult.seasoning.length > 0) && <strong className="shopping-section-title">待购买</strong>}
-                {shopResult.main.length > 0 && (
-                  <div className="shopping-ingredients">
-                    <strong>主料：</strong>
-                    {shopResult.main.map((ing) => (
+                {(shopResult.sections || []).length > 0 ? shopResult.sections!.map((sec) => (
+                  <div key={sec.name} className="shopping-ingredients">
+                    <strong>{sec.name}：</strong>
+                    {sec.items.map((ing) => (
                       <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
                     ))}
                   </div>
-                )}
-                {shopResult.seasoning.length > 0 && (
-                  <div className="shopping-ingredients"><strong>调味料：</strong>{shopResult.seasoning.map((ing) => (
-                    <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
-                  ))}</div>
+                )) : (
+                  <>
+                    {shopResult.main.length > 0 && (
+                      <div className="shopping-ingredients">
+                        <strong>主料：</strong>
+                        {shopResult.main.map((ing) => (
+                          <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
+                        ))}
+                      </div>
+                    )}
+                    {shopResult.seasoning.length > 0 && (
+                      <div className="shopping-ingredients"><strong>调味料：</strong>{shopResult.seasoning.map((ing) => (
+                        <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
+                      ))}</div>
+                    )}
+                  </>
                 )}
                 {shopResult.main.length === 0 && shopResult.seasoning.length === 0 && (
                   <p className="shopping-empty">当前库存已满足这份清单，无需采购。</p>

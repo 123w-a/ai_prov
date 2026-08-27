@@ -20,6 +20,25 @@ except Exception as _e:
 
 router = APIRouter()
 _SEASONINGS = {"盐", "糖", "食用油", "生抽", "老抽", "醋", "料酒", "蚝油"}
+_SECTION_KEYWORDS = [
+    ("水产区", ("鱼", "虾", "蟹", "贝", "鱿")),
+    ("肉蛋区", ("肉", "鸡", "鸭", "排骨", "里脊", "牛", "羊", "蛋", "火腿", "培根")),
+    ("蔬菜区", ("菜", "葱", "姜", "蒜", "椒", "菇", "瓜", "豆", "萝卜", "笋", "土豆", "番茄", "芹", "藕", "莴")),
+    ("主食区", ("米", "面", "粉", "馒头", "包子", "饭", "饼", "意面", "年糕")),
+]
+
+
+
+def _classify_sections(main_items: list[str], seasoning_items: list[str]) -> list[dict]:
+    """Bucket pending items into shopper-friendly aisles; leftovers stay honest in 其他食材."""
+    buckets: dict[str, list[str]] = {name: [] for name, _kw in _SECTION_KEYWORDS}
+    buckets["调料区"] = list(seasoning_items)
+    buckets["其他食材"] = []
+    for item in main_items:
+        target = next((name for name, kws in _SECTION_KEYWORDS if any(k in item for k in kws)), None)
+        (buckets[target] if target else buckets["其他食材"]).append(item)
+    order = [name for name, _ in _SECTION_KEYWORDS] + ["调料区", "其他食材"]
+    return [{"name": name, "items": buckets[name]} for name in order if buckets[name]]
 
 
 @router.get("/shopping/list")
@@ -78,5 +97,6 @@ def shopping_list(dishes: str = "", inventory: str = ""):
         "unknown_dishes": unknown,
         "main": main_items,
         "seasoning": seasoning_items,
+        "sections": _classify_sections(main_items, seasoning_items),
         "note": "已自动扣除你说有的食材；调味料默认家里常备，不需要的可手动划掉。",
     }, ensure_ascii=False))
