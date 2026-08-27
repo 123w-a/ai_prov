@@ -42,6 +42,7 @@ export interface ChefAnswer {
   chef_tip?: string
   sources?: SourceRef[]
   guardrails?: GuardrailItem[]
+  health_lights?: HealthLight[]
 }
 
 export interface SessionMessage {
