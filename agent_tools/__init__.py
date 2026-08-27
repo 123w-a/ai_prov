@@ -174,7 +174,40 @@ def fridge_gap(recipe_name: str, inventory_text: str) -> str:
     }, ensure_ascii=False)
 
 
-tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix, fridge_gap]
+@tool
+def query_fridge_inventory() -> str:
+    """读取用户当前记录的冰箱库存清单。当用户想知道自己冰箱里有什么、或决定菜谱前想确认现有食材时调用。无参数。"""
+    import json
+    from api.routes.fridge_route import get_fridge
+
+    items = get_fridge().get("items", [])
+    if not items:
+        return json.dumps({"items": [], "note": "冰箱暂无记录"}, ensure_ascii=False)
+    return json.dumps({"items": items, "note": "以上为用户自记库存，可能不完整"}, ensure_ascii=False)
+
+
+@tool
+def query_weekly_report() -> str:
+    """汇总用户本周饮食记录：吃了哪些菜、钠/糖/脂肪风险趋势、以及小膳建议。当用户问『我这周吃得怎么样』『钠/糖/脂肪趋势如何』或想回顾本周饮食时调用。无参数。"""
+    import json
+    from api.routes.reports_route import weekly_report
+
+    payload = weekly_report()
+    if not payload.get("has_data"):
+        return json.dumps({"has_data": False, "note": "本周还没有饮食记录，无法生成周报"}, ensure_ascii=False)
+    trend_text = {"improving": "在好转", "worsening": "在抬头", "stable": "保持平稳", "insufficient": "样本不足"}
+    trends = {label: trend_text.get(trend, trend) for label, trend in (payload.get("light_trends") or {}).items()}
+    return json.dumps({
+        "has_data": True,
+        "meals": payload.get("meals", 0),
+        "top_dishes": [name for name, _ in (payload.get("top_dishes") or [])[:3]],
+        "light_trends": trends,
+        "recommendations": payload.get("recommendations") or [],
+        "note": "趋势为近3天对比前4天的风险占比变化；样本不足时如实标注",
+    }, ensure_ascii=False)
+
+
+tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix, fridge_gap, query_fridge_inventory, query_weekly_report]
 
 __all__ = [
     "find_recipe_image",
