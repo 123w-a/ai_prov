@@ -77,7 +77,10 @@ export function ChatArea({
   const loadShopping = async () => {
     setShopOpen(true)
     try {
-      const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(shopInv)}`)
+      const fridgeRes = await fetch('/api/fridge')
+      const fridge = await fridgeRes.json() as { items?: string[] }
+      const inventory = [...(fridge.items || []), ...shopInv.split(',').map((item) => item.trim()).filter(Boolean)]
+      const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(inventory.join(','))}`)
       setShopResult(await res.json())
     } catch {
       setShopResult(null)
@@ -122,7 +125,7 @@ export function ChatArea({
   const saveFridge = async () => {
     if (!selectedItems.length) return
     try {
-      await fetch('/api/fridge/set', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
+      await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
       setSelectedItems([])
     } catch {
       // ignore

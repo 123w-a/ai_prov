@@ -24,9 +24,20 @@ def get_fridge():
 
 
 @router.post("/fridge/set")
-def set_fridge(items: str = Form("")):
-    """Update fridge list from comma-separated ingredient string."""
-    tokens = _split_inventory_text(items)
+def _write_items(items: list[str]) -> dict:
+    unique = list(dict.fromkeys(items))
     _FILE.parent.mkdir(parents=True, exist_ok=True)
-    _FILE.write_text(json.dumps({"items": tokens}, ensure_ascii=False), encoding="utf-8")
-    return {"items": tokens, "saved": True}
+    _FILE.write_text(json.dumps({"items": unique}, ensure_ascii=False), encoding="utf-8")
+    return {"items": unique, "saved": True}
+
+
+def set_fridge(items: str = Form("")):
+    """Replace the fridge list from comma-separated ingredients."""
+    return _write_items(_split_inventory_text(items))
+
+
+@router.post("/fridge/add")
+def add_fridge(items: str = Form("")):
+    """Append ingredients to the existing fridge list without duplicates."""
+    existing = get_fridge().get("items", [])
+    return _write_items(existing + _split_inventory_text(items))
