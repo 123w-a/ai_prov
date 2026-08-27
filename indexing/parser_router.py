@@ -418,7 +418,7 @@ def route(
 
     fname = os.path.basename(file_path)
     ext = os.path.splitext(fname)[1].lower()
-    if ext not in (".pdf"):
+    if ext != ".pdf":
         # 非 PDF 文件默认走简单解析（markdown/txt 等）
         return RoutingDecision(
             parser_type=ParserType.SIMPLE,
@@ -434,7 +434,7 @@ def route(
 
     # 规则 ①：扫描件判定（最高优先级）
     if details.get("is_scanned", False):
-        score += 1.5
+        score = t.FORCE_ADVANCED_SCORE
         reasons.append(
             f"检测到扫描件"
             f"（平均每页仅 {details['avg_chars_per_page']:.0f} 字符"
@@ -560,27 +560,27 @@ def _probe_pdf_structure(file_path: str, t: DetectionThresholds) -> dict:
     except ImportError:
         pass
 
-    # 尝试 2：pdfplumber 探测表格（如果上面没拿到页数/字符）
+    # 尝试 2：pdfplumber 探测表格（即使 PyMuPDF 已拿到页数也要执行）
     try:
         import pdfplumber
-        if details["page_count"] == 0:
-            with pdfplumber.open(file_path) as pdf:
+        with pdfplumber.open(file_path) as pdf:
+            if details["page_count"] == 0:
                 details["page_count"] = len(pdf.pages)
                 details["engine_ok"] = True
-                sample_indices = _sample_indices(
-                    len(pdf.pages), t.SCAN_SAMPLE_PAGES
+            sample_indices = _sample_indices(
+                len(pdf.pages), t.SCAN_SAMPLE_PAGES
+            )
+            char_counts = []
+            for idx in sample_indices:
+                page = pdf.pages[idx]
+                text = page.extract_text() or ""
+                char_counts.append(len(text.strip()))
+                tables = page.extract_tables() or []
+                details["table_count"] += len(tables)
+            if details["avg_chars_per_page"] == 0 and char_counts:
+                details["avg_chars_per_page"] = (
+                    sum(char_counts) / len(char_counts)
                 )
-                char_counts = []
-                for idx in sample_indices:
-                    page = pdf.pages[idx]
-                    text = page.extract_text() or ""
-                    char_counts.append(len(text.strip()))
-                    tables = page.extract_tables() or []
-                    details["table_count"] += len(tables)
-                if char_counts:
-                    details["avg_chars_per_page"] = (
-                        sum(char_counts) / len(char_counts)
-                    )
     except ImportError:
         pass
 
@@ -595,6 +595,10 @@ def _probe_pdf_structure(file_path: str, t: DetectionThresholds) -> dict:
 
 def _sample_indices(total: int, sample_n: int) -> list[int]:
     """生成抽样页索引（均匀分布：首尾+中间）。"""
+    if total <= 0 or sample_n <= 0:
+        return []
+    if sample_n == 1:
+        return [0]
     if total <= sample_n:
         return list(range(total))
     indices = [0]  # 第一页
