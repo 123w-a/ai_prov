@@ -3,7 +3,8 @@
 This project has two separate proof layers:
 
 1. `benchmarks/run_baseline.py --offline` measures the real `kb_corpus` PDFs and executes historical deterministic guardrail cases.
-2. `tests/validation_matrix.json` declares the commands that may become delivery evidence.
+2. `benchmarks/recall.py` measures case-level recall@k of the live RAG retriever against `benchmarks/retrieval_cases.py` (keywords harvested from real corpus hits on 2026-08-27; baseline recall@3 = 1.0, floor 0.75). It prints `SKIPPED` with a reason when the Chroma collection is empty or models fail to load, and exits non-zero only on a real recall regression.
+3. `tests/validation_matrix.json` declares the commands that may become delivery evidence.
 
 The matrix does not accept a chat claim or a JSON file produced by the model as proof. The host must emit and register a `tools/result` receipt for the exact command. `benchmarks.validation` checks receipt identity fields, command binding, outcome, and replay inside a matrix; it is not a signer. Authenticity and one-time global consumption remain the responsibility of the host receipt registry (currently exercised through `sp_verify`/`sp_done`).
 
