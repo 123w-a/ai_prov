@@ -546,15 +546,17 @@ def verify_answer_node(state: ChefState):
 
 def verify_route(state: ChefState) -> str:
     """根据审计状态路由：ok/degraded → 结构化收尾；retry → 回到思考节点。
-    P3 性能二段：本轮完全没调工具（纯健康问答/闲聊，规则3.7轻量通道）时，
-    流式文本已是完整答案，跳过 structure_answer 省一次 LLM 调用直接 END。"""
+    P3 性能二段：仅当用户明确是非菜品查询（闲聊/纯健康问答）时才直通 END，
+    跳过 structure LLM —— 任何可能输出菜品卡片（含图片）的轮次都保留结构化流程。"""
     status = state.get("verify_status", "ok")
     if status == "ok":
         has_tool_result = any(
             isinstance(m, ToolMessage) for m in state.get("messages", [])[-8:]
         )
         if not has_tool_result:
-            return "plain"
+            txt = _latest_user_text(state.get("messages", []))
+            if txt and not _is_dining_scene(txt) and "菜" not in txt and "做" not in txt and "吃" not in txt:
+                return "plain"
     return status
 
 # --------------------------------------------------------------------------- #
