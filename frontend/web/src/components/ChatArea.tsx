@@ -3,7 +3,6 @@ import { fetchNearby } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
 import { RecipeCard } from './RecipeCard'
 
 interface Props {
@@ -135,7 +134,7 @@ export function ChatArea({
   }
   const exportReportPdf = async () => {
     if (!reportRef.current) return
-    const canvas = await html2canvas(reportRef.current, { scale: 2 })
+    const [{ jsPDF }, canvas] = await Promise.all([import('jspdf'), html2canvas(reportRef.current, { scale: 2 })])
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     const width = 190
     const height = Math.min((canvas.height * width) / canvas.width, 277)
