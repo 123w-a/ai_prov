@@ -134,17 +134,28 @@ def detect_conditions(text: str) -> List[str]:
     return found
 
 
+def _total_g(text: str, keywords, units: str = r"g|克|ml|毫升") -> float:
+    """尽力估算关键词后标注数量的克数总和（最佳努力，非精确）。
+
+    长词优先并按文本区间去重："白砂糖30g"里的"糖"不再重复计入。
+    """
+    matches = []
+    for kw in sorted(set(keywords), key=len, reverse=True):
+        pattern = rf"{re.escape(kw)}\s*(?:约|大约)?\s*(\d+(?:\.\d+)?)\s*(?:{units})"
+        for m in re.finditer(pattern, text):
+            matches.append((m.start(), m.end(), float(m.group(1))))
+    total, taken = 0.0, []
+    for start, end, value in sorted(matches):
+        if any(start < prev_end and end > prev_start for prev_start, prev_end in taken):
+            continue
+        taken.append((start, end))
+        total += value
+    return total
+
+
 def _salt_total_g(text: str) -> float:
     """尽力从菜谱文本里估算食盐/高钠调料的克数（最佳努力，非精确）。"""
-    total = 0.0
-    for kw in ["盐", "酱油", "生抽", "老抽", "蚝油"]:
-        pattern = rf"{kw}\s*(?:约|大约)?\s*(\d+(?:\.\d+)?)\s*(?:g|克|ml|毫升)"
-        for m in re.finditer(pattern, text):
-            try:
-                total += float(m.group(1))
-            except ValueError:
-                pass
-    return total
+    return _total_g(text, ["盐", "酱油", "生抽", "老抽", "蚝油"])
 
 
 def audit(text: str, conditions: List[str]) -> List[Dict]:
@@ -184,6 +195,20 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
                             "message": rule["message"],
                             "source": rule["source"],
                         })
+        # 添加糖上限检查（如肥胖：添加糖≤25g/日）
+        sugar_cap = rule.get("sugar_cap_g")
+        if sugar_cap:
+            total = _total_g(text, ["白砂糖", "冰糖", "麦芽糖", "糖"], r"g|克")
+            if total > sugar_cap:
+                key = (cond, "添加糖")
+                if key not in seen:
+                    seen.add(key)
+                    violations.append({
+                        "condition": cond,
+                        "keyword": f"糖约{total:.0f}g(> {sugar_cap}g)",
+                        "message": rule["message"],
+                        "source": rule["source"],
+                    })
     return violations
 
 

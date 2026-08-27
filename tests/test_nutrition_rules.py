@@ -140,5 +140,37 @@ class TestDescribe(unittest.TestCase):
         self.assertIn("来源", text)
 
 
+
+
+class SugarCapTest(unittest.TestCase):
+    """肥胖添加糖≤25g/日：克数护栏 audit 消费 sugar_cap_g"""
+
+    def test_obesity_sugar_over_cap_triggers_violation(self):
+        violations = audit("甜品放白砂糖30g", ["肥胖"])
+
+        sugar = [v for v in violations if v["keyword"].startswith("糖约")]
+        self.assertEqual(len(sugar), 1)
+        self.assertIn("30g", sugar[0]["keyword"])
+        self.assertIn("25g", sugar[0]["keyword"])
+
+    def test_long_and_short_keyword_do_not_double_count(self):
+        violations = audit("甜品放白砂糖30g", ["肥胖"])
+
+        sugar = [v for v in violations if v["keyword"].startswith("糖约")]
+        self.assertIn("30g", sugar[0]["keyword"])
+        self.assertNotIn("60g", sugar[0]["keyword"])
+
+    def test_sugar_under_cap_stays_silent(self):
+        violations = audit("甜汤放冰糖15g", ["肥胖"])
+
+        self.assertFalse(any(v["keyword"].startswith("糖约") for v in violations))
+
+    def test_separate_items_are_summed(self):
+        violations = audit("放白砂糖20g、冰糖10g", ["肥胖"])
+
+        sugar = [v for v in violations if v["keyword"].startswith("糖约")]
+        self.assertIn("30g", sugar[0]["keyword"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
