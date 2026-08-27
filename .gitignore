@@ -90,6 +90,10 @@ models/
 
 # 会话内临时探针脚本与产物
 .tmp-*
+root_probe/
+
+# 运行态状态（checkpoint 数据库与本地缓存）
+resources/
 
 # 用户本地饮食数据与 Playwright 临时下载缓存
 data/fridge.json

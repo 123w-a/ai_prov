@@ -1,0 +1,38 @@
+{
+  "schema": "ai-prov.validation-matrix.v1",
+  "authority": "host:tools/result",
+  "items": [
+    {
+      "id": "unit-regressions",
+      "level": "regression",
+      "command": ".venv\\Scripts\\python.exe tests\\run_all.py",
+      "required": true,
+      "expected_exit_code": 0,
+      "notes": "RAG tests may be skipped only when the report names missing local embedding/index assets."
+    },
+    {
+      "id": "offline-corpus-baseline",
+      "level": "benchmark",
+      "command": ".venv\\Scripts\\python.exe benchmarks\\run_baseline.py --offline --output resources\\baseline.latest.json",
+      "required": true,
+      "expected_exit_code": 0,
+      "metrics": {"corpus.parsed_count": {"min": 27}, "corpus.failure_count": {"max": 0}, "historical_passed": {"equals": true}}
+    },
+    {
+      "id": "parser-and-receipt-contract",
+      "level": "contract",
+      "command": ".venv\\Scripts\\python.exe -m unittest tests.test_parser_router tests.test_validation_matrix",
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "receipt_rules": {
+    "required_fields": ["source", "command", "exitCode", "receipt_id", "session_id", "call_id"],
+    "bind_exact_command": true,
+    "reject_nonzero_exit": true,
+    "reject_timeout": true,
+    "reject_sandbox_denied": true,
+    "reject_model_self_report": true,
+    "consume_once": true
+  }
+}
