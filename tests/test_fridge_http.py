@@ -13,13 +13,18 @@ from api.routes import fridge_route
 class FridgeHttpContractTest(unittest.TestCase):
     def setUp(self):
         self.path = Path(__file__).with_name(".fridge-http-test.json")
+        self.log_path = Path(__file__).with_name(".pantry-http-test.json")
         self.patch = patch.object(fridge_route, "_FILE", self.path)
+        self.patch_log = patch.object(fridge_route, "_PANTRY_LOG", self.log_path)
         self.patch.start()
+        self.patch_log.start()
         self.client = TestClient(app)
 
     def tearDown(self):
         self.patch.stop()
+        self.patch_log.stop()
         self.path.unlink(missing_ok=True)
+        self.log_path.unlink(missing_ok=True)
 
     def test_form_set_add_get_preserves_and_deduplicates_inventory(self):
         set_response = self.client.post("/api/fridge/set", data={"items": "鸡蛋,西兰花"})

@@ -94,4 +94,5 @@ models/
 # 用户本地饮食数据与 Playwright 临时下载缓存
 data/fridge.json
 data/meals.json
+data/pantry_log.json
 .npm-cache-playwright/

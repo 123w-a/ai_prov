@@ -9,6 +9,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from api.routes.fridge_route import _PANTRY_LOG, get_fridge
+
 router = APIRouter()
 _MEALS = Path(__file__).resolve().parents[2] / "data" / "meals.json"
 
@@ -59,7 +61,8 @@ def weekly_report():
         "guardrail_triggers": sum(m.get("guardrails", 0) for m in recent),
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
         "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
-        "recommendations": _weekly_recommendations(dishes.most_common(5), _light_trends(recent, since)),
+        "recommendations": _weekly_recommendations(dishes.most_common(5), _light_trends(recent, since))
+                             + _pantry_restock_tips(_read_pantry_log(), set(get_fridge().get("items", []))),
     }
 
 
@@ -114,6 +117,28 @@ def _weekly_recommendations(top_dishes: list, light_trends: dict[str, str]) -> l
     if top_dishes and not any(t == "insufficient" for t in light_trends.values()):
         names = "、".join(d for d, _ in top_dishes[:2])
         tips.append(f"这周常吃{names}；维持当前口味的同时，下一周可以换一种蛋白质或深色蔬菜做搭配。")
+    return tips
+
+
+def _read_pantry_log() -> list[dict]:
+    try:
+        return json.loads(_PANTRY_LOG.read_text(encoding="utf-8")) if _PANTRY_LOG.exists() else []
+    except Exception:
+        return []
+
+
+def _pantry_restock_tips(log: list[dict], owned: set[str], today: datetime | None = None) -> list[str]:
+    """Suggest restocking frequently repurchased items that are currently missing."""
+    today = today or datetime.now()
+    since = (today - timedelta(days=14)).date().isoformat()
+    counts = Counter(e["item"] for e in log if e.get("type") == "purchase" and e.get("date", "") >= since)
+    tips: list[str] = []
+    for item, count in counts.most_common():
+        if len(tips) >= 2:
+            break
+        if item in owned or count < 2:
+            continue
+        tips.append(f"「{item}」近两周已补货 {count} 次、冰箱暂时没有——下次采购记得带上。")
     return tips
 
 

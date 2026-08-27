@@ -3,7 +3,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from api.routes.reports_route import _light_trends, _weekly_recommendations
+from api.routes.reports_route import _light_trends, _pantry_restock_tips, _weekly_recommendations
 
 
 def meal(ts, lights):
@@ -48,6 +48,44 @@ class LightTrendTest(unittest.TestCase):
         ]
 
         self.assertEqual(_light_trends(recent, since), {"钠": "insufficient"})
+
+
+
+
+class PantryRestockTest(unittest.TestCase):
+    def test_repeated_purchases_missing_from_fridge_get_tip(self):
+        log = [{"date": "2026-08-20", "type": "purchase", "item": "鸡蛋"},
+               {"date": "2026-08-25", "type": "purchase", "item": "鸡蛋"}]
+
+        tips = _pantry_restock_tips(log, set(), today=datetime(2026, 8, 27))
+
+        self.assertEqual(len(tips), 1)
+        self.assertIn("鸡蛋", tips[0])
+        self.assertIn("2 次", tips[0])
+
+    def test_items_currently_owned_are_suppressed(self):
+        log = [{"date": "2026-08-20", "type": "purchase", "item": "牛奶"},
+               {"date": "2026-08-26", "type": "purchase", "item": "牛奶"}]
+
+        self.assertEqual(_pantry_restock_tips(log, {"牛奶"}, today=datetime(2026, 8, 27)), [])
+
+    def test_old_events_and_single_purchase_are_ignored(self):
+        log = [{"date": "2026-08-01", "type": "purchase", "item": "酸奶"},
+               {"date": "2026-08-10", "type": "purchase", "item": "酸奶"},
+               {"date": "2026-08-26", "type": "purchase", "item": "豆腐"}]
+
+        self.assertEqual(_pantry_restock_tips(log, set(), today=datetime(2026, 8, 27)), [])
+
+    def test_top_two_by_frequency(self):
+        log = ([{"date": "2026-08-20", "type": "purchase", "item": a} for a in ["豆浆"] * 3]
+               + [{"date": "2026-08-21", "type": "purchase", "item": b} for b in ["香蕉"] * 2]
+               + [{"date": "2026-08-22", "type": "purchase", "item": c} for c in ["燕麦"] * 2])
+
+        tips = _pantry_restock_tips(log, {"燕麦"}, today=datetime(2026, 8, 27))
+
+        self.assertEqual(len(tips), 2)
+        self.assertIn("豆浆", tips[0])
+        self.assertIn("香蕉", tips[1])
 
 
 if __name__ == "__main__":
