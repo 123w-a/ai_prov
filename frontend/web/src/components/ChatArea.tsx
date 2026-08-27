@@ -461,11 +461,23 @@ export function ChatArea({
             </button>
             {shopResult && (
               <div className="nearby-list" style={{ marginTop: 10 }}>
-                <p><strong>主料：</strong>{shopResult.main.join('、') || '—'}</p>
-                <p><strong>调味料：</strong>{shopResult.seasoning.join('、') || '—'}</p>
+                {(['主料', ...shopResult.main] as string[]).length > 1 && (
+                  <div className="shopping-ingredients">
+                    <strong>主料：</strong>
+                    {shopResult.main.map((ing) => (
+                      <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
+                    ))}
+                  </div>
+                )}
+                {shopResult.seasoning.length > 0 && (
+                  <div className="shopping-ingredients"><strong>调味料：</strong>{shopResult.seasoning.map((ing) => (
+                    <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
+                  ))}</div>
+                )}
                 {shopResult.unknown_dishes.length > 0 && (
                   <p style={{ opacity: 0.7 }}>未收录菜谱：{shopResult.unknown_dishes.join('、')}</p>
                 )}
+                <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length} onClick={() => void saveFridge()}>保存选中到冰箱</button>
               </div>
             )}
           </section>
