@@ -99,4 +99,5 @@ resources/
 data/fridge.json
 data/meals.json
 data/pantry_log.json
+data/agent_trace.jsonl
 .npm-cache-playwright/

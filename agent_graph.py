@@ -19,6 +19,7 @@ from langgraph.graph import StateGraph, END, MessagesState#状态图+结束标�
 from langgraph.prebuilt import ToolNode, tools_condition  # 内置工具节点 + 是否继续调用工具的路由判断
 from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断点续跑、循环状态保存）
 
+from agent_trace import trace_node
 from agent_prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
@@ -83,6 +84,7 @@ checkpointer.setup()
 # --------------------------------------------------------------------------- #
 MAX_HISTORY_KEEP = 6  # 保留最近约 3 轮(user+ai)，更早的参与总结（调大以减少压缩触发、保住菜品编号上下文）
 #MessagesState是所有的状态消息，包含 messages 属性
+@trace_node("condense_history")
 def maybe_condense(state: MessagesState):#压缩历史对话
     msgs = state["messages"]
     # 最后一条消息不是用户发的或者没有消息的话就不执行后续操作
@@ -244,6 +246,7 @@ def _messages_for_current_turn(messages, isolate_old_context=False):
     return messages[index:]
 
 
+@trace_node("chef_think")
 def chef_agent_node(state: MessagesState):
     messages = state["messages"]#已经被压缩过后的4种消息类的消息
     # 前置插入系统提示词，再追加历史对话消息（先清掉孤儿 ToolMessage 防 API 400）
@@ -422,6 +425,7 @@ def _build_guardrails(user_text, verify_status, verify_violated):
     return items
 
 
+@trace_node("structure_answer")
 def structure_answer_node(state: MessagesState):#结构化回答节点
     messages = state["messages"]
     # chef_think 最后一轮的自然语言回答 = 流式已经推给前端的正文，原样保留进 opening
@@ -510,6 +514,7 @@ class ChefState(MessagesState):
     profile_ready: bool = True  # 充分性门控：健康画像是否足够进入检索/审计（AgentMental 范式）
     profile_missing: list = []  # 充分性门控：本轮尚未确认的高风险病种
 
+@trace_node("verify_answer")
 def verify_answer_node(state: ChefState):
     """输出前硬审计：发现硬禁忌则带反馈打回 chef_think 重生成（最多 MAX_VERIFY 次）。"""
     attempts = state.get("verify_attempts", 0)
@@ -595,6 +600,7 @@ def _self_declared_conditions(user_text: str) -> set:
     return out
 
 
+@trace_node("profile_gate")
 def profile_gate_node(state: ChefState):
     """充分性门控节点：进入 chef_think 前，确定性判断健康画像是否足够。
 
@@ -627,6 +633,7 @@ def profile_gate_node(state: ChefState):
     return {"profile_ready": False, "profile_missing": missing}
 
 
+@trace_node("ask_user")
 def ask_user_node(state: ChefState):
     """生成一条面向用户的追问，不调用工具、不生成菜谱。"""
 
