@@ -1,4 +1,6 @@
 import os  # 读取 CHEF_PROVIDER 环境变量（主脑模型选择）
+import threading
+import time
 
 from configs import MODEL_CONFIGS  # 传入模型参数（已从 .env 加载）
 from langchain_openai import ChatOpenAI  # 创建 LangChain 的 OpenAI 兼容对象
@@ -95,3 +97,42 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
 
     llm = ChatOpenAI(**kwargs)
     return llm
+
+
+# ---- provider 健康与 failover（A 方案：主模型黑洞时整轮切备用重跑）----
+_PROVIDER_COOLDOWN: dict = {}
+_COOLDOWN_LOCK = threading.Lock()
+_PROVIDER_COOLDOWN_SECONDS = 300  # 黑洞后 5 分钟内不撞同一家
+
+
+def mark_provider_down(provider: str, seconds: int = _PROVIDER_COOLDOWN_SECONDS) -> None:
+    """把刚发生超时/连接故障的 provider 打入冷却期。"""
+    with _COOLDOWN_LOCK:
+        _PROVIDER_COOLDOWN[provider] = time.time() + seconds
+
+
+def _provider_in_cooldown(provider: str) -> bool:
+    with _COOLDOWN_LOCK:
+        until = _PROVIDER_COOLDOWN.get(provider, 0)
+    return time.time() < until
+
+
+def pick_fallback_provider(exclude: str | None = None) -> str | None:
+    """返回一个不在冷却期且已配置 key 的备用 provider；没有则 None。"""
+    for name in MODEL_CONFIGS:
+        if name == exclude or _provider_in_cooldown(name):
+            continue
+        if _is_configured(name):
+            return name
+    return None
+
+
+def is_provider_failure(exc: BaseException) -> bool:
+    """判定异常是否为上游模型超时/连接类故障（值得切换 provider 重试）。"""
+    name = type(exc).__name__
+    if name in {"APITimeoutError", "APIConnectionError", "TimeoutError", "ConnectionError"}:
+        return True
+    text = str(exc).lower()
+    if any(frag in text for frag in ("timed out", "timeout", "connection", "upstream", "bad gateway", "service unavailable", "internal server error")):
+        return True
+    return " 5" in text and "server error" in text or text.startswith("5") and "error" in text

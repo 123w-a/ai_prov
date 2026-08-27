@@ -64,7 +64,7 @@ export interface Session {
 
 export type DecisionMode = 'home' | 'dining' | 'fridge' | 'health'
 
-export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring'
+export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring' | 'switching_model'
 
 export interface ChatMessage {
   id: string

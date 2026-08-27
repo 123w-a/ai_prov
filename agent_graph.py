@@ -4,6 +4,7 @@
 
 import json#结构化回答打包成 JSON 字符串落进消息
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
+import threading#failover 并发锁
 import time#重试间隔用
 import sqlite3#持久化短期记忆（断点续跑、循环状态保存）
 from model_name import get_langchain_llm, resolve_provider#一个创造模型，一个说明用的是哪个模型
@@ -39,14 +40,47 @@ SINGLE_RECIPE_RULE = (
 # 没配 / 配了但没 key → 自动用 configs 第一个可用的（已将 gpt 放第一，不写即默认 gpt）。
 # 本文件不硬编码任何模型名，切换模型只改 .env，无需动代码。
 provider = resolve_provider()#不写默认是.env中设置的第一个key
-llm = get_langchain_llm(provider)#获取模型对象
+llm = None
+llm_with_tools = None
+retrieval_llm = None
+summary_llm = None
+_FAILOVER_LOCK = threading.Lock()
 
-# 检索侧思考（查询改写 / 多查询 / HyDE）用便宜的 deepseek，不占用贵的主模型额度。
-# 检索是高频、低难度任务，deepseek 足够且成本远低于 gpt，默认即走 deepseek。
-try:
-    retrieval_llm = get_langchain_llm("deepseek", temperature=0.3, max_tokens=200)
-except Exception:
-    retrieval_llm = llm
+
+def rebuild_llms(force_provider=None):
+    """构建/重建全部模块级 LLM。failover 时换 provider 重跑整轮。"""
+    global provider, llm, llm_with_tools, retrieval_llm, summary_llm
+    provider = force_provider or resolve_provider()#不写默认是.env中设置的第一个key
+    llm = get_langchain_llm(provider)#获取模型对象
+    # 检索侧思考（查询改写 / 多查询 / HyDE）：高频低难度任务，跟随主 provider 保证可用性
+    try:
+        retrieval_llm = get_langchain_llm(provider, temperature=0.3, max_tokens=200)
+    except Exception:
+        retrieval_llm = llm
+    # 历史摘要专用模型：同上跟随主 provider
+    try:
+        summary_llm = get_langchain_llm(provider, temperature=0.3)
+    except Exception:
+        summary_llm = llm
+    llm_with_tools = llm.bind_tools(tools)#传个大模型告诉他有什么工具和怎么正确的用变成json格式给LLM
+
+
+rebuild_llms()#import 时构建一次
+
+
+def failover_llms():
+    """当前主 provider 黑洞后切换到备用 provider；返回实际切换到的名字或 None。"""
+    from model_name import _provider_in_cooldown, mark_provider_down, pick_fallback_provider
+    with _FAILOVER_LOCK:#并发请求同时触发 failover 时只换一次
+        if _provider_in_cooldown(provider):
+            return None  # 当前 provider 已在冷却，说明别处刚切过/试过
+        alt = pick_fallback_provider(exclude=provider)
+        if not alt:
+            return None
+        failed = provider
+        rebuild_llms(alt)
+        mark_provider_down(failed)#锁内标记，杜绝并发请求在标记前又切回旧家
+    return alt
 
 def _query_transform_adapter(system: str, user: str) -> str:
     try:
@@ -57,15 +91,6 @@ def _query_transform_adapter(system: str, user: str) -> str:
         return ""
 set_query_transform_llm(_query_transform_adapter, mode="multi")
 
-# 历史摘要专用模型：用廉价 deepseek 做长对话压缩（省成本），无 key 时自动回退主模型
-try:
-    summary_llm = get_langchain_llm("deepseek", temperature=0.3)
-except Exception:
-    summary_llm = llm
-
-
-llm_with_tools = llm.bind_tools(tools)#传个大模型告诉他有什么工具和怎么正确的用变成json格式给LLM
-#让大模型知到要怎么去指挥工具
 # --------------------------------------------------------------------------- #
 #  2. 断点持久化（SQLite checkpointer，thread_id 对应 checkpoint.db 里的单条任务断点）
 # --------------------------------------------------------------------------- #

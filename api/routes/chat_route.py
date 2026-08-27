@@ -11,6 +11,8 @@ from main import (
     stream_agent,
     image_bytes_to_oss_url,
 )
+from agent_graph import failover_llms
+from model_name import is_provider_failure
 from sessions_store import append_message
 import time
 from datetime import datetime
@@ -127,8 +129,28 @@ async def chat(
             try:
                 for item in stream_agent(human_message, session_id):
                     events.put(("item", item))
+                return
             except Exception as exc:
-                events.put(("error", exc))
+                # A 方案 failover：主 provider 超时/连接黑洞时，切备用 provider 整轮重跑一次。
+                # 重跑用派生 thread_id（-fo 后缀），避免同一用户消息重复写入 checkpoint 状态；
+                # 代价是重跑轮拿不到此前多轮上下文，但答案仍正常落库，属异常兜底的诚实降级。
+                if not is_provider_failure(exc):
+                    events.put(("error", exc))
+                    return
+                try:
+                    switched = failover_llms()
+                except Exception:
+                    switched = None
+                if not switched:
+                    events.put(("error", exc))
+                    return
+                events.put(("item", ("stage", "switching_model")))
+                try:
+                    fo_thread = f"{session_id}-fo{int(time.time())}"
+                    for item in stream_agent(human_message, fo_thread):
+                        events.put(("item", item))
+                except Exception as exc2:
+                    events.put(("error", exc2))
             finally:
                 events.put(("done", finished))
 

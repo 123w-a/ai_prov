@@ -41,6 +41,7 @@ const STAGE_COPY = {
   auditing: '正在做健康护栏审计',
   generating_image: '正在生成菜品图片',
   structuring: '正在完成健康审计与卡片整理',
+  switching_model: '主模型超时，已切换备用模型重试',
 }
 
 // T1 即时状态打卡：一次性生效，随下次发送注入消息前缀并自动清空
@@ -484,7 +485,7 @@ export function ChatArea({
                           <i />
                         </span>
                         {STAGE_COPY[message.stage || 'thinking']}
-                        {message.elapsed != null && message.elapsed >= 15 && (message.stage === 'thinking' || message.stage === 'searching') && (` · 已等待 ${message.elapsed}s（上游模型响应较慢）`)}
+                        {message.elapsed != null && message.elapsed >= 15 && message.stage !== 'writing' && message.stage !== 'structuring' && (` · 已等待 ${message.elapsed}s（上游模型响应较慢）`)}
                       </div>
                     )}
                   </div>
