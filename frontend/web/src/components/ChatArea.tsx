@@ -68,7 +68,7 @@ export function ChatArea({
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; guardrail_triggers?: number } | null>(null)
+  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[] } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [shopDishes, setShopDishes] = useState('')
   const [shopInv, setShopInv] = useState('')
@@ -108,10 +108,11 @@ export function ChatArea({
   const [nearbyError, setNearbyError] = useState('')
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const reportRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const toggleItem = (item: string) => setSelectedItems((p) => (p.includes(item) ? p.filter((i) => i !== item) : [...p, item]))
   const exportReport = async () => {
     if (!reportRef.current) return
-    const canvas = await html2canvas(reportRef.current, { scale: 2, useSVG: true })
+    const canvas = await html2canvas(reportRef.current, { scale: 2 })
     const url = canvas.toDataURL('image/png')
     const a = document.createElement('a')
     a.href = url
@@ -477,7 +478,10 @@ export function ChatArea({
                 <Icon name="concierge" size={18} />
                 <span>本周饮食周报</span>
               </div>
-              <button type="button" aria-label="关闭周报" onClick={() => setReportOpen(false)}>×</button>
+              <div className="report-actions">
+                <button type="button" aria-label="导出周报图片" onClick={() => void exportReport()}>📤</button>
+                <button type="button" aria-label="关闭周报" onClick={() => setReportOpen(false)}>×</button>
+              </div>
             </header>
             {!report ? (
               <p>加载中…</p>
@@ -503,7 +507,7 @@ export function ChatArea({
                   <div className="report-block">
                     <div className="block-label">红绿灯合计</div>
                     <div className="dish-chips">
-                      {Object.entries(report.lights).map(([k, v]) => {
+                      {Object.entries(report.lights || {}).map(([k, v]) => {
                         const idx = k.lastIndexOf(':')
                         const name = idx >= 0 ? k.slice(0, idx) : k
                         const color = idx >= 0 ? k.slice(idx + 1) : 'green'
@@ -519,7 +523,7 @@ export function ChatArea({
                   <div className="report-shopping">
                     <div className="block-label">下周购物清单</div>
                     <div className="dish-chips">
-                      {report.next_week_shopping.map((ing: string) => (
+                      {(report.next_week_shopping || []).map((ing: string) => (
                         <label key={ing} className="ingredient-chip">
                           <input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} />
                           <span>{ing}</span>
