@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Form
 
 from api.routes.service_route import _split_inventory_text
 
@@ -24,7 +24,7 @@ def get_fridge():
 
 
 @router.post("/fridge/set")
-def set_fridge(items: str = ""):
+def set_fridge(items: str = Form("")):
     """Update fridge list from comma-separated ingredient string."""
     tokens = _split_inventory_text(items)
     _FILE.parent.mkdir(parents=True, exist_ok=True)
