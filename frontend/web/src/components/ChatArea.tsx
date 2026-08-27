@@ -68,7 +68,7 @@ export function ChatArea({
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; light_trends?: Record<string, 'improving' | 'worsening' | 'stable' | 'insufficient'>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[] } | null>(null)
+  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; light_trends?: Record<string, 'improving' | 'worsening' | 'stable' | 'insufficient'>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[]; recommendations?: string[] } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [shopDishes, setShopDishes] = useState('')
   const [shopInv, setShopInv] = useState('')
@@ -567,6 +567,16 @@ export function ChatArea({
                         return <span key={name} className={`trend-pill trend-${trend}`}>{name} · {label}</span>
                       })}
                     </div>
+                  </div>
+                )}
+                {(report.recommendations || []).length > 0 && (
+                  <div className="report-block">
+                    <div className="block-label">小膳建议</div>
+                    <ul className="recommendation-list">
+                      {(report.recommendations as string[]).map((tip) => (
+                        <li key={tip}>{tip}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
                 {report.range && (

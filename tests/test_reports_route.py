@@ -3,11 +3,29 @@
 import unittest
 from datetime import datetime, timedelta
 
-from api.routes.reports_route import _light_trends
+from api.routes.reports_route import _light_trends, _weekly_recommendations
 
 
 def meal(ts, lights):
     return {"ts": ts.isoformat(timespec="seconds"), "lights": lights}
+
+
+class WeeklyRecommendationTest(unittest.TestCase):
+    def test_worsening_trend_maps_to_label_specific_tip(self):
+        tips = _weekly_recommendations([], {"钠": "worsening", "糖": "stable"})
+
+        self.assertEqual(len(tips), 1)
+        self.assertIn("钠", tips[0])
+
+    def test_insufficient_data_gets_no_directional_advice(self):
+        self.assertEqual(_weekly_recommendations([("番茄炒蛋", 3)], {"钠": "insufficient"}), [])
+        self.assertEqual(_weekly_recommendations([], {}), [])
+
+    def test_healthy_stable_trends_suggest_variety(self):
+        tips = _weekly_recommendations([("番茄炒蛋", 2), ("青椒肉丝", 1)], {"钠": "stable", "糖": "improving"})
+
+        self.assertEqual(len(tips), 1)
+        self.assertIn("番茄炒蛋、青椒肉丝", tips[0])
 
 
 class LightTrendTest(unittest.TestCase):

@@ -59,6 +59,7 @@ def weekly_report():
         "guardrail_triggers": sum(m.get("guardrails", 0) for m in recent),
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
         "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
+        "recommendations": _weekly_recommendations(dishes.most_common(5), _light_trends(recent, since)),
     }
 
 
@@ -91,6 +92,29 @@ def _light_trends(recent: list[dict], since: datetime) -> dict[str, str]:
         else:
             trends[label] = "stable"
     return trends
+
+
+_TREND_TIPS = {
+    "钠": "近几餐钠风险抬头：主动少放半勺盐，避开咸菜、腌肉这类高钠配料。",
+    "糖": "近几餐糖风险抬头：少碰含糖饮料和甜汤，甜味优先交给水果本味。",
+    "脂肪": "近几餐脂肪风险抬头：换蒸煮做法，炒菜油再收半勺，肥肉先放一放。",
+}
+
+
+def _weekly_recommendations(top_dishes: list, light_trends: dict[str, str]) -> list[str]:
+    """Turn observed weekly evidence into a few honest suggestions.
+
+    Every suggestion must trace back to a real signal (trend or dish mix);
+    sparse data gets no directional advice.
+    """
+    tips: list[str] = []
+    for label, trend in light_trends.items():
+        if trend == "worsening" and label in _TREND_TIPS:
+            tips.append(_TREND_TIPS[label])
+    if top_dishes and not any(t == "insufficient" for t in light_trends.values()):
+        names = "、".join(d for d, _ in top_dishes[:2])
+        tips.append(f"这周常吃{names}；维持当前口味的同时，下一周可以换一种蛋白质或深色蔬菜做搭配。")
+    return tips
 
 
 def _next_week_shopping(top_dishes: list) -> list[str]:
