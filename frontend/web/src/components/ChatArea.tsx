@@ -74,6 +74,8 @@ export function ChatArea({
   const [shopInv, setShopInv] = useState('')
   const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[] } | null>(null)
   const [shopOpen, setShopOpen] = useState(false)
+  const [shopNotice, setShopNotice] = useState('')
+  const [savingFridge, setSavingFridge] = useState(false)
   const loadShopping = async () => {
     setShopOpen(true)
     try {
@@ -81,9 +83,13 @@ export function ChatArea({
       const fridge = await fridgeRes.json() as { items?: string[] }
       const inventory = [...(fridge.items || []), ...shopInv.split(',').map((item) => item.trim()).filter(Boolean)]
       const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(inventory.join(','))}`)
+      if (!res.ok) throw new Error('shopping request failed')
       setShopResult(await res.json())
+      setSelectedItems([])
+      setShopNotice('清单已按当前冰箱库存更新。')
     } catch {
       setShopResult(null)
+      setShopNotice('清单加载失败，请稍后重试。')
     }
   }
   const loadReport = async () => {
@@ -123,12 +129,18 @@ export function ChatArea({
     a.click()
   }
   const saveFridge = async () => {
-    if (!selectedItems.length) return
+    if (!selectedItems.length || savingFridge) return
+    setSavingFridge(true)
     try {
-      await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
+      const res = await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
+      if (!res.ok) throw new Error('fridge save failed')
+      const savedCount = selectedItems.length
       setSelectedItems([])
+      setShopNotice(`已保存 ${savedCount} 项到冰箱。`)
     } catch {
-      // ignore
+      setShopNotice('保存失败，请检查后端服务后重试。')
+    } finally {
+      setSavingFridge(false)
     }
   }
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -480,7 +492,8 @@ export function ChatArea({
                 {shopResult.unknown_dishes.length > 0 && (
                   <p style={{ opacity: 0.7 }}>未收录菜谱：{shopResult.unknown_dishes.join('、')}</p>
                 )}
-                <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length} onClick={() => void saveFridge()}>保存选中到冰箱</button>
+                <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length || savingFridge} onClick={() => void saveFridge()}>{savingFridge ? '保存中…' : '保存选中到冰箱'}</button>
+                {shopNotice && <p className="shop-notice" role="status">{shopNotice}</p>}
               </div>
             )}
           </section>

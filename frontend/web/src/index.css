@@ -3382,6 +3382,12 @@ img {
   color: var(--danger);
 }
 
+.shop-notice {
+  margin: 8px 0 0;
+  color: var(--forest-700);
+  font-size: 0.86rem;
+}
+
 .nearby-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
