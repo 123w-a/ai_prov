@@ -32,10 +32,13 @@ frontend/web
 
 ## 快速开始
 
-1. 启动后端（仓库根目录）：`python run.py`，后端监听 `http://127.0.0.1:8010`
+1. 启动后端（仓库根目录）：`D:/develop/ai_prov/.venv/Scripts/python.exe run.py`，后端监听 `http://127.0.0.1:8010`。`run.py` 仅会回收确认属于本项目的旧后端进程。
 2. 安装前端依赖：`npm install`
-3. 启动开发服务器：`npm run dev`，访问 `http://localhost:5173`
-4. 构建产物：`npm run build`
+3. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
+4. 生产构建：`npm run build`
+5. 最小回归：`D:/develop/ai_prov/.venv/Scripts/python.exe -m unittest tests/test_fridge_shopping.py tests/test_fridge_http.py -v`（在仓库根目录运行）。
+
+开发时应分别确认前端 `http://localhost:5178/` 和后端 `http://127.0.0.1:8010/docs` 均返回 `200`。
 
 ## 已对接接口
 
@@ -48,6 +51,8 @@ frontend/web
 - `POST /api/sessions/{sid}/clear`、`DELETE /api/sessions/{sid}/messages/{msg_id}`：清空 / 删单条
 - `GET /api/service/vision`、`POST /api/service/preview`：上门私厨演示
 - `POST /api/transcribe`：语音转文字
+- `GET /api/fridge`、`POST /api/fridge/set`、`POST /api/fridge/add`：持久化冰箱库存（表单字段 `items`）
+- `GET /api/shopping/list`：按菜品与库存生成去重采购清单
 
 > 后端启动时需要项目现有模型/搜索服务所要求的环境变量，例如
 > `TAVILY_API_KEY`。前端即使构建成功，缺少后端密钥时也无法完成真实 AI 对话。

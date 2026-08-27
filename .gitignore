@@ -90,3 +90,8 @@ models/
 
 # 会话内临时探针脚本与产物
 .tmp-*
+
+# 用户本地饮食数据与 Playwright 临时下载缓存
+data/fridge.json
+data/meals.json
+.npm-cache-playwright/
