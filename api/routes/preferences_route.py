@@ -1,10 +1,12 @@
-"""用户长期饮食偏好 + 结构化健康画像接口。
+"""用户长期饮食偏好 + 结构化健康画像接口（P1 家庭多成员版）。
 
 preferences.txt：旧自由文本（保留兼容）
-profile.json  ：P2 结构化画像（存在时注入优先级更高，见 main.load_preferences）
+profile.json   ：结构化画像。v1=单成员平铺；v2={version:2, active_id, members[]}
+                 读到 v1 自动迁移为单成员家庭档，写路径始终落 v2。
 这是前端可管理的轻量长期记忆入口。
 """
 import json
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,6 +36,72 @@ class HealthProfilePayload(BaseModel):
     diet_style: str = Field(default="", max_length=40)
     dislikes: List[str] = Field(default_factory=list, max_length=60)
 
+class MemberPayload(BaseModel):
+    """家庭成员 = 名字 + 一份结构化健康画像。"""
+    name: str = Field(..., min_length=1, max_length=20)
+    profile: HealthProfilePayload = Field(default_factory=HealthProfilePayload)
+
+class ActiveMemberPayload(BaseModel):
+    member_id: str = Field(..., min_length=1, max_length=40)
+
+
+def _migrate(raw: dict) -> dict:
+    """v1 平铺画像 / 损坏数据 → v2 家庭档（单成员『我的档案』）。"""
+    if isinstance(raw, dict) and isinstance(raw.get("members"), list) and raw.get("members"):
+        members = []
+        for m in raw["members"]:
+            if not isinstance(m, dict):
+                continue
+            members.append({
+                "id": str(m.get("id") or f"m_{uuid.uuid4().hex[:8]}"),
+                "name": str(m.get("name") or "成员").strip()[:20] or "成员",
+                "profile": HealthProfilePayload(**(m.get("profile") or {})).model_dump(),
+            })
+        if members:
+            active = str(raw.get("active_id") or members[0]["id"])
+            if not any(m["id"] == active for m in members):
+                active = members[0]["id"]
+            return {"version": 2, "active_id": active, "members": members}
+    legacy = HealthProfilePayload(**(raw if isinstance(raw, dict) else {})).model_dump()
+    return {
+        "version": 2,
+        "active_id": "me",
+        "members": [{"id": "me", "name": "我的档案", "profile": legacy}],
+    }
+
+
+def _read_family() -> dict:
+    """读 profile.json 并保证返回 v2 家庭档；文件不存在返回 None。
+
+    v1 平铺档读到即迁移落盘（一次迁移终身 v2）。"""
+    if not _PROFILE_PATH.exists():
+        return None
+    try:
+        raw = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"画像文件损坏：{exc}")
+    raw = raw if isinstance(raw, dict) else {}
+    if isinstance(raw.get("members"), list) and raw.get("members"):
+        return raw  # 已是 v2
+    family = _migrate(raw)
+    _write_family(family)
+    return family
+
+
+def _write_family(family: dict) -> None:
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _PROFILE_PATH.write_text(
+        json.dumps(family, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _find_member(family: dict, member_id: str):
+    for m in family["members"]:
+        if m["id"] == member_id:
+            return m
+    return None
+
+
 @router.get("/preferences")
 def get_preferences():
     text = ""
@@ -50,23 +118,76 @@ def update_preferences(payload: PreferencesPayload):
 
 @router.get("/profile")
 def get_profile():
-    """读取结构化健康画像；文件不存在时返回 exists=false 的空默认值。"""
-    if not _PROFILE_PATH.exists():
-        empty = HealthProfilePayload()
-        return {"code": 200, "messages": "尚未建档", "data": {"exists": False, "profile": empty.model_dump()}}
-    try:
-        raw = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
-        profile = HealthProfilePayload(**(raw if isinstance(raw, dict) else {}))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"画像文件损坏：{exc}")
-    return {"code": 200, "messages": "画像读取成功", "data": {"exists": True, "profile": profile.model_dump()}}
+    """读取家庭画像（v1 自动迁移）。返回 members 全量 + active_id。"""
+    family = _read_family()
+    if family is None:
+        default = _migrate({})
+        return {
+            "code": 200,
+            "messages": "尚未建档",
+            "data": {"exists": False, "family": default},
+        }
+    return {"code": 200, "messages": "画像读取成功", "data": {"exists": True, "family": family}}
 
 @router.put("/profile")
 def update_profile(payload: HealthProfilePayload):
-    """写入结构化健康画像（整档覆盖式保存）。过敏原为硬约束字段，前端应显著标注。"""
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _PROFILE_PATH.write_text(
-        json.dumps(payload.model_dump(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return {"code": 200, "messages": "画像已保存", "data": {"exists": True, "profile": payload.model_dump()}}
+    """兼容旧前端：整档写入 = 更新当前激活成员的画像。"""
+    family = _read_family() or _migrate({})
+    member = _find_member(family, family["active_id"]) or family["members"][0]
+    member["profile"] = payload.model_dump()
+    _write_family(family)
+    return {"code": 200, "messages": "画像已保存", "data": {"exists": True, "family": family}}
+
+@router.post("/profile/members")
+def add_member(payload: MemberPayload):
+    """新增家庭成员并设为激活（新建即切换，符合『给谁做饭就建谁』直觉）。"""
+    family = _read_family() or _migrate({})
+    if len(family["members"]) >= 8:
+        raise HTTPException(status_code=400, detail="家庭成员最多 8 人")
+    member = {
+        "id": f"m_{uuid.uuid4().hex[:8]}",
+        "name": payload.name.strip(),
+        "profile": payload.profile.model_dump(),
+    }
+    family["members"].append(member)
+    family["active_id"] = member["id"]
+    _write_family(family)
+    return {"code": 200, "messages": f"成员「{member['name']}」已建档并激活", "data": {"exists": True, "family": family}}
+
+@router.put("/profile/members/{member_id}")
+def update_member(member_id: str, payload: MemberPayload):
+    """更新成员姓名与画像（整成员覆盖）。"""
+    family = _read_family() or _migrate({})
+    member = _find_member(family, member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    member["name"] = payload.name.strip()
+    member["profile"] = payload.profile.model_dump()
+    _write_family(family)
+    return {"code": 200, "messages": "成员已更新", "data": {"exists": True, "family": family}}
+
+@router.delete("/profile/members/{member_id}")
+def delete_member(member_id: str):
+    """删除成员；至少保留一人，删除激活成员时自动切到剩余第一人。"""
+    family = _read_family() or _migrate({})
+    if len(family["members"]) <= 1:
+        raise HTTPException(status_code=400, detail="至少保留一位家庭成员")
+    member = _find_member(family, member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    family["members"] = [m for m in family["members"] if m["id"] != member_id]
+    if family["active_id"] == member_id:
+        family["active_id"] = family["members"][0]["id"]
+    _write_family(family)
+    return {"code": 200, "messages": f"成员「{member['name']}」已删除", "data": {"exists": True, "family": family}}
+
+@router.put("/profile/active")
+def switch_active(payload: ActiveMemberPayload):
+    """切换激活成员：注入链只渲染激活成员画像。"""
+    family = _read_family() or _migrate({})
+    member = _find_member(family, payload.member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    family["active_id"] = member["id"]
+    _write_family(family)
+    return {"code": 200, "messages": f"已切换到「{member['name']}」", "data": {"exists": True, "family": family}}

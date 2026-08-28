@@ -59,6 +59,23 @@ def load_preferences() -> str:
             import json
             profile = json.loads(_PROFILE_PATH.read_text(encoding="utf-8"))
             if isinstance(profile, dict):
+                members = profile.get("members")
+                if isinstance(members, list) and members:
+                    # P1 家庭多成员：只渲染激活成员画像，标题带成员名
+                    active_id = profile.get("active_id")
+                    member = next(
+                        (m for m in members if m.get("id") == active_id),
+                        members[0],
+                    )
+                    name = str(member.get("name") or "").strip()
+                    rendered = _render_health_profile(member.get("profile") or {})
+                    if rendered:
+                        if name:
+                            rendered = rendered.replace(
+                                "【结构化健康画像（", f"【健康画像·{name}（", 1
+                            )
+                        return rendered
+                    return ""
                 rendered = _render_health_profile(profile)
                 if rendered:
                     return rendered
