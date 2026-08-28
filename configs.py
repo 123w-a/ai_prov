@@ -11,7 +11,9 @@ MODEL_CONFIGS = {#模型配置
     },
     "deepseek": {
         "api_key": os.getenv("DEEPSEEK_API_KEY"),
-        "base_url": os.getenv("DEEPSEEK_BASE_URL"),
+        # 缺省时必须落到官方端点：ChatOpenAI 对 None 会静默回退 api.openai.com，
+        # 导致 deepseek key 打错门（40s-167s 假慢/黑洞的真凶）。
+        "base_url": os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
         "model_name": os.getenv("DEEPSEEK_MODE_NAME"),
     },
 }
