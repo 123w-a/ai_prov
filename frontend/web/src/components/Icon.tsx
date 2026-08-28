@@ -16,6 +16,8 @@ export type IconName =
   | 'send'
   | 'shield'
   | 'spark'
+  | 'thumb-down'
+  | 'thumb-up'
   | 'trash'
   | 'utensils'
   | 'warning'
@@ -52,6 +54,20 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
       return (
         <svg {...common}>
           <path d="m5 12 4 4L19 6" />
+        </svg>
+      )
+    case 'thumb-up':
+      return (
+        <svg {...common}>
+          <path d="M7 11v9H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" />
+          <path d="M7 11l4.2-7.4a1.6 1.6 0 0 1 2.9 1.2L13.4 9H19a2 2 0 0 1 2 2.4l-1.2 6A2 2 0 0 1 17.8 19H7" />
+        </svg>
+      )
+    case 'thumb-down':
+      return (
+        <svg {...common}>
+          <path d="M17 13V4h3a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1z" />
+          <path d="M17 13l-4.2 7.4a1.6 1.6 0 0 1-2.9-1.2L10.6 15H5a2 2 0 0 1-2-2.4l1.2-6A2 2 0 0 1 6.2 5H17" />
         </svg>
       )
     case 'chef':

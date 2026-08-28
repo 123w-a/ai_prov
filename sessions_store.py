@@ -270,3 +270,24 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
                 _write_session(data)
             return changed
     return False
+
+
+def patch_message_feedback(sid, record_id, rating):
+    """设置/清除一条问答的满意度标记（'up' | 'down' | None）
+
+    None = 取消标记。返回 (found, current)：current 为设置后的最终状态。
+    """
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False, None
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            if rating is None:
+                m.pop("feedback", None)
+            else:
+                m["feedback"] = rating
+            _write_session(data)
+            return True, m.get("feedback")
+    return False, None

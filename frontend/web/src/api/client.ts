@@ -267,6 +267,38 @@ export async function importFamily(members: MemberInput[]): Promise<FamilyData> 
   return result.data.family
 }
 
+// ---- 回答满意度反馈（卡片 👍/👎 + 周统计）----
+
+export type FeedbackRating = 'up' | 'down'
+
+export async function sendMessageFeedback(
+  sessionId: string,
+  recordId: number,
+  rating: FeedbackRating,
+): Promise<'up' | 'down' | null> {
+  const result = await jsonRequest<ApiEnvelope<{ feedback: 'up' | 'down' | null }>>(
+    `/api/sessions/${sessionId}/messages/${recordId}/feedback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating }),
+    },
+  )
+  return result.data.feedback
+}
+
+export interface FeedbackWeekly {
+  up: number
+  down: number
+  total: number
+  down_dishes: string[]
+}
+
+export async function fetchFeedbackWeekly(): Promise<FeedbackWeekly> {
+  const result = await jsonRequest<ApiEnvelope<FeedbackWeekly>>("/api/feedback/weekly")
+  return result.data
+}
+
 export interface FridgeVisionItem {
   name: string
   quantity: string

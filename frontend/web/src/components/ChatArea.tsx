@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchNearby } from '../api/client'
+import { fetchNearby, sendMessageFeedback } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
@@ -7,6 +7,7 @@ import { RecipeCard } from './RecipeCard'
 
 interface Props {
   activeTitle: string
+  activeSessionId: string | null
   messages: ChatMessage[]
   sending: boolean
   onSend: (text: string, image: File | null, mode: DecisionMode, imagePreview: string | null) => void
@@ -51,6 +52,7 @@ type VoiceState = 'idle' | 'recording' | 'transcribing'
 
 export function ChatArea({
   activeTitle,
+  activeSessionId,
   messages,
   sending,
   onSend,
@@ -65,6 +67,19 @@ export function ChatArea({
   const [notice, setNotice] = useState('')
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [statusTags, setStatusTags] = useState<string[]>([])
+  const [fbState, setFbState] = useState<Record<number, 'up' | 'down' | null>>({})
+
+  const rateAnswer = async (recordId: number, rating: 'up' | 'down') => {
+    if (!activeSessionId) return
+    setFbState((s) => ({ ...s, [recordId]: rating })) // 乐观更新
+    try {
+      const result = await sendMessageFeedback(activeSessionId, recordId, rating)
+      setFbState((s) => ({ ...s, [recordId]: result })) // 同值再点=取消，服务端返回 null
+    } catch {
+      // 失败回滚到未标记：下次点击重试
+      setFbState((s) => ({ ...s, [recordId]: null }))
+    }
+  }
   // 浏览器定位（附近餐厅用）：拿不到就静默降级，不阻塞输入
   const [coords, setCoords] = useState('')
   const [locating, setLocating] = useState(false)
@@ -460,6 +475,28 @@ export function ChatArea({
                   <header className="message-meta">
                     <strong>{message.role === 'assistant' ? '小膳管家' : '你'}</strong>
                     {message.time && <time>{message.time}</time>}
+                    {message.role === 'assistant' && message.recordId && !message.streaming && (
+                      <span className="msg-feedback">
+                        <button
+                          type="button"
+                          className={(fbState[message.recordId] ?? message.feedback ?? null) === 'up' ? 'fb-btn active' : 'fb-btn'}
+                          aria-label="这个回答有帮助"
+                          title="有帮助"
+                          onClick={() => void rateAnswer(message.recordId!, 'up')}
+                        >
+                          <Icon name="thumb-up" size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className={(fbState[message.recordId] ?? message.feedback ?? null) === 'down' ? 'fb-btn active' : 'fb-btn'}
+                          aria-label="这个回答不满意"
+                          title="不满意"
+                          onClick={() => void rateAnswer(message.recordId!, 'down')}
+                        >
+                          <Icon name="thumb-down" size={13} />
+                        </button>
+                      </span>
+                    )}
                     {message.role === 'assistant' && message.recordId && (
                       <button
                         type="button"

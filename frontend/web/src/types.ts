@@ -69,6 +69,7 @@ export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'g
 export interface ChatMessage {
   id: string
   recordId?: number
+  feedback?: 'up' | 'down' | null
   role: 'user' | 'assistant'
   text: string
   answer?: ChefAnswer | null

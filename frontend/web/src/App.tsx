@@ -392,6 +392,7 @@ export default function App() {
           <div className="decision-layout">
             <ChatArea
               activeTitle={activeSession?.title || '新的膳食决策'}
+              activeSessionId={activeSession?.session_id ?? null}
               messages={messages}
               sending={sending}
               onSend={(text, image, mode, preview) => void handleSend(text, image, mode, preview)}

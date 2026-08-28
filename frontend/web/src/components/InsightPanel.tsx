@@ -1,5 +1,6 @@
 import type { ChefAnswer } from '../types'
 import { formatSourceSection } from '../utils/sourceFormat'
+import { FeedbackSummary } from './FeedbackSummary'
 import { Icon } from './Icon'
 
 const STATUS_COPY: Record<string, string> = {
@@ -116,6 +117,7 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
           </div>
         </div>
       )}
+      <FeedbackSummary />
     </aside>
   )
 }
