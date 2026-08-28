@@ -101,4 +101,5 @@ data/meals.json
 data/pantry_log.json
 data/agent_trace.jsonl
 data/feedback.json
+data/profile.json
 .npm-cache-playwright/

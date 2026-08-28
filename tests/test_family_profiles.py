@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from api.routes import preferences_route as pr
 from main import load_preferences
+from nutrition_rules import audit, conditions_from_profile, detect_conditions
 
 
 def _client():
@@ -116,6 +117,20 @@ class FamilyProfileTest(unittest.TestCase):
     def test_load_preferences_falls_back_to_txt(self):
         self.prefs_path.write_text("喜欢清淡。", encoding="utf-8")
         self.assertEqual(load_preferences(), "喜欢清淡。")
+
+    def test_guardrail_wiring_from_profile(self):
+        """P1 护栏联动：档案 conditions（含孕周自由文本）映射规则键并触发硬审计。"""
+        self.assertEqual(
+            conditions_from_profile({"conditions": ["孕18周", "高尿酸"]}),
+            ["孕期", "痛风"],
+        )
+        self.assertEqual(conditions_from_profile({"conditions": ["喜欢清淡"]}), [])
+        merged = detect_conditions("") + conditions_from_profile({"conditions": ["孕18周"]})
+        violations = audit("清蒸生鱼片配一杯啤酒", merged)
+        self.assertTrue(
+            any(v["condition"] == "孕期" for v in violations),
+            "档案声明孕18周时，生鱼片+啤酒必须命中孕期硬护栏",
+        )
 
 
 if __name__ == "__main__":

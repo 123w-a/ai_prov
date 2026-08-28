@@ -125,6 +125,29 @@ def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
     return False
 
 
+# 档案 conditions 的匹配词表：比消息侧更宽（「孕18周」这类自由文本也要命中孕期），
+# 备孕误入孕期护栏方向保守可接受（禁酒禁生食对备孕同样无害）。
+_PROFILE_CONDITION_KEYWORDS = [
+    (rule, kws + ["孕"] if rule == "孕期" else kws)
+    for rule, kws in _CONDITION_KEYWORDS
+]
+
+
+def conditions_from_profile(profile: dict) -> List[str]:
+    """从结构化档案（v2 成员画像）的 conditions 自由文本映射到 RULES 键。
+
+    档案里写了「痛风」「孕18周」时，即使消息里不提，硬护栏也要同口径启用——
+    这是 P1 多画像与 L3 硬护栏的接线点。
+    """
+    found: List[str] = []
+    for cond in (profile or {}).get("conditions") or []:
+        text = str(cond)
+        for rule, kws in _PROFILE_CONDITION_KEYWORDS:
+            if rule not in found and any(kw in text for kw in kws):
+                found.append(rule)
+    return found
+
+
 def detect_conditions(text: str) -> List[str]:
     """从用户原话推断需要启用哪些硬护栏规则。"""
     found = []

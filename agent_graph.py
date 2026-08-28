@@ -4,6 +4,7 @@
 
 import json#结构化回答打包成 JSON 字符串落进消息
 import os#读 SUMMARY_MODE_NAME 等环境变量
+from pathlib import Path#读取 data/profile.json（家庭档案激活成员）
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
 import time#重试间隔用
@@ -27,7 +28,41 @@ from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_s
 from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
 from agent_schemas import GuardrailItem  # 健康护栏审计结论（运行时注入 ChefAnswer.guardrails）
 #build_structured_answer标准链+parser检查出错误后再进行重试
-from nutrition_rules import detect_conditions, audit, describe, RULES  # L3 硬护栏：确定性健康禁忌审计
+from nutrition_rules import detect_conditions, audit, describe, RULES, conditions_from_profile  # L3 硬护栏：确定性健康禁忌审计
+
+
+def _active_profile_conditions() -> list:
+    """读 data/profile.json 激活成员的 conditions，映射成硬护栏规则键。
+
+    P1 多画像与 L3 护栏的接线：档案里写了痛风/孕期，即使消息只说「想吃火锅」，
+    硬护栏也要同口径启用。读不到档案/解析失败一律返回空（护栏兜底不因档案缺失而崩）。
+    """
+    try:
+        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return []
+        members = raw.get("members")
+        if isinstance(members, list) and members:
+            active_id = raw.get("active_id")
+            member = next((m for m in members if m.get("id") == active_id), members[0])
+            profile = member.get("profile") or {}
+        else:  # v1 平铺档案
+            profile = raw
+        return conditions_from_profile(profile)
+    except Exception:
+        return []
+
+
+def _merged_conditions(user_text: str) -> list:
+    """消息推断 + 档案声明 的护栏规则键合并（保持顺序，去重）。"""
+    merged = detect_conditions(user_text)
+    for cond in _active_profile_conditions():
+        if cond not in merged:
+            merged.append(cond)
+    return merged
 
 # 稳定输出规则：覆盖旧提示词中的多菜分支，保证流式正文和结构化卡片一致。
 SINGLE_RECIPE_RULE = (
@@ -435,7 +470,7 @@ def _build_guardrails(user_text, verify_status, verify_violated):
       （如『少盐』被『盐』误命中导致合规方案被误标为已调整）；
     - 与 verify_answer_node 共用同一套 RULES，口径一致。
     """
-    conditions = detect_conditions(user_text)
+    conditions = _merged_conditions(user_text)
     if not conditions:
         return []
     violated = set(verify_violated or [])
@@ -552,7 +587,7 @@ def verify_answer_node(state: ChefState):
             answer_text = str(m.content)
             break
     user_text = _latest_user_text(state["messages"])
-    conditions = detect_conditions(user_text)
+    conditions = _merged_conditions(user_text)
     violations = audit(answer_text, conditions)
     violated_conditions = sorted({v["condition"] for v in violations})
     if not violations:
@@ -648,7 +683,7 @@ def profile_gate_node(state: ChefState):
         return {"profile_ready": True, "profile_missing": []}
 
     user_text = _latest_user_text(messages)
-    conditions = detect_conditions(user_text)
+    conditions = _merged_conditions(user_text)
     if not conditions:
         return {"profile_ready": True, "profile_missing": []}
 
