@@ -67,6 +67,7 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
     api_key=None,
     base_url=None,
     model_name=None,
+    timeout=None,
 ):
 
     chosen = resolve_provider(provider)#可能是用户传的可能是环境变量的
@@ -88,7 +89,7 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
         "base_url": final_base_url,
         "temperature": temperature,
         "streaming": True,  #意思是能流式但也不阻止invoken（）的阻塞式
-        "timeout": 75,  # 上游偶发黑洞(180s+无响应)，75s 剪断后由 max_retries 重试一次
+        "timeout": timeout if timeout is not None else 75,  # 上游偶发黑洞(180s+无响应)，75s 剪断后由 max_retries 重试一次；短任务（视觉审核等）可传更小值
         "max_retries": 1,
     }
     # max_tokens=None 时不传入，避免部分厂商 API 因接收 null 而报错

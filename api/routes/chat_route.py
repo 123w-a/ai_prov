@@ -183,6 +183,13 @@ async def chat(
                         recipe["image_note"] = note
                         if index == 0:
                             answer_dict["image_note"] = note
+                    # 回写落库：AI 生图瀑布可达 170s，远超 finish 前的 25s join 窗口；
+                    # 图好后立即更新 __pending__ 记录，客户端断开/已刷新也能在重进会话时看到图。
+                    if pending_rec_id is not None:
+                        try:
+                            _update_answer(session_id, pending_rec_id, json.dumps(answer_dict, ensure_ascii=False), save_img_name, save_img_type, save_img_url)
+                        except Exception:
+                            pass
                 events.put(("item", ("image", {"index": index, "url": image_url, "ai_generated": ai_flag})))
 
         def run_agent():

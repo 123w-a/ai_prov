@@ -63,6 +63,7 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
                 "gpt",
                 temperature=0,
                 max_tokens=30,
+                timeout=15,  # 审核是短任务；75s 全局超时会让坏候选拖垮整个补图预算
             )
 
         image_base64 = base64.b64encode(image_bytes).decode("ascii")
@@ -158,10 +159,14 @@ def _image_candidate_text(img) -> str:
     ).lower()
 
 
-def to_data_url(img_list, recipe_name=None):#候选图片验证并上传 OSS
+def to_data_url(img_list, recipe_name=None, max_candidates=3):#候选图片验证并上传 OSS
     # 内部函数：过滤国内无法访问的海外图源，并把能成功下载的图片转成 OSS URL 返回
     # 这里只返回真正可展示的图片 URL；找不到合适图片就返回空字符串，不再硬塞
+    # max_candidates：审核是逐候选串行 LLM 调用，全量试会拖垮补图预算，默认砍到 3 个
+    tried = 0
     for img in img_list:
+        if tried >= max_candidates:
+            break
         img_url = img if isinstance(img, str) else img.get("url", "")#俩种图片返回格式都处理
         if not img_url.startswith(("http://", "https://")):#只要合法的 http(s) 链接
             continue
@@ -183,12 +188,14 @@ def to_data_url(img_list, recipe_name=None):#候选图片验证并上传 OSS
                 continue
             if not _looks_like_image(resp.content):  # 文件头不是真实图片，跳过
                 continue
-            if recipe_name and not _recipe_image_matches(
-                recipe_name,
-                resp.content,
-                content_type,
-            ):
-                continue
+            if recipe_name:
+                tried += 1  # 审核是串行 LLM 调用，无论过没过都消耗预算
+                if not _recipe_image_matches(
+                    recipe_name,
+                    resp.content,
+                    content_type,
+                ):
+                    continue
             return upload_to_oss(resp.content, content_type)
         except Exception:
             continue
