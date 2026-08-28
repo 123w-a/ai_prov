@@ -3,6 +3,7 @@
 # 具体工具怎么干活看 agent_tools.py，提示词内容看 agent_prompts.py
 
 import json#结构化回答打包成 JSON 字符串落进消息
+import os#读 SUMMARY_MODE_NAME 等环境变量
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
 import time#重试间隔用
@@ -57,9 +58,11 @@ def rebuild_llms(force_provider=None):
         retrieval_llm = get_langchain_llm(provider, temperature=0.3, max_tokens=200)
     except Exception:
         retrieval_llm = llm
-    # 历史摘要专用模型：同上跟随主 provider
+    # 历史摘要专用模型：摘要容错高，deepseek 时强制 flash（实测 2.1s vs pro 88.9s）；
+    # failover 到其他 provider 时不覆盖型号名（flash 名只对 deepseek 端点有效）
     try:
-        summary_llm = get_langchain_llm(provider, temperature=0.3)
+        flash_name = os.getenv("SUMMARY_MODE_NAME") if provider == "deepseek" else None
+        summary_llm = get_langchain_llm(provider, temperature=0.3, model_name=flash_name)
     except Exception:
         summary_llm = llm
     llm_with_tools = llm.bind_tools(tools)#传个大模型告诉他有什么工具和怎么正确的用变成json格式给LLM
