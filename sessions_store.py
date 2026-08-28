@@ -214,3 +214,24 @@ def append_message(
         if len(data["messages"]) == 1:
             data["title"] = user_text[:22]
         _write_session(data)
+        return new_id
+
+
+def update_message_answer(sid, record_id, answer, image_name=None, image_type=None, image_url=None):
+    """把入口预落的『待完成』记录更新为最终答案（断流兜底靠它，幂等）。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") == record_id:
+                m["answer"] = answer
+                if image_name is not None:
+                    m["image_name"] = image_name
+                if image_type is not None:
+                    m["image_type"] = image_type
+                if image_url is not None:
+                    m["image_url"] = image_url
+                _write_session(data)
+                return True
+    return False

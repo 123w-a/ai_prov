@@ -52,7 +52,7 @@ function sessionToMessages(session: Session): ChatMessage[] {
       id: `assistant-${session.session_id}-${record.id}`,
       recordId: record.id,
       role: 'assistant',
-      text: answer ? '' : record.answer || '',
+      text: answer ? '' : (record.answer === '__pending__' ? '（回答生成中，请稍后刷新查看…）' : record.answer || ''),
       answer,
       time: record.time,
     })

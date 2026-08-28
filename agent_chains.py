@@ -90,17 +90,25 @@ def build_structured_answer(context: str) -> ChefAnswer:
          喂给 _STRUCTURE_FIX_PROMPT 修正链，最多重试 MAX_STRUCTURE_RETRIES 次；
       3. 重试耗尽仍失败 → 上抛最后错误，由 agent_graph 的 except 降级为 markdown。
     """
+    import time as _time
     last_err: Exception | None = None
     for attempt in range(1 + MAX_STRUCTURE_RETRIES):
+        t0 = _time.time()
         try:
             if attempt == 0:
-                return chef_answer_chain.invoke({"context": context})
+                result = chef_answer_chain.invoke({"context": context})
+                print(f"[structure] attempt0 ok { _time.time()-t0:.1f}s")
+                return result
             # 重试：专用修正链，把上次错误反馈给模型自我修正
-            return (_STRUCTURE_FIX_PROMPT | structure_llm | chef_parser).invoke(
+            print(f"[structure] attempt{attempt} retry after { _time.time()-t0:.1f}s err={str(last_err)[:80]}")
+            result = (_STRUCTURE_FIX_PROMPT | structure_llm | chef_parser).invoke(
                 {"context": context, "error": str(last_err)}
             )
+            print(f"[structure] attempt{attempt} fix ok { _time.time()-t0:.1f}s")
+            return result
         except (ValidationError, OutputParserException) as e:
             last_err = e
+            print(f"[structure] attempt{attempt} parse-fail { _time.time()-t0:.1f}s: {str(e)[:100]}")
     # 重试耗尽，抛出最后错误，交给 structure_answer_node 的降级逻辑
     raise last_err  # type: ignore[arg-type]
 

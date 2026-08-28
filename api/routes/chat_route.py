@@ -99,6 +99,17 @@ async def chat(
     human_message = build_human_message(_apply_mode_prompt(message, mode), save_img_url)
     config = {"configurable": {"thread_id": session_id}}
 
+    # 入口先落用户消息（answer=__pending__）：客户端随时断开，用户的话必须已经在库里，
+    # 否则前端 syncActiveSession 拉后端真相时会把用户消息『撤走』。
+    # 完成态由 run_agent 线程 finally / generator finally 双路径幂等更新。
+    _PENDING = "__pending__"
+    pending_rec_id = None
+    try:
+        from sessions_store import append_message as _append, update_message_answer as _update_answer
+        pending_rec_id = _append(session_id, message, _PENDING, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), save_img_name, save_img_type, save_img_url)
+    except Exception:
+        pending_rec_id = None
+
     def event_generator():
         full_parts = []     # 正文 token 碎片（兜底落库用）
         final_answer = None  # structure_answer 节点产出的 ChefAnswer JSON 字符串
@@ -107,11 +118,15 @@ async def chat(
         saved_flag = [False]  # 兜底落库幂等标记
 
         def _persist_once():
-            """整轮结束或中途断流都把已获得的内容落库（幂等，只存一次）。"""
+            """把入口预落的 __pending__ 记录更新为最终态（幂等）。
+
+            双路径调用：generator finally（正常完成，及时更新）与 run_agent
+            线程 finally（客户端断开时 generator 的 finally 不会执行，线程 finally 必跑）。"""
             if saved_flag[0]:
                 return
             saved_flag[0] = True
             answer = final_answer if final_answer else "".join(full_parts)
+            print(f"[persist] sid={session_id} rec={pending_rec_id} answer_len={len(answer or '')} parts={len(full_parts)}")
             # T2-P0 饮食记录：结构化答案产出菜品时自动记账（失败不阻塞聊天）
             if final_answer:
                 try:
@@ -120,11 +135,18 @@ async def chat(
                     record_meal(session_id, _json.loads(final_answer))
                 except Exception:
                     pass
-            if answer and answer.strip():
+            if not (answer and answer.strip()):
+                answer = "（本轮回答未能完成：上游模型超时或连接中断，请重问一次。）"
+            if pending_rec_id is not None:
                 try:
-                    _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
+                    _update_answer(session_id, pending_rec_id, answer, save_img_name, save_img_type, save_img_url)
+                    return
                 except Exception:
-                    pass  # 落库失败不影响流式响应本身
+                    pass  # 更新失败退回追加完整记录
+            try:
+                _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
+            except Exception:
+                pass
 
         answer_dict = None  # structure 产出的 ChefAnswer dict；图片线程原地补图后重新序列化落库
         img_thread = None
@@ -190,6 +212,12 @@ async def chat(
                 except Exception as exc2:
                     events.put(("error", exc2))
             finally:
+                # 客户端断开时 generator 的 finally 不会执行（ASGI 取消 task 不 aclose
+                # sync generator），线程 finally 是落库的可靠兜底；幂等，双路径安全。
+                try:
+                    _persist_once()
+                except Exception:
+                    pass
                 events.put(("done", finished))
 
         # Agent 内部可能在联网搜索、图片下载或结构化模型调用中等待较久。
@@ -212,13 +240,6 @@ async def chat(
                 if event_type == "done":
                     break
 
-            # done 后给补图线程最多 25s：搜到图的重新序列化进落库与 finish 前最终态
-            if img_thread is not None:
-                img_thread.join(timeout=25)
-                with _img_lock:
-                    if answer_dict is not None:
-                        final_answer = json.dumps(answer_dict, ensure_ascii=False)
-
                 kind, payload = event
                 if kind == "token":
                     full_parts.append(payload)
@@ -227,7 +248,11 @@ async def chat(
                     yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":
                     final_answer = payload
-                    answer_dict = json.loads(payload)
+                    try:
+                        answer_dict = json.loads(payload)
+                    except Exception as _pe:
+                        print(f"[flow] answer json-parse failed: {_pe}")
+                        raise
                     # 卡片先出、图片后补：无图菜名交给后台线程（25s 预算），
                     # 搜到即推 image 事件让前端动态填图，不再阻塞 answer 120s。
                     if any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
@@ -238,6 +263,13 @@ async def chat(
                     yield f"data: {json.dumps({'answer': answer_dict}, ensure_ascii=False)}\n\n"
                 elif kind == "image":
                     yield f"data: {json.dumps({'image': payload}, ensure_ascii=False)}\n\n"
+
+            # done 后给补图线程最多 25s：搜到图的重新序列化进落库与 finish 前最终态
+            if img_thread is not None:
+                img_thread.join(timeout=25)
+                with _img_lock:
+                    if answer_dict is not None:
+                        final_answer = json.dumps(answer_dict, ensure_ascii=False)
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return

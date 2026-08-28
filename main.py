@@ -141,11 +141,33 @@ def _stream_agent(message, session_id):
     config = {"configurable": {"thread_id": session_id}}
     last_stage = None
     gate_asked = False  # 充分性门控已追问时，抑制后续节点的重复正文
-    for message_chunk, metadata in agent.stream(
+    # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
+    # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
+    # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
+    for mode, payload in agent.stream(
         {"messages": [message]},
         config=config,
-        stream_mode="messages",
+        stream_mode=["messages", "updates"],
     ):
+        if mode == "updates":
+            for node, update in (payload or {}).items():
+                if node != "structure_answer":
+                    continue
+                msgs = (update or {}).get("messages") or []
+                tail_type = type(msgs[-1]).__name__ if msgs else "none"
+                print(f"[stream] updates structure_answer tail={tail_type} n={len(msgs)}")
+                # 类型名字符串判定而非 isinstance：项目里存在两份 langchain
+                # 类对象（agent_chains 与 main 各自 import），isinstance 跨身份恒 False。
+                if msgs and tail_type == "AIMessage":
+                    raw = msgs[-1].content
+                    if isinstance(raw, list):
+                        # 新版 LangChain/官方端点可能给结构化 content blocks，规范化为纯文本
+                        raw = "".join(
+                            block.get("text", "") for block in raw if isinstance(block, dict)
+                        )
+                    yield ("answer", raw)
+            continue
+        message_chunk, metadata = payload
         node = metadata.get("langgraph_node")
         stage = _stage_for_node(node, message_chunk)
         if stage and stage != last_stage:
@@ -164,10 +186,6 @@ def _stream_agent(message, session_id):
             if gate_asked:
                 continue
             yield ("token", content)
-        # structure_answer 节点返回的完整 JSON 消息 → 整包给前端；
-        # 注意 AIMessageChunk 是 AIMessage 子类，必须显式排除链内部的流式碎片
-        elif node == "structure_answer" and not isinstance(message_chunk, AIMessageChunk):
-            yield ("answer", content)
 
 
 def stream_agent(message, session_id):
