@@ -3542,6 +3542,10 @@ img {
 }
 /* ---- P1 家庭成员画像面板 ---- */
 .family-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
   padding: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
 }

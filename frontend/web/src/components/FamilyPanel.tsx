@@ -194,15 +194,18 @@ export function FamilyPanel() {
               >
                 <Icon name="book" size={14} />
               </button>
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label={`删除${member.name}`}
-                disabled={busy || (family?.members.length ?? 0) <= 1}
-                onClick={() => void remove(member)}
-              >
-                <Icon name="close" size={14} />
-              </button>
+              {(family?.members.length ?? 0) > 1 && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`删除${member.name}`}
+                  disabled={busy}
+                  title="删除该成员"
+                  onClick={() => void remove(member)}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              )}
             </span>
           </li>
         ))}
