@@ -25,13 +25,13 @@ def _render_health_profile(profile: dict) -> str:
     if h and w:
         try:
             bmi = round(float(w) / (float(h) / 100) ** 2, 1)
-            lines.append(f"- 身高体重：{h}cm / {w}kg（BMI {bmi}）")
+            lines.append(f"- 身高体重：{h:g}cm / {w:g}kg（BMI {bmi:g}）")
         except Exception:
             pass
     age, sex = basic.get("age"), basic.get("sex") or ""
     if age or sex:
         sex_cn = {"male": "男", "female": "女"}.get(sex, "")
-        seg = " ".join(x for x in [f"{age}岁" if age else "", sex_cn] if x)
+        seg = " ".join(x for x in [f"{age:g}岁" if age else "", sex_cn] if x)
         lines.append(f"- 年龄性别：{seg}")
     cond = [c for c in (profile.get("conditions") or []) if c]
     if cond:

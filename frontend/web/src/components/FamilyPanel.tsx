@@ -21,9 +21,23 @@ interface Draft {
   allergens: string
   goal: string
   dislikes: string
+  height_cm: string
+  weight_kg: string
+  age: string
+  sex: string
 }
 
-const emptyDraft: Draft = { name: '', conditions: '', allergens: '', goal: '', dislikes: '' }
+const emptyDraft: Draft = {
+  name: '',
+  conditions: '',
+  allergens: '',
+  goal: '',
+  dislikes: '',
+  height_cm: '',
+  weight_kg: '',
+  age: '',
+  sex: '',
+}
 
 function splitTags(value: string): string[] {
   return value
@@ -35,13 +49,24 @@ function splitTags(value: string): string[] {
 
 function draftFrom(member: FamilyMember): Draft {
   const { profile } = member
+  const basic = profile.basic ?? { height_cm: null, weight_kg: null, age: null, sex: '' }
   return {
     name: member.name,
     conditions: profile.conditions.join('、'),
     allergens: profile.allergens.join('、'),
     goal: profile.goal ?? '',
     dislikes: profile.dislikes.join('、'),
+    height_cm: basic.height_cm != null ? String(basic.height_cm) : '',
+    weight_kg: basic.weight_kg != null ? String(basic.weight_kg) : '',
+    age: basic.age != null ? String(basic.age) : '',
+    sex: basic.sex ?? '',
   }
+}
+
+function numInRange(value: string, min: number, max: number): number | null {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < min || n > max) return null
+  return n
 }
 
 function inputFrom(draft: Draft): MemberInput {
@@ -52,6 +77,14 @@ function inputFrom(draft: Draft): MemberInput {
       allergens: splitTags(draft.allergens),
       goal: draft.goal.trim(),
       dislikes: splitTags(draft.dislikes),
+      basic: {
+        height_cm: numInRange(draft.height_cm, 80, 250),
+        weight_kg: numInRange(draft.weight_kg, 20, 300),
+        age: numInRange(draft.age, 0, 120),
+        sex: (['male', 'female', 'other'] as const).includes(draft.sex as 'male')
+          ? (draft.sex as 'male' | 'female' | 'other')
+          : '',
+      },
     },
   }
 }
@@ -256,6 +289,47 @@ export function FamilyPanel() {
               onChange={(e) => setDraft({ ...draft, dislikes: e.target.value })}
             />
           </label>
+          <div className="family-editor-grid">
+            <label>
+              身高 (cm)
+              <input
+                inputMode="decimal"
+                value={draft.height_cm}
+                placeholder="如：165"
+                onChange={(e) => setDraft({ ...draft, height_cm: e.target.value })}
+              />
+            </label>
+            <label>
+              体重 (kg)
+              <input
+                inputMode="decimal"
+                value={draft.weight_kg}
+                placeholder="如：58"
+                onChange={(e) => setDraft({ ...draft, weight_kg: e.target.value })}
+              />
+            </label>
+            <label>
+              年龄
+              <input
+                inputMode="numeric"
+                value={draft.age}
+                placeholder="如：52"
+                onChange={(e) => setDraft({ ...draft, age: e.target.value })}
+              />
+            </label>
+            <label>
+              性别
+              <select
+                value={draft.sex}
+                onChange={(e) => setDraft({ ...draft, sex: e.target.value })}
+              >
+                <option value="">不填</option>
+                <option value="female">女</option>
+                <option value="male">男</option>
+                <option value="other">其他</option>
+              </select>
+            </label>
+          </div>
           <div className="family-editor-actions">
             <button type="button" disabled={busy} onClick={() => void save()}>
               保存

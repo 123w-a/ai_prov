@@ -3670,6 +3670,12 @@ img {
   border-color: rgba(143, 211, 199, 0.55);
 }
 
+.family-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+
 .family-editor-actions {
   display: flex;
   gap: 8px;
