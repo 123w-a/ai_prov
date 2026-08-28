@@ -24,10 +24,11 @@ class AnswerFeedbackTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
-        for target, name in ((sr, "_ANSWER_FEEDBACK_LOG"),):
-            patcher = patch.object(target, name, self.dir / "answer_feedback.json")
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = patch.object(
+            sr.feedback_store, "_LOG", self.dir / "answer_feedback.json"
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.events_file = self.dir / "answer_feedback.json"
         # 造一个已存在会话（绕过磁盘定位：直接 patch _read_session 返回内存数据）
         self.session = {

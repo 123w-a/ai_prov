@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息
 from agent import agent  # 调用写好的 LangGraph Agent
 from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
 from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
+from feedback_store import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
 from pathlib import Path
 
 # 用户长期偏好文件路径（白名单目录 data/ 下）
@@ -112,14 +113,28 @@ def build_human_message(text, image_url=None):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
     所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
     偏好注入：每次请求都带上用户长期偏好（忌口/辣度/减脂/糖尿病忌糖），
-    实现「记得你」的轻量长期记忆——文件持久化 + 会话初始化读取注入。"""
+    实现「记得你」的轻量长期记忆——文件持久化 + 会话初始化读取注入。
+    反馈注入：近期被踩菜名作为推荐约束（换做法/给替代），反馈闭环落地。"""
+    prefix_parts: list[str] = []
     prefs = load_preferences()
     if prefs:
-        text = (
+        prefix_parts.append(
             "【用户长期偏好（每次对话自动加载，务必严格遵守）】\n"
             f"{prefs}\n"
-            "【以上为偏好约束，以下是本次需求】\n"
-            f"{text}"
+        )
+    downs = recent_down_dishes()
+    if downs:
+        prefix_parts.append(
+            "【近期不满意菜品（用户点过踩，务必参考）】\n"
+            f"{'、'.join(downs)}\n"
+            "若本次推荐命中同类菜品或做法，请主动换做法、口味或给出替代品；"
+            "若确实要推荐其中菜品，请说明这次在做法/口味上的具体不同。\n"
+        )
+    if prefix_parts:
+        text = (
+            "".join(prefix_parts)
+            + "【以上为自动加载约束，以下是本次需求】\n"
+            + text
         )
     if image_url:
         return HumanMessage(

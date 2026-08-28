@@ -1,11 +1,12 @@
 # session_route.py：只负责"会话管理"CRUD（新建 / 列表 / 删除 / 清空 / 删单条）+ 回答满意度反馈
 import json
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+import feedback_store
+from feedback_store import read_events as _read_feedback_events, write_events as _write_feedback_events
 from sessions_store import (
     create_session,
     list_sessions,
@@ -19,8 +20,6 @@ from sessions_store import (
 from main import image_bytes_to_oss_url
 
 router = APIRouter()
-
-_ANSWER_FEEDBACK_LOG = Path(__file__).resolve().parents[2] / "data" / "answer_feedback.json"
 
 
 class FeedbackPayload(BaseModel):
@@ -72,7 +71,7 @@ def api_message_feedback(sid: str, rec_id: int, payload: FeedbackPayload):
     if not found:
         raise HTTPException(status_code=404, detail="该轮对话不存在")
 
-    events = _read_answer_feedback_events()
+    events = _read_feedback_events()
     kept = [e for e in events if not (e["sid"] == sid and e["rec_id"] == rec_id)]
     if current == payload.rating:  # 新打分：记事件
         dish = None
@@ -87,25 +86,8 @@ def api_message_feedback(sid: str, rec_id: int, payload: FeedbackPayload):
             "sid": sid, "rec_id": rec_id,
             "rating": current, "dish": dish,
         })
-    _write_answer_feedback_events(kept)
+    _write_feedback_events(kept)
     return {"code": 200, "data": {"feedback": current}}
-
-
-def _read_answer_feedback_events() -> list:
-    try:
-        if _ANSWER_FEEDBACK_LOG.exists():
-            data = json.loads(_ANSWER_FEEDBACK_LOG.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
-    except Exception:
-        pass
-    return []
-
-
-def _write_answer_feedback_events(events: list) -> None:
-    _ANSWER_FEEDBACK_LOG.parent.mkdir(parents=True, exist_ok=True)
-    _ANSWER_FEEDBACK_LOG.write_text(
-        json.dumps(events, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
 
 
 @router.get("/feedback/weekly")
@@ -113,7 +95,7 @@ def api_feedback_weekly():
     """近 7 天回答满意度统计：up/down 计数与被踩菜名 top3。"""
     cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
     events = [
-        e for e in _read_answer_feedback_events()
+        e for e in _read_feedback_events()
         if str(e.get("ts", "")) >= cutoff
     ]
     up = sum(1 for e in events if e.get("rating") == "up")
