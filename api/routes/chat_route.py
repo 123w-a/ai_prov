@@ -245,6 +245,18 @@ async def chat(
                 if event_type == "error":
                     raise event
                 if event_type == "done":
+                    # done 由 run_agent 主线在 structure 完成后立刻 put，而 image 事件
+                    # 由补图线程几秒后才 put——不在这里等一小窗并补推，image 事件会
+                    # 永远被 break 跳过（用户看到卡片一直无图的根因）。
+                    if img_thread is not None:
+                        img_thread.join(timeout=25)
+                        with _img_lock:
+                            if answer_dict is not None:
+                                final_answer = json.dumps(answer_dict, ensure_ascii=False)
+                                for i, r in enumerate(answer_dict.get("recipes") or []):
+                                    if r.get("image_url"):
+                                        img_event = {"index": i, "url": r["image_url"], "ai_generated": bool(r.get("image_ai_generated"))}
+                                        yield f"data: {json.dumps({'image': img_event}, ensure_ascii=False)}\n\n"
                     break
 
                 kind, payload = event
@@ -271,12 +283,8 @@ async def chat(
                 elif kind == "image":
                     yield f"data: {json.dumps({'image': payload}, ensure_ascii=False)}\n\n"
 
-            # done 后给补图线程最多 25s：搜到图的重新序列化进落库与 finish 前最终态
-            if img_thread is not None:
-                img_thread.join(timeout=25)
-                with _img_lock:
-                    if answer_dict is not None:
-                        final_answer = json.dumps(answer_dict, ensure_ascii=False)
+            # 正常路径落库（幂等；finally 亦兜底）
+            _persist_once()
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return

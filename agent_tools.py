@@ -288,6 +288,11 @@ def find_recipe_image(recipe_name: str):#搜索一张对应成品图
     base_query = recipe_name.strip()#清洗字符串
     if not base_query:
         return None, "none"
+    # AI 生图缓存前置：同一菜名第二次提问秒出（缓存图均为 AI 生成，语义准确）
+    from image_gen import cached_dish_image
+    cached = cached_dish_image(base_query)
+    if cached:
+        return cached, "ai"
 
     image_friendly_query = f"{base_query} 菜品 美食 成品图"
     try:

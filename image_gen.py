@@ -82,6 +82,13 @@ def _load_cache() -> dict:
     return {}
 
 
+def cached_dish_image(dish_name: str):
+    """只查缓存不生成：供补图线程预算前置用。命中返回 OSS URL，未命中 None。"""
+    if not dish_name or not dish_name.strip():
+        return None
+    return _load_cache().get(_normalize(dish_name))
+
+
 def _save_cache(cache: dict) -> None:
     """把缓存落盘；失败仅打印，不影响主流程（缓存只是降本优化，非必须）。"""
     try:
