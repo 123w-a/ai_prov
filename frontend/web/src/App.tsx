@@ -253,6 +253,23 @@ export default function App() {
                   : message,
               ),
             ),
+          onImage: (img) =>
+            setMessages((current) =>
+              current.map((message) => {
+                if (message.id !== assistantId || !message.answer) return message
+                const recipes = (message.answer.recipes ?? []).map((recipe, index) =>
+                  index === img.index
+                    ? { ...recipe, image_url: img.url, image_ai_generated: img.ai_generated }
+                    : recipe,
+                )
+                const updated: ChefAnswer = { ...message.answer, recipes }
+                if (img.index === 0) {
+                  updated.image_url = img.url
+                  updated.image_ai_generated = img.ai_generated
+                }
+                return { ...message, answer: updated }
+              }),
+            ),
         })
         await syncActiveSession(sessionId)
       } catch (error) {

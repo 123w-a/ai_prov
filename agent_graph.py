@@ -484,18 +484,17 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         warning = state.get("verify_warning", "")
         if warning:
             answer.chef_tip = (answer.chef_tip + " " + warning).strip()
-        if allow_multiple:#recipe是单个食谱对象
+        # 图片搜索已剥离到 chat_route 的后台线程（structure 曾在节点内串行搜图，
+        # 四级图源瀑布+逐候选下载+视觉审核动辄 120s，是全链最大瓶颈）。
+        # 这里只保留用户本轮上传图的兼容赋值；其余菜图由 SSE image 事件异步补推。
+        if allow_multiple and answer.recipes:
             for index, recipe in enumerate(answer.recipes):
-                recipe.image_url, recipe.image_ai_generated = _search_recipe_image(recipe.name)
-                # 第一道菜兼容本轮已经拿到的图片，避免重复搜索失败时整轮无图。
-                if not recipe.image_url and index == 0:
-                    recipe.image_url = real_image_url#这里就直接把图片赋值给他结构化的时候就会变成图片
-                    recipe.image_ai_generated = real_image_ai#看是否有AI标
-        elif answer.recipes:
-            # 单道菜模式按最终菜名重新搜索，避免把泛食材搜索结果误绑到菜品卡片。
-            answer.recipes[0].image_url, answer.recipes[0].image_ai_generated = (
-                _search_recipe_image(answer.recipes[0].name)
-            )
+                if not recipe.image_url and index == 0 and real_image_url:
+                    recipe.image_url = real_image_url
+                    recipe.image_ai_generated = real_image_ai
+        elif answer.recipes and real_image_url:
+            answer.recipes[0].image_url = real_image_url
+            answer.recipes[0].image_ai_generated = real_image_ai
         # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
         # 杜绝"正文说找到图、卡片却没图"的口径不一
         if allow_multiple and answer.recipes:

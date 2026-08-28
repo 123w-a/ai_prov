@@ -12,6 +12,7 @@ from main import (
     image_bytes_to_oss_url,
 )
 from agent_graph import failover_llms
+from agent_tools import find_recipe_image
 from model_name import is_provider_failure
 from sessions_store import append_message
 import time
@@ -125,6 +126,43 @@ async def chat(
                 except Exception:
                     pass  # 落库失败不影响流式响应本身
 
+        answer_dict = None  # structure 产出的 ChefAnswer dict；图片线程原地补图后重新序列化落库
+        img_thread = None
+        _img_lock = threading.Lock()
+
+        def _fill_images():
+            """后台补图：对无图菜名搜成品图，25s 预算内逐个补，实时推 image 事件。"""
+            deadline = time.time() + 25
+            for index, recipe in enumerate(list(answer_dict.get("recipes") or [])):
+                if time.time() > deadline or recipe.get("image_url"):
+                    continue
+                name = str(recipe.get("name") or "").strip()
+                if not name:
+                    continue
+                try:
+                    image_url, source = find_recipe_image(name)
+                except Exception:
+                    continue
+                if not image_url:
+                    continue
+                ai_flag = source == "ai"
+                with _img_lock:
+                    recipe["image_url"] = image_url
+                    recipe["image_ai_generated"] = ai_flag
+                    if index == 0:
+                        answer_dict["image_url"] = image_url
+                        answer_dict["image_ai_generated"] = ai_flag
+                    note = str(recipe.get("image_note") or answer_dict.get("image_note") or "")
+                    if ai_flag:
+                        note = ("AI 生成示意图：" + note) if note and "AI 生成示意图" not in note else (note or "AI 生成示意图（非真实成品照，仅供样式参考）")
+                    elif not note:
+                        note = ""
+                    if note:
+                        recipe["image_note"] = note
+                        if index == 0:
+                            answer_dict["image_note"] = note
+                events.put(("item", ("image", {"index": index, "url": image_url, "ai_generated": ai_flag})))
+
         def run_agent():
             try:
                 for item in stream_agent(human_message, session_id):
@@ -174,6 +212,13 @@ async def chat(
                 if event_type == "done":
                     break
 
+            # done 后给补图线程最多 25s：搜到图的重新序列化进落库与 finish 前最终态
+            if img_thread is not None:
+                img_thread.join(timeout=25)
+                with _img_lock:
+                    if answer_dict is not None:
+                        final_answer = json.dumps(answer_dict, ensure_ascii=False)
+
                 kind, payload = event
                 if kind == "token":
                     full_parts.append(payload)
@@ -182,9 +227,17 @@ async def chat(
                     yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":
                     final_answer = payload
+                    answer_dict = json.loads(payload)
+                    # 卡片先出、图片后补：无图菜名交给后台线程（25s 预算），
+                    # 搜到即推 image 事件让前端动态填图，不再阻塞 answer 120s。
+                    if any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
+                        img_thread = threading.Thread(target=_fill_images, daemon=True)
+                        img_thread.start()
                     # 先通知前端"正文说完了，正在整理卡片"，再推整包 JSON
                     yield f"data: {json.dumps({'structuring': True}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'answer': json.loads(payload)}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'answer': answer_dict}, ensure_ascii=False)}\n\n"
+                elif kind == "image":
+                    yield f"data: {json.dumps({'image': payload}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return

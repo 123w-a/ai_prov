@@ -98,6 +98,7 @@ export interface ChatHandlers {
   onAnswer: (answer: ChefAnswer) => void
   onStage?: (stage: string) => void
   onHeartbeat?: (elapsedSeconds: number) => void
+  onImage?: (img: { index: number; url: string; ai_generated: boolean }) => void
   onFinish?: () => void
 }
 
@@ -143,6 +144,7 @@ export async function sendChat(
 
       if (event.working || event.status === 'working') handlers.onWorking?.()
       else if (event.heartbeat) handlers.onHeartbeat?.(Number((event.heartbeat as { elapsed?: number })?.elapsed ?? 0))
+      else if (event.image) handlers.onImage?.(event.image as { index: number; url: string; ai_generated: boolean })
       else if (event.token != null) handlers.onToken(String(event.token))
       else if (event.structuring) handlers.onStructuring()
       else if (event.answer) handlers.onAnswer(event.answer as ChefAnswer)
