@@ -148,3 +148,31 @@ export interface NearbyResult {
 export interface PreferencesData {
   preferences: string
 }
+
+export interface MemberBasic {
+  height_cm: number | null
+  weight_kg: number | null
+  age: number | null
+  sex: '' | 'male' | 'female' | 'other'
+}
+
+export interface MemberProfile {
+  basic: MemberBasic
+  conditions: string[]
+  allergens: string[]
+  goal: string
+  diet_style: string
+  dislikes: string[]
+}
+
+export interface FamilyMember {
+  id: string
+  name: string
+  profile: MemberProfile
+}
+
+export interface FamilyData {
+  version: number
+  active_id: string
+  members: FamilyMember[]
+}

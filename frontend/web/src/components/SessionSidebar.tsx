@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Session, WorkspaceView } from '../types'
+import { FamilyPanel } from './FamilyPanel'
 import { Icon } from './Icon'
 
 interface Props {
@@ -91,6 +92,8 @@ export function SessionSidebar({
           <span className="nav-tag">DEMO</span>
         </button>
       </nav>
+
+      <FamilyPanel />
 
       <section className="history-section" aria-labelledby="history-heading">
         <div className="sidebar-section-head">

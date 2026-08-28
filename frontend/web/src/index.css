@@ -3540,3 +3540,150 @@ img {
     grid-template-columns: 1fr;
   }
 }
+/* ---- P1 家庭成员画像面板 ---- */
+.family-panel {
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.family-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.family-header strong {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+}
+
+.family-active {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.family-notice {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: #ffb4a2;
+}
+
+.family-members {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.family-member {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.family-member.active {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.family-member-main {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  text-align: left;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.family-member-main strong {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.family-member-main small {
+  overflow: hidden;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-member.active .family-member-main small {
+  color: #8fd3c7;
+}
+
+.family-member-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.family-editor {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.family-editor strong {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.family-editor label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.family-editor input {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.25);
+  outline: none;
+}
+
+.family-editor input:focus {
+  border-color: rgba(143, 211, 199, 0.55);
+}
+
+.family-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.family-editor-actions button {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.family-editor-actions button:first-child {
+  color: #0d1b2a;
+  background: #8fd3c7;
+  border-color: transparent;
+  font-weight: 600;
+}

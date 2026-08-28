@@ -13,6 +13,7 @@ import { Icon } from './components/Icon'
 import { InsightPanel } from './components/InsightPanel'
 import { ServicePreview } from './components/ServicePreview'
 import { SessionSidebar } from './components/SessionSidebar'
+// P1: sidebar hosts FamilyPanel (member switcher + profiles)
 import type {
   ChatMessage,
   ChefAnswer,

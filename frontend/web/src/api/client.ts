@@ -1,5 +1,6 @@
 import type {
   ChefAnswer,
+  FamilyData,
   NearbyResult,
   PreferencesData,
   ServicePreviewRequest,
@@ -185,6 +186,56 @@ export async function updatePreferences(preferences: string): Promise<string> {
     body: JSON.stringify({ preferences }),
   })
   return result.data.preferences
+}
+
+// ---- P1 家庭多成员画像 ----
+
+export interface MemberInput {
+  name: string
+  profile: {
+    conditions: string[]
+    allergens: string[]
+    goal: string
+    diet_style?: string
+    dislikes: string[]
+  }
+}
+
+export async function fetchFamily(): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ exists: boolean; family: FamilyData }>>("/api/profile")
+  return result.data.family
+}
+
+export async function addMember(member: MemberInput): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>("/api/profile/members", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(member),
+  })
+  return result.data.family
+}
+
+export async function updateMember(memberId: string, member: MemberInput): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>(`/api/profile/members/${memberId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(member),
+  })
+  return result.data.family
+}
+
+export async function deleteMember(memberId: string): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>(`/api/profile/members/${memberId}`, { method: "DELETE" })
+  return result.data.family
+}
+
+export async function switchActiveMember(memberId: string): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>("/api/profile/active", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ member_id: memberId }),
+  })
+  return result.data.family
 }
 
 export interface FridgeVisionItem {
