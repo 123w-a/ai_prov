@@ -13,6 +13,23 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
   const guards = answer?.guardrails ?? []
   const sources = answer?.sources ?? []
 
+  // 一句话结论横幅：warn 优先 > adjusted > 全 pass
+  const warnCount = guards.filter((g) => g.status === 'warn').length
+  const adjustedCount = guards.filter((g) => g.status === 'adjusted').length
+  let banner: { cls: string; icon: 'check' | 'warning' | 'shield'; text: string } | null = null
+  if (guards.length > 0) {
+    if (warnCount > 0) {
+      banner = { cls: 'warn', icon: 'warning', text: `${warnCount} 项需注意——请留意用量与搭配` }
+    } else if (adjustedCount > 0) {
+      banner = { cls: 'adjusted', icon: 'shield', text: `已自动调整 ${adjustedCount} 处硬禁忌，本轮方案合规` }
+    } else {
+      banner = { cls: 'pass', icon: 'check', text: '本轮推荐已通过全部健康护栏' }
+    }
+  }
+
+  const statusIcon = (status: string) =>
+    status === 'warn' ? 'warning' : status === 'adjusted' ? 'shield' : 'check'
+
   return (
     <aside className="insight-panel" aria-label="健康护栏与证据链">
       <header className="insight-header">
@@ -61,12 +78,22 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
               </div>
             </div>
 
+            {banner && (
+              <div className={`guardrail-banner ${banner.cls}`}>
+                <Icon name={banner.icon} size={15} />
+                <span>{banner.text}</span>
+              </div>
+            )}
+
             {guards.length > 0 ? (
               <div className="guardrail-cards">
                 {guards.map((guard, index) => (
                   <article key={`${guard.condition}-${index}`} className={`guardrail-card ${guard.status}`}>
                     <header>
-                      <strong>{guard.condition}</strong>
+                      <strong>
+                        <Icon name={statusIcon(guard.status)} size={11} />
+                        {guard.condition}
+                      </strong>
                       <span>{STATUS_COPY[guard.status] || guard.status}</span>
                     </header>
                     {guard.rule && <p>{guard.rule}</p>}
@@ -79,6 +106,12 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
                 <Icon name="check" size={17} />
                 本轮未检测到需额外提示的健康约束
               </div>
+            )}
+
+            {guards.length === 0 && (
+              <p className="guardrail-empty">
+                在「家庭成员」中建档后，档案里的健康标签会自动触发护栏核查。
+              </p>
             )}
           </section>
 
