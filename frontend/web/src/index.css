@@ -3757,10 +3757,10 @@ img {
 .fb-btn {
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 22px;
+  width: 26px;
+  height: 24px;
   padding: 0;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(13, 27, 42, 0.3);
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -3769,26 +3769,26 @@ img {
 }
 
 .fb-btn:hover {
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(255, 255, 255, 0.06);
+  color: rgba(13, 27, 42, 0.65);
+  background: rgba(13, 27, 42, 0.06);
 }
 
 .fb-btn.active {
-  color: #8fd3c7;
-  background: rgba(143, 211, 199, 0.12);
+  color: #0e7a6a;
+  background: rgba(14, 122, 106, 0.14);
 }
 
 .fb-btn.active[aria-label*='不满意'] {
-  color: #ffb4a2;
-  background: rgba(255, 180, 162, 0.12);
+  color: #b4533a;
+  background: rgba(180, 83, 58, 0.14);
 }
 
 .feedback-summary {
   margin: 14px;
   padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(13, 27, 42, 0.1);
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(13, 27, 42, 0.03);
 }
 
 .feedback-summary strong {
@@ -3796,7 +3796,7 @@ img {
   margin-bottom: 8px;
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(13, 27, 42, 0.5);
   text-transform: uppercase;
 }
 
@@ -3804,7 +3804,7 @@ img {
   margin: 0;
   font-size: 11.5px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(13, 27, 42, 0.45);
 }
 
 .feedback-counts {
@@ -3820,12 +3820,12 @@ img {
   font-weight: 600;
 }
 
-.fb-up { color: #8fd3c7; }
-.fb-down { color: #ffb4a2; }
+.fb-up { color: #0e7a6a; }
+.fb-down { color: #b4533a; }
 
 .feedback-down-list {
   margin: 8px 0 0;
   font-size: 11px;
   line-height: 1.6;
-  color: rgba(255, 180, 162, 0.75);
+  color: rgba(180, 83, 58, 0.85);
 }
