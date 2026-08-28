@@ -235,3 +235,38 @@ def update_message_answer(sid, record_id, answer, image_name=None, image_type=No
                 _write_session(data)
                 return True
     return False
+
+
+def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, note):
+    """后台补图回写：按菜名定位 answer.recipes 中无图项并更新图片字段（幂等）。
+
+    与 update_message_answer 的区别：不整包替换 answer，而是锁内重读后只改
+    图片相关字段，避免后台补图覆盖实时链路的其他回写。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            try:
+                ans = json.loads(m.get("answer") or "")
+            except Exception:
+                return False
+            if not isinstance(ans, dict):
+                return False
+            changed = False
+            for recipe in ans.get("recipes") or []:
+                if recipe.get("name") == dish_name and not recipe.get("image_url"):
+                    recipe["image_url"] = image_url
+                    recipe["image_ai_generated"] = bool(image_ai)
+                    changed = True
+            if changed:
+                ans["image_url"] = image_url
+                ans["image_ai_generated"] = bool(image_ai)
+                ans["image_note"] = note
+                m["answer"] = json.dumps(ans, ensure_ascii=False)
+                m["image_url"] = image_url  # 与实时链路的顶层字段保持一致
+                _write_session(data)
+            return changed
+    return False

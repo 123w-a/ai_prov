@@ -48,6 +48,12 @@ def _warmup_knowledge_base() -> None:
 threading.Thread(target=_warmup_knowledge_base, name="kb-warmup", daemon=True).start()
 
 
+# —— 失败图自动补图队列：网络抖动期没能出图的菜，后台每 10 分钟扫一轮补上 ——
+from image_retry_queue import start_retry_daemon
+
+start_retry_daemon()
+
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
