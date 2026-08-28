@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { fetchFeedbackWeekly, fetchWeeklyReport } from '../api/client'
+import { fetchFeedbackWeekly, fetchWeeklyReport, fetchWeeklySummary } from '../api/client'
+import type { WeeklySummaryResponse } from '../api/client'
 import type { FeedbackWeekly } from '../api/client'
 import type { WeeklyReport } from '../types'
 import { Icon } from './Icon'
@@ -20,6 +21,7 @@ const TREND_COPY: Record<string, { text: string; cls: string }> = {
 export function WeeklyReportPage() {
   const [report, setReport] = useState<WeeklyReport | null>(null)
   const [feedback, setFeedback] = useState<FeedbackWeekly | null>(null)
+  const [summary, setSummary] = useState<WeeklySummaryResponse | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -34,10 +36,18 @@ export function WeeklyReportPage() {
       .finally(() => {
         if (alive) setLoading(false)
       })
+    // AI 小结异步补渲染：LLM 首次生成需数秒，不阻塞周报主体
+    if (report?.has_data) {
+      fetchWeeklySummary()
+        .then((s) => {
+          if (alive) setSummary(s)
+        })
+        .catch(() => {})
+    }
     return () => {
       alive = false
     }
-  }, [])
+  }, [report?.has_data])
 
   if (loading) {
     return (
@@ -81,6 +91,15 @@ export function WeeklyReportPage() {
           <strong>{feedback ? feedback.down : '—'}</strong>
           <span>回答被踩</span>
         </div>
+      </section>
+
+      <section className="weekly-card summary">
+        <h3>AI 小结</h3>
+        {summary?.ai_summary ? (
+          <p className="weekly-summary-text">{summary.ai_summary}</p>
+        ) : summary && !summary.ai_summary && summary.reason === 'no_data' ? null : (
+          <p className="weekly-summary-loading">正在生成本周小结…</p>
+        )}
       </section>
 
       <section className="weekly-card">

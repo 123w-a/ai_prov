@@ -304,6 +304,16 @@ export async function fetchWeeklyReport(): Promise<WeeklyReport> {
   return jsonRequest<WeeklyReport>("/api/reports/weekly")
 }
 
+export interface WeeklySummaryResponse {
+  ai_summary: string | null
+  reason?: string
+  cached?: boolean
+}
+
+export async function fetchWeeklySummary(): Promise<WeeklySummaryResponse> {
+  return jsonRequest<WeeklySummaryResponse>("/api/reports/weekly-summary")
+}
+
 export interface FridgeVisionItem {
   name: string
   quantity: string

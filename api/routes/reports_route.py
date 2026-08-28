@@ -2,6 +2,7 @@
 数据文件 data/meals.json（JSON 数组），字段尽量少、诚实可查。"""
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from api.routes.fridge_route import _PANTRY_LOG, get_fridge
 router = APIRouter()
 _MEALS = Path(__file__).resolve().parents[2] / "data" / "meals.json"
 _FEEDBACK_LOG = Path(__file__).resolve().parents[2] / "data" / "feedback.json"
+_SUMMARY_CACHE = Path(__file__).resolve().parents[2] / "data" / "weekly_summary.json"
 
 
 def record_meal(session_id: str, answer: dict) -> None:
@@ -227,3 +229,111 @@ def _next_week_shopping(top_dishes: list) -> list[str]:
                 seen.add(ing)
                 items.append(ing)
     return items
+
+
+def _recent_meals() -> list[dict]:
+    """近 7 天记账记录（weekly 与 summary 共用）。"""
+    try:
+        data = json.loads(_MEALS.read_text(encoding="utf-8")) if _MEALS.exists() else []
+    except Exception:
+        data = []
+    since = datetime.now() - timedelta(days=7)
+    return [m for m in data if datetime.fromisoformat(m["ts"]) >= since]
+
+
+def _active_conditions() -> list[str]:
+    """活跃成员的健康条件标签（读不到就空表，不阻塞小结）。"""
+    try:
+        from api.routes.preferences_route import _read_family
+        family = _read_family()
+        if not family:
+            return []
+        active = next(
+            (m for m in family["members"] if m["id"] == family.get("active_id")), None
+        )
+        return list((active or {}).get("profile", {}).get("conditions") or [])
+    except Exception:
+        return []
+
+
+def _weekly_evidence() -> dict | None:
+    """汇总本周证据包（供指纹与 LLM prompt）；无数据返回 None。"""
+    recent = _recent_meals()
+    if not recent:
+        return None
+    dishes = Counter(m["dish"] for m in recent if m.get("dish"))
+    lights = Counter(l for m in recent for l in m.get("lights", []))
+    trends = _light_trends(recent, datetime.now() - timedelta(days=7))
+    tags = Counter(
+        t for e in _read_feedback_log()
+        for t in (e.get("tags") or [])
+        if str(e.get("ts", ""))[:10] >= (datetime.now() - timedelta(days=7)).date().isoformat()
+    )
+    try:
+        from feedback_store import recent_down_dishes
+        downs = recent_down_dishes(days=7, limit=3)
+    except Exception:
+        downs = []
+    return {
+        "meals": len(recent),
+        "top_dishes": dishes.most_common(5),
+        "lights": dict(lights),
+        "trends": trends,
+        "feedback_tags": dict(tags),
+        "down_dishes": downs,
+        "conditions": _active_conditions(),
+    }
+
+
+_SUMMARY_PROMPT = (
+    "你是饮食健康小结助手。根据以下本周真实数据写 3-5 句中文小结，第二人称『你』。"
+    "要求：具体点名菜名与红绿灯/趋势；有数据才下结论，缺数据就说样本还少；"
+    "严禁编造数据之外的事实；语气自然不堆砌；直接输出小结正文。\n\n本周数据：\n{evidence}"
+)
+
+
+@router.get("/reports/weekly-summary")
+def weekly_summary():
+    """本周 AI 自然语言小结：数据指纹缓存，数据不变不重复调用 LLM。"""
+    evidence = _weekly_evidence()
+    if evidence is None:
+        return {"ai_summary": None, "reason": "no_data"}
+    fingerprint = hashlib.md5(
+        json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    try:
+        cache = json.loads(_SUMMARY_CACHE.read_text(encoding="utf-8"))
+        if cache.get("fingerprint") == fingerprint and cache.get("ai_summary"):
+            return {"ai_summary": cache["ai_summary"], "cached": True}
+    except Exception:
+        pass
+    try:
+        from model_name import get_langchain_llm, resolve_provider
+        llm = get_langchain_llm(resolve_provider(), temperature=0.3, max_tokens=500)
+        lines = [
+            f"餐数：{evidence['meals']}",
+            f"常吃：{('、'.join(d for d, _ in evidence['top_dishes'])) or '无'}",
+            f"红绿灯计数：{evidence['lights']}",
+            f"趋势：{evidence['trends']}",
+            f"用餐反馈标签：{evidence['feedback_tags'] or '无'}",
+            f"近期被踩菜品：{('、'.join(evidence['down_dishes'])) or '无'}",
+            f"健康条件标签：{('、'.join(evidence['conditions'])) or '无'}",
+        ]
+        response = llm.invoke(_SUMMARY_PROMPT.format(evidence=chr(10).join(lines)))
+        summary = str(response.content).strip()
+    except Exception as exc:
+        return {"ai_summary": None, "reason": f"llm_failed: {exc}"[:160]}
+    if not summary:
+        return {"ai_summary": None, "reason": "empty"}
+    try:
+        _SUMMARY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _SUMMARY_CACHE.write_text(
+            json.dumps(
+                {"fingerprint": fingerprint, "ai_summary": summary,
+                 "ts": datetime.now().isoformat(timespec="seconds")},
+                ensure_ascii=False, indent=1,
+            ), encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return {"ai_summary": summary, "cached": False}
