@@ -4,6 +4,7 @@ import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
 import { RecipeCard } from './RecipeCard'
+import { renderRichText } from '../utils/richText'
 
 interface Props {
   activeTitle: string
@@ -512,7 +513,7 @@ export function ChatArea({
                     {message.imageUrl && (
                       <img className="message-image" src={message.imageUrl} alt="本轮上传的食材图片" />
                     )}
-                    {message.text && <div className="message-text">{message.text}</div>}
+                    {message.text && <div className="message-text">{renderRichText(message.text)}</div>}
                     {message.answer && <RecipeCard answer={message.answer} />}
                     {message.streaming && (
                       <div className="stream-state" role="status" aria-live="polite">

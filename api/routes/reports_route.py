@@ -293,20 +293,23 @@ _SUMMARY_PROMPT = (
 
 
 @router.get("/reports/weekly-summary")
-def weekly_summary():
-    """本周 AI 自然语言小结：数据指纹缓存，数据不变不重复调用 LLM。"""
+def weekly_summary(refresh: bool = False):
+    """本周 AI 自然语言小结：数据指纹缓存，数据不变不重复调用 LLM。
+
+    refresh=1 跳过缓存强制重生成（用户点『重新生成』）。"""
     evidence = _weekly_evidence()
     if evidence is None:
         return {"ai_summary": None, "reason": "no_data"}
     fingerprint = hashlib.md5(
         json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    try:
-        cache = json.loads(_SUMMARY_CACHE.read_text(encoding="utf-8"))
-        if cache.get("fingerprint") == fingerprint and cache.get("ai_summary"):
-            return {"ai_summary": cache["ai_summary"], "cached": True}
-    except Exception:
-        pass
+    if not refresh:
+        try:
+            cache = json.loads(_SUMMARY_CACHE.read_text(encoding="utf-8"))
+            if cache.get("fingerprint") == fingerprint and cache.get("ai_summary"):
+                return {"ai_summary": cache["ai_summary"], "cached": True}
+        except Exception:
+            pass
     try:
         from model_name import get_langchain_llm, resolve_provider
         llm = get_langchain_llm(resolve_provider(), temperature=0.3, max_tokens=500)

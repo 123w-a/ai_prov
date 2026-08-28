@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
@@ -171,6 +172,30 @@ class KnowledgeBaseRetriever:
         self,
         query: str,
         n_results: int = 3,
+        *,
+        filter: Optional[dict] = None,
+        use_hybrid: Optional[bool] = None,
+        use_rerank: Optional[bool] = None,
+        transform: Optional[Callable[[str], Sequence[str]]] = None,
+    ) -> SearchResult:
+        """检索入口：Chroma 偶发瞬态（如 RustBindingsAPI 初始化竞态）自动重试一次。"""
+        last: SearchResult | None = None
+        for attempt in range(2):
+            last = self._search_once(
+                query, n_results,
+                filter=filter, use_hybrid=use_hybrid,
+                use_rerank=use_rerank, transform=transform,
+            )
+            if not last.error:
+                return last
+            if attempt == 0:
+                time.sleep(0.4)  # 瞬态通常一次短退避后自愈
+        return last
+
+    def _search_once(
+        self,
+        query: str,
+        n_results: int,
         *,
         filter: Optional[dict] = None,
         use_hybrid: Optional[bool] = None,

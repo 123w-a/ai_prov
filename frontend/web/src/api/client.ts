@@ -310,8 +310,10 @@ export interface WeeklySummaryResponse {
   cached?: boolean
 }
 
-export async function fetchWeeklySummary(): Promise<WeeklySummaryResponse> {
-  return jsonRequest<WeeklySummaryResponse>("/api/reports/weekly-summary")
+export async function fetchWeeklySummary(refresh = false): Promise<WeeklySummaryResponse> {
+  return jsonRequest<WeeklySummaryResponse>(
+    `/api/reports/weekly-summary${refresh ? "?refresh=1" : ""}`,
+  )
 }
 
 export interface FridgeVisionItem {

@@ -22,6 +22,7 @@ export function WeeklyReportPage() {
   const [report, setReport] = useState<WeeklyReport | null>(null)
   const [feedback, setFeedback] = useState<FeedbackWeekly | null>(null)
   const [summary, setSummary] = useState<WeeklySummaryResponse | null>(null)
+  const [summaryBusy, setSummaryBusy] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -48,6 +49,16 @@ export function WeeklyReportPage() {
       alive = false
     }
   }, [report?.has_data])
+
+  const regenerate = () => {
+    if (summaryBusy) return
+    setSummaryBusy(true)
+    setSummary(null)
+    fetchWeeklySummary(true)
+      .then((s) => setSummary(s))
+      .catch(() => setSummary({ ai_summary: null, reason: 'regenerate_failed' }))
+      .finally(() => setSummaryBusy(false))
+  }
 
   if (loading) {
     return (
@@ -94,7 +105,17 @@ export function WeeklyReportPage() {
       </section>
 
       <section className="weekly-card summary">
-        <h3>AI 小结</h3>
+        <div className="weekly-summary-head">
+          <h3>AI 小结</h3>
+          <button
+            type="button"
+            className="weekly-refresh-btn"
+            disabled={summaryBusy}
+            onClick={regenerate}
+          >
+            {summaryBusy ? '重新生成中…' : '重新生成'}
+          </button>
+        </div>
         {summary?.ai_summary ? (
           <p className="weekly-summary-text">{summary.ai_summary}</p>
         ) : summary && !summary.ai_summary && summary.reason === 'no_data' ? null : (
