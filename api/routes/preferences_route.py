@@ -7,6 +7,7 @@ profile.json   ：结构化画像。v1=单成员平铺；v2={version:2, active_i
 """
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -191,3 +192,60 @@ def switch_active(payload: ActiveMemberPayload):
     family["active_id"] = member["id"]
     _write_family(family)
     return {"code": 200, "messages": f"已切换到「{member['name']}」", "data": {"exists": True, "family": family}}
+
+
+class ImportPayload(BaseModel):
+    """分享文本导入体：members 与导出格式一致（可只填 name，其余走默认）。"""
+    members: List[MemberPayload] = Field(..., min_length=1, max_length=8)
+    meta: str = Field(default="", max_length=200)
+
+
+@router.get("/profile/export")
+def export_family():
+    """导出全部成员为分享文本载体（复制给家人设备再导入）。"""
+    family = _read_family() or _migrate({})
+    return {
+        "code": 200,
+        "messages": "导出成功",
+        "data": {
+            "export": {
+                "app": "xiaoshan-profile",
+                "version": 2,
+                "exported_at": datetime.now().isoformat(timespec="seconds"),
+                "active_id": family["active_id"],
+                "members": family["members"],
+            }
+        },
+    }
+
+
+@router.post("/profile/import")
+def import_family(payload: ImportPayload):
+    """导入分享成员（合并语义）：同名覆盖画像、新名追加，上限 8 人；激活指针不变。"""
+    family = _read_family() or _migrate({})
+    added = updated = 0
+    for incoming in payload.members:
+        name = incoming.name.strip()
+        existing = next(
+            (m for m in family["members"] if m["name"].strip() == name), None
+        )
+        if existing is not None:
+            existing["profile"] = incoming.profile.model_dump()
+            updated += 1
+        else:
+            if len(family["members"]) >= 8:
+                raise HTTPException(
+                    status_code=400, detail=f"家庭成员最多 8 人，「{name}」未导入"
+                )
+            family["members"].append({
+                "id": f"m_{uuid.uuid4().hex[:8]}",
+                "name": name,
+                "profile": incoming.profile.model_dump(),
+            })
+            added += 1
+    _write_family(family)
+    return {
+        "code": 200,
+        "messages": f"导入完成：新增 {added} 人，更新 {updated} 人",
+        "data": {"exists": True, "family": family},
+    }

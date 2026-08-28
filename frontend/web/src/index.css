@@ -3634,6 +3634,51 @@ img {
   gap: 2px;
 }
 
+.family-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.family-mini-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.family-mini-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.family-mini-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.family-import-text {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  font-family: monospace;
+  color: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.25);
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.family-import-text:focus {
+  border-color: rgba(143, 211, 199, 0.55);
+}
+
 .family-editor {
   display: grid;
   gap: 9px;

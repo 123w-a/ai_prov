@@ -1,6 +1,7 @@
 import type {
   ChefAnswer,
   FamilyData,
+  FamilyMember,
   NearbyResult,
   PreferencesData,
   ServicePreviewRequest,
@@ -240,6 +241,28 @@ export async function switchActiveMember(memberId: string): Promise<FamilyData> 
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ member_id: memberId }),
+  })
+  return result.data.family
+}
+
+export interface FamilyExport {
+  app: string
+  version: number
+  exported_at: string
+  active_id: string
+  members: FamilyMember[]
+}
+
+export async function exportFamily(): Promise<FamilyExport> {
+  const result = await jsonRequest<ApiEnvelope<{ export: FamilyExport }>>("/api/profile/export")
+  return result.data.export
+}
+
+export async function importFamily(members: MemberInput[]): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>("/api/profile/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ members }),
   })
   return result.data.family
 }

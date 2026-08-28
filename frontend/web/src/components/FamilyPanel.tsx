@@ -4,7 +4,9 @@ import type { MemberInput } from '../api/client'
 import {
   addMember,
   deleteMember,
+  exportFamily,
   fetchFamily,
+  importFamily,
   switchActiveMember,
   updateMember,
 } from '../api/client'
@@ -14,6 +16,7 @@ type EditingState =
   | { kind: 'closed' }
   | { kind: 'new' }
   | { kind: 'edit'; memberId: string }
+  | { kind: 'import' }
 
 interface Draft {
   name: string
@@ -102,6 +105,7 @@ export function FamilyPanel() {
   const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const [importText, setImportText] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -175,6 +179,36 @@ export function FamilyPanel() {
     }
   }
 
+  const shareOut = async () => {
+    setBusy(true)
+    try {
+      const exported = await exportFamily()
+      await navigator.clipboard.writeText(JSON.stringify(exported, null, 2))
+      setNotice('分享文本已复制到剪贴板，粘贴发给家人即可')
+    } catch {
+      setNotice('导出失败，请重试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const shareIn = async () => {
+    setBusy(true)
+    try {
+      const parsed = JSON.parse(importText)
+      const members = Array.isArray(parsed?.members) ? parsed.members : null
+      if (!members) throw new Error('format')
+      setFamily(await importFamily(members))
+      setImportText('')
+      setEditing({ kind: 'closed' })
+      setNotice('')
+    } catch (error) {
+      setNotice(error instanceof Error && error.message !== 'format' ? error.message : '导入失败：请粘贴导出生成的分享文本')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const editingMember =
     editing.kind === 'edit' ? family?.members.find((m) => m.id === editing.memberId) : undefined
 
@@ -182,15 +216,31 @@ export function FamilyPanel() {
     <section className="family-panel" aria-label="家庭成员画像">
       <header className="family-header">
         <strong>家庭成员</strong>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="添加家庭成员"
-          disabled={busy || editing.kind === 'new'}
-          onClick={startNew}
-        >
-          <Icon name="plus" size={16} />
-        </button>
+        <span className="family-header-actions">
+          <button type="button" className="family-mini-btn" disabled={busy} onClick={() => void shareOut()}>
+            导出
+          </button>
+          <button
+            type="button"
+            className="family-mini-btn"
+            disabled={busy || editing.kind === 'import'}
+            onClick={() => {
+              setImportText('')
+              setEditing({ kind: 'import' })
+            }}
+          >
+            导入
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="添加家庭成员"
+            disabled={busy || editing.kind === 'new'}
+            onClick={startNew}
+          >
+            <Icon name="plus" size={16} />
+          </button>
+        </span>
       </header>
 
       {activeMember && editing.kind === 'closed' && (
@@ -244,7 +294,28 @@ export function FamilyPanel() {
         ))}
       </ul>
 
-      {editing.kind !== 'closed' && (
+      {editing.kind === 'import' && (
+        <div className="family-editor">
+          <strong>从分享文本导入</strong>
+          <textarea
+            className="family-import-text"
+            rows={6}
+            placeholder="粘贴家人发来的分享文本（导出时自动复制的 JSON）"
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+          <div className="family-editor-actions">
+            <button type="button" disabled={busy || !importText.trim()} onClick={() => void shareIn()}>
+              确认导入
+            </button>
+            <button type="button" disabled={busy} onClick={() => setEditing({ kind: 'closed' })}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {editing.kind !== 'closed' && editing.kind !== 'import' && (
         <div className="family-editor">
           <strong>{editing.kind === 'new' ? '添加成员' : `编辑「${editingMember?.name ?? ''}」`}</strong>
           <label>

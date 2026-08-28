@@ -118,6 +118,41 @@ class FamilyProfileTest(unittest.TestCase):
         self.prefs_path.write_text("喜欢清淡。", encoding="utf-8")
         self.assertEqual(load_preferences(), "喜欢清淡。")
 
+    def test_export_and_import_merge(self):
+        """共享画像：导出载体 → 导入合并（同名覆盖、新名追加、激活不变）。"""
+        self.client.post("/profile/members", json={
+            "name": "妈妈",
+            "profile": {"conditions": ["高血压"]},
+        })
+        exported = self.client.get("/profile/export").json()["data"]["export"]
+        self.assertEqual(exported["app"], "xiaoshan-profile")
+        self.assertTrue(any(m["name"] == "妈妈" for m in exported["members"]))
+        before_active = self.client.get("/profile").json()["data"]["family"]["active_id"]
+
+        resp = self.client.post("/profile/import", json={
+            "members": [
+                {"name": "妈妈", "profile": {"conditions": ["高血压", "糖尿病"]}},
+                {"name": "爸爸", "profile": {"conditions": ["痛风"]}},
+            ]
+        })
+        self.assertEqual(resp.status_code, 200)
+        fam = resp.json()["data"]["family"]
+        names = [m["name"] for m in fam["members"]]
+        self.assertIn("爸爸", names)
+        self.assertIn("妈妈", names)
+        self.assertEqual(len(names), 3)  # 我的档案 + 妈妈覆盖 + 爸爸新增
+        mama = next(m for m in fam["members"] if m["name"] == "妈妈")
+        self.assertEqual(mama["profile"]["conditions"], ["高血压", "糖尿病"])
+        self.assertEqual(fam["active_id"], before_active)
+
+        resp = self.client.get("/profile")
+        self.assertEqual(resp.json()["data"]["family"]["active_id"], before_active)
+
+    def test_import_over_limit_rejected(self):
+        flood = [{"name": f"成员{i}", "profile": {}} for i in range(8)]
+        resp = self.client.post("/profile/import", json={"members": flood})
+        self.assertEqual(resp.status_code, 400)
+
     def test_guardrail_wiring_from_profile(self):
         """P1 护栏联动：档案 conditions（含孕周自由文本）映射规则键并触发硬审计。"""
         self.assertEqual(
