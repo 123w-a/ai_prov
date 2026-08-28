@@ -8,6 +8,7 @@ import type {
   ServicePreviewResult,
   ServiceVision,
   Session,
+  WeeklyReport,
 } from '../types'
 
 const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
@@ -297,6 +298,10 @@ export interface FeedbackWeekly {
 export async function fetchFeedbackWeekly(): Promise<FeedbackWeekly> {
   const result = await jsonRequest<ApiEnvelope<FeedbackWeekly>>("/api/feedback/weekly")
   return result.data
+}
+
+export async function fetchWeeklyReport(): Promise<WeeklyReport> {
+  return jsonRequest<WeeklyReport>("/api/reports/weekly")
 }
 
 export interface FridgeVisionItem {

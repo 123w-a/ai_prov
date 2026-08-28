@@ -81,7 +81,21 @@ export interface ChatMessage {
   error?: boolean
 }
 
-export type WorkspaceView = 'decision' | 'service'
+export type WorkspaceView = 'decision' | 'service' | 'weekly'
+
+export interface WeeklyReport {
+  has_data: boolean
+  message?: string
+  meals?: number
+  top_dishes?: [string, number][]
+  lights?: Record<string, number>
+  light_trends?: Record<string, string>
+  guardrail_triggers?: number
+  range?: [string, string]
+  next_week_shopping?: string[]
+  recommendations?: string[]
+  feedback_summary?: { count: number; tags: Record<string, number> }
+}
 
 export interface ServiceRoadmapItem {
   phase: number

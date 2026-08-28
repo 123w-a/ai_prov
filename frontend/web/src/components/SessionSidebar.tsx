@@ -105,6 +105,19 @@ export function SessionSidebar({
             <small>画像 · 切换 · 分享</small>
           </span>
         </button>
+        <button
+          type="button"
+          className={view === 'weekly' ? 'product-nav-item active' : 'product-nav-item'}
+          onClick={() => changeView('weekly')}
+        >
+          <span className="nav-icon">
+            <Icon name="leaf" />
+          </span>
+          <span>
+            <strong>本周周报</strong>
+            <small>红绿灯 · 趋势 · 建议</small>
+          </span>
+        </button>
       </nav>
 
       {familyOpen ? (
