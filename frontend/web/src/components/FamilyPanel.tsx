@@ -50,6 +50,10 @@ function splitTags(value: string): string[] {
     .slice(0, 24)
 }
 
+interface FamilyPanelProps {
+  onBack: () => void
+}
+
 function draftFrom(member: FamilyMember): Draft {
   const { profile } = member
   const basic = profile.basic ?? { height_cm: null, weight_kg: null, age: null, sex: '' }
@@ -99,7 +103,7 @@ function memberSummary(member: FamilyMember): string {
   return parts.join(' · ') || '暂无健康约束'
 }
 
-export function FamilyPanel() {
+export function FamilyPanel({ onBack }: FamilyPanelProps) {
   const [family, setFamily] = useState<FamilyData | null>(null)
   const [editing, setEditing] = useState<EditingState>({ kind: 'closed' })
   const [draft, setDraft] = useState<Draft>(emptyDraft)
@@ -215,7 +219,17 @@ export function FamilyPanel() {
   return (
     <section className="family-panel" aria-label="家庭成员画像">
       <header className="family-header">
-        <strong>家庭成员</strong>
+        <span className="family-header-lead">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="返回会话列表"
+            onClick={onBack}
+          >
+            <Icon name="close" size={16} />
+          </button>
+          <strong>家庭成员</strong>
+        </span>
         <span className="family-header-actions">
           <button type="button" className="family-mini-btn" disabled={busy} onClick={() => void shareOut()}>
             导出

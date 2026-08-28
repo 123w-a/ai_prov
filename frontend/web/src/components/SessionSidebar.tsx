@@ -29,6 +29,7 @@ export function SessionSidebar({
   onClose,
 }: Props) {
   const [query, setQuery] = useState('')
+  const [familyOpen, setFamilyOpen] = useState(false)
   const visibleSessions = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase()
     if (!keyword) return sessions
@@ -91,9 +92,24 @@ export function SessionSidebar({
           </span>
           <span className="nav-tag">DEMO</span>
         </button>
+        <button
+          type="button"
+          className={familyOpen ? 'product-nav-item active' : 'product-nav-item'}
+          onClick={() => setFamilyOpen(true)}
+        >
+          <span className="nav-icon">
+            <Icon name="book" />
+          </span>
+          <span>
+            <strong>家庭成员</strong>
+            <small>画像 · 切换 · 分享</small>
+          </span>
+        </button>
       </nav>
 
-      <FamilyPanel />
+      {familyOpen ? (
+        <FamilyPanel onBack={() => setFamilyOpen(false)} />
+      ) : (
 
       <section className="history-section" aria-labelledby="history-heading">
         <div className="sidebar-section-head">
@@ -163,7 +179,8 @@ export function SessionSidebar({
             )}
           </div>
         )}
-      </section>
+        </section>
+      )}
 
       <footer className="sidebar-footer">
         <span className={`connection-dot ${connection}`} aria-hidden="true" />
