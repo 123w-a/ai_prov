@@ -642,22 +642,38 @@ def _declared_covers(condition: str, declared: set) -> bool:
     return any(condition in d or d in condition for d in declared)
 
 
-def _self_declared_conditions(user_text: str) -> set:
-    """解析用户本轮原话中明确自述的健康状态，避免重复追问。"""
+def _hit_without_negation(text: str, phrase: str) -> bool:
+    """子串命中且命中点前两字内无否定词（『没有高血压』不算声明高血压）。"""
+    start = 0
+    while True:
+        idx = text.find(phrase, start)
+        if idx < 0:
+            return False
+        if not any(neg in text[max(0, idx - 2) : idx] for neg in ("没", "无", "非")):
+            return True
+        start = idx + 1
 
+
+def _self_declared_conditions(user_text: str) -> set:
+    """解析用户本轮原话中明确自述的健康状态，避免重复追问。
+
+    放宽版：子串别名匹配（『妊娠期高血压』『孕18周』『尿酸偏高』等自然措辞
+    都算声明），并排除否定前缀——『我没有高血压』不会被误认成声明。"""
     text = (user_text or "").replace(" ", "")
     out = set()
     pairs = [
-        ("高血压", ("我有高血压", "我患有高血压", "我血压高", "我是高血压")),
-        ("糖尿病", ("我有糖尿病", "我患有糖尿病", "我糖尿病", "我是糖尿病")),
-        ("高脂血症", ("我有高血脂", "我有高脂血症", "我血脂高")),
-        ("痛风", ("我有痛风", "我痛风", "我尿酸高")),
-        ("慢性肾脏病", ("我有肾病", "我有慢性肾脏病", "我肾脏不好")),
-        ("肥胖", ("我肥胖", "我体重超标")),
-        ("孕期", ("我怀孕", "我是孕妇", "我孕期")),
+        ("高血压", ("高血压", "血压高", "血压偏高", "血压不稳")),
+        ("糖尿病", ("糖尿病", "血糖高", "血糖偏高", "血糖不稳")),
+        ("高脂血症", ("高血脂", "高脂血症", "血脂高", "血脂偏高", "甘油三酯")),
+        ("痛风", ("痛风", "尿酸高", "尿酸偏高", "高嘌呤")),
+        ("慢性肾脏病", ("肾病", "肾脏不好", "肾功能", "肾炎", "肌酐高")),
+        ("肥胖", ("肥胖", "体重超标", "超重", "我想减肥")),
+        ("孕期", ("怀孕", "孕妇", "孕期", "妊娠", "孕")),
     ]
     for condition, phrases in pairs:
-        if any(phrase in text for phrase in phrases):
+        if condition == "孕期" and "备孕" in text:
+            continue  # 备孕≠孕期，营养建议差异大，宁可追问
+        if any(_hit_without_negation(text, phrase) for phrase in phrases):
             out.add(condition)
     return out
 
