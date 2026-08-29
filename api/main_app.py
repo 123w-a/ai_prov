@@ -146,10 +146,14 @@ from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
 from api.routes.fridge_route import router as fridge_router
 app.include_router(fridge_router, prefix="/api")
-
 from api.routes.health_route import router as health_router
 
 app.include_router(health_router, prefix="/api")
+
+# 评测流程复用后端 retriever（/api/kb/search），避免外部脚本独占 Chroma 锁
+from api.routes.kb_route import router as kb_router
+
+app.include_router(kb_router, prefix="/api")
 
 # 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
 from api.routes.speech_route import router as speech_router
