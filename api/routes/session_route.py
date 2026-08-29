@@ -83,6 +83,13 @@ def api_message_feedback(sid: str, rec_id: int, payload: FeedbackPayload):
             dish = str(recipes[0].get("name"))[:40] if recipes else None
         except Exception:
             dish = None
+        if current == "down":  # 口味信号采集：被踩的菜名+原话里扫口味词典（失败不阻塞）
+            try:
+                from taste_store import detect_tastes, record_signals
+                tastes = detect_tastes((dish or "") + " " + (rec.get("user_text") or ""))
+                record_signals(tastes, sid, rec_id)
+            except Exception:
+                pass
         kept.append({
             "ts": datetime.now().isoformat(timespec="seconds"),
             "sid": sid, "rec_id": rec_id,

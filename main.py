@@ -47,6 +47,9 @@ def _render_health_profile(profile: dict) -> str:
     dis = [d for d in (profile.get("dislikes") or []) if d]
     if dis:
         lines.append(f"- 不喜欢的食材：{'、'.join(dis)}（尽量避免）")
+    tn = [t for t in (profile.get("taste_notes") or []) if t]
+    if tn:
+        lines.append(f"- 口味偏好：{'、'.join(tn)}（推荐与做法必须遵守）")
     return "\n".join(lines) if len(lines) > 1 else ""
 
 

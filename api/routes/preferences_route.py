@@ -36,6 +36,7 @@ class HealthProfilePayload(BaseModel):
     goal: str = Field(default="", max_length=40)
     diet_style: str = Field(default="", max_length=40)
     dislikes: List[str] = Field(default_factory=list, max_length=60)
+    taste_notes: List[str] = Field(default_factory=list, max_length=12)
 
 class MemberPayload(BaseModel):
     """家庭成员 = 名字 + 一份结构化健康画像。"""
@@ -179,6 +180,34 @@ def add_dislike(payload: DislikeAddPayload):
         _write_family(family)
         return {"code": 200, "messages": "已加入忌口", "data": {"added": True, "dislikes": dislikes}}
     return {"code": 200, "messages": "忌口已存在", "data": {"added": False, "dislikes": dislikes}}
+
+
+class TasteNotePayload(BaseModel):
+    text: str = Field(min_length=1, max_length=20)
+
+
+@router.post("/profile/taste-note")
+def add_taste_note(payload: TasteNotePayload):
+    """口味偏好沉淀：往活跃成员 taste_notes 追加一条（去重），如「不吃辣」。"""
+    family = _read_family() or _migrate({})
+    member = _find_member(family, family.get("active_id"))
+    if member is None:
+        raise HTTPException(status_code=404, detail="活跃成员不存在")
+    text = payload.text.strip()
+    notes = list(member["profile"].get("taste_notes") or [])
+    if text not in notes:
+        notes.append(text)
+        member["profile"]["taste_notes"] = notes[:12]
+        _write_family(family)
+        return {"code": 200, "messages": "口味偏好已记录", "data": {"added": True, "taste_notes": notes}}
+    return {"code": 200, "messages": "偏好已存在", "data": {"added": False, "taste_notes": notes}}
+
+
+@router.get("/profile/taste-suggestion")
+def taste_suggestion():
+    """口味建议：近14天点踩里同口味≥2次 → 提示用户确认写入画像。"""
+    from taste_store import suggest
+    return {"code": 200, "data": {"suggestion": suggest(min_count=2)}}
 
 
 @router.put("/profile/members/{member_id}")

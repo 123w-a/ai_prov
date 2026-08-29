@@ -3,7 +3,8 @@ import { fetchNearby, sendMessageFeedback } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
-import { starMessage as starMessageApi, addDislike } from '../api/client'
+import { starMessage as starMessageApi, addDislike, fetchTasteSuggestion, addTasteNote } from '../api/client'
+import type { TasteSuggestion } from '../api/client'
 import { RecipeCard } from './RecipeCard'
 import { renderRichText } from '../utils/richText'
 
@@ -72,6 +73,7 @@ export function ChatArea({
   const [fbState, setFbState] = useState<Record<number, 'up' | 'down' | null>>({})
   const [starState, setStarState] = useState<Record<number, boolean>>({})
   const [dislikeHint, setDislikeHint] = useState<string | null>(null)
+  const [tasteHint, setTasteHint] = useState<TasteSuggestion | null>(null)
 
   const starMessage = async (recordId: number) => {
     if (!activeSessionId) return
@@ -91,6 +93,14 @@ export function ChatArea({
     try {
       const result = await sendMessageFeedback(activeSessionId, recordId, rating)
       setFbState((s) => ({ ...s, [recordId]: result })) // 同值再点=取消，服务端返回 null
+      if (result === 'down') {
+        // 点踩后查口味建议：同口味被踩≥2次才提示（用户确认式沉淀，零幻觉）
+        fetchTasteSuggestion()
+          .then((sug) => {
+            if (sug) setTasteHint(sug)
+          })
+          .catch(() => {})
+      }
     } catch {
       // 失败回滚到未标记：下次点击重试
       setFbState((s) => ({ ...s, [recordId]: null }))
@@ -965,6 +975,29 @@ export function ChatArea({
                 加入画像
               </button>
               <button type="button" className="ghost" onClick={() => setDislikeHint(null)}>
+                忽略
+              </button>
+            </span>
+          </div>
+        )}
+
+        {tasteHint && (
+          <div className="dislike-hint" role="status">
+            <span>
+              最近 <strong>{tasteHint.count}</strong> 次不满意都和「<strong>{tasteHint.taste}</strong>」有关——
+              要把「<strong>{tasteHint.note_label}</strong>」写入画像口味偏好吗？
+            </span>
+            <span className="dislike-hint-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  void addTasteNote(tasteHint.note_label)
+                  setTasteHint(null)
+                }}
+              >
+                写入画像
+              </button>
+              <button type="button" className="ghost" onClick={() => setTasteHint(null)}>
                 忽略
               </button>
             </span>

@@ -341,6 +341,26 @@ export async function addDislike(item: string): Promise<void> {
   })
 }
 
+export interface TasteSuggestion {
+  taste: string
+  count: number
+  note_label: string
+}
+
+export async function fetchTasteSuggestion(): Promise<TasteSuggestion | null> {
+  const result = await jsonRequest<ApiEnvelope<{ suggestion: TasteSuggestion | null }>>(
+    '/api/profile/taste-suggestion',
+  )
+  return result.data.suggestion
+}
+
+export async function addTasteNote(text: string): Promise<void> {
+  await jsonRequest('/api/profile/taste-note', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  })
+}
+
 export interface FridgeVisionItem {
   name: string
   quantity: string
