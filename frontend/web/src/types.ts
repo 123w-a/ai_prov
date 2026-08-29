@@ -70,6 +70,7 @@ export interface ChatMessage {
   id: string
   recordId?: number
   feedback?: 'up' | 'down' | null
+  starred?: boolean
   role: 'user' | 'assistant'
   text: string
   answer?: ChefAnswer | null
@@ -81,7 +82,16 @@ export interface ChatMessage {
   error?: boolean
 }
 
-export type WorkspaceView = 'decision' | 'service' | 'weekly'
+export type WorkspaceView = 'decision' | 'service' | 'weekly' | 'favorites'
+
+export interface FavoriteItem {
+  sid: string
+  rec_id: number
+  session_title: string
+  user_text: string
+  dish: string
+  image_url?: string | null
+}
 
 export interface WeeklyReport {
   has_data: boolean

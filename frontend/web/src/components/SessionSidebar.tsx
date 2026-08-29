@@ -118,6 +118,19 @@ export function SessionSidebar({
             <small>红绿灯 · 趋势 · 建议</small>
           </span>
         </button>
+        <button
+          type="button"
+          className={view === 'favorites' ? 'product-nav-item active' : 'product-nav-item'}
+          onClick={() => changeView('favorites')}
+        >
+          <span className="nav-icon">
+            <Icon name="star" />
+          </span>
+          <span>
+            <strong>我的收藏</strong>
+            <small>好菜留存 · 随时复做</small>
+          </span>
+        </button>
       </nav>
 
       {familyOpen ? (

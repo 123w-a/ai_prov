@@ -20,6 +20,7 @@
 # 用户上传的图片只存 OSS 可访问 URL，不再存 base64/image_data；前端从对象存储直接拉取。
 
 import ctypes
+import glob
 import json
 import os
 import sqlite3
@@ -270,6 +271,55 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
                 _write_session(data)
             return changed
     return False
+
+
+def star_message(sid, record_id, starred: bool):
+    """收藏/取消收藏一条问答（'starred': True/False）。返回 (found, current)。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False, False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            if starred:
+                m["starred"] = True
+            else:
+                m.pop("starred", None)
+            _write_session(data)
+            return True, bool(m.get("starred"))
+    return False, False
+
+
+def list_starred() -> list[dict]:
+    """跨会话收集全部收藏项，供收藏面板展示（含来源会话定位信息）。"""
+    out: list[dict] = []
+    if not SESSIONS_DIR.exists():
+        return []
+    for fp in sorted(SESSIONS_DIR.glob("*.json")):
+        try:
+            data = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for m in data.get("messages") or []:
+            if not m.get("starred"):
+                continue
+            dish = None
+            try:
+                ans = json.loads(m.get("answer") or "")
+                recipes = ans.get("recipes") or []
+                dish = str(recipes[0].get("name"))[:40] if recipes else None
+            except Exception:
+                dish = None
+            out.append({
+                "sid": data.get("session_id"),
+                "rec_id": m.get("id"),
+                "session_title": data.get("title") or "",
+                "user_text": (m.get("user_text") or "")[:60],
+                "dish": dish or (m.get("user_text") or "")[:24],
+                "image_url": m.get("image_url"),
+            })
+    return out
 
 
 def patch_message_feedback(sid, record_id, rating):

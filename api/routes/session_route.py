@@ -15,6 +15,8 @@ from sessions_store import (
     delete_message,
     append_message,
     patch_message_feedback,
+    star_message,
+    list_starred,
     _read_session,
 )
 from main import image_bytes_to_oss_url
@@ -88,6 +90,25 @@ def api_message_feedback(sid: str, rec_id: int, payload: FeedbackPayload):
         })
     _write_feedback_events(kept)
     return {"code": 200, "data": {"feedback": current}}
+
+
+class StarPayload(BaseModel):
+    starred: bool
+
+
+@router.post("/sessions/{sid}/messages/{rec_id}/star")
+def api_message_star(sid: str, rec_id: int, payload: StarPayload):
+    """收藏/取消收藏一条问答（复选语义由前端按钮态呈现）。"""
+    found, current = star_message(sid, rec_id, payload.starred)
+    if not found:
+        raise HTTPException(status_code=404, detail="该轮对话不存在")
+    return {"code": 200, "data": {"starred": current}}
+
+
+@router.get("/favorites")
+def api_favorites():
+    """收藏夹：跨会话聚合全部收藏项（菜名/图/来源会话）。"""
+    return {"code": 200, "data": {"favorites": list_starred()}}
 
 
 @router.get("/feedback/weekly")

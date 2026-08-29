@@ -3,6 +3,7 @@ import { fetchNearby, sendMessageFeedback } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
+import { starMessage as starMessageApi, addDislike } from '../api/client'
 import { RecipeCard } from './RecipeCard'
 import { renderRichText } from '../utils/richText'
 
@@ -69,6 +70,20 @@ export function ChatArea({
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [statusTags, setStatusTags] = useState<string[]>([])
   const [fbState, setFbState] = useState<Record<number, 'up' | 'down' | null>>({})
+  const [starState, setStarState] = useState<Record<number, boolean>>({})
+  const [dislikeHint, setDislikeHint] = useState<string | null>(null)
+
+  const starMessage = async (recordId: number) => {
+    if (!activeSessionId) return
+    const next = !(starState[recordId] ?? false)
+    setStarState((s) => ({ ...s, [recordId]: next })) // 乐观更新
+    try {
+      const result = await starMessageApi(activeSessionId, recordId, next)
+      setStarState((s) => ({ ...s, [recordId]: result.starred }))
+    } catch {
+      setStarState((s) => ({ ...s, [recordId]: !next })) // 失败回滚
+    }
+  }
 
   const rateAnswer = async (recordId: number, rating: 'up' | 'down') => {
     if (!activeSessionId) return
@@ -248,6 +263,9 @@ export function ChatArea({
 
   const submit = () => {
     if (!canSend) return
+    // 忌口语义检测：随口说的「不吃/别放/过敏 X」提示一键沉淀进画像（用户确认式，防误检）
+    const dislikeMatch = text.match(/(?:不吃|别放|不要放|讨厌|过敏)[，, ]?([\u4e00-\u9fa5]{1,4})/)
+    if (dislikeMatch) setDislikeHint(dislikeMatch[1])
     // 即时状态打卡（一次性）+ 当前位置（外食查询用）前缀注入
     const parts: string[] = []
     if (statusTags.length > 0) parts.push(`[实时状态：${statusTags.join('、')}]
@@ -495,6 +513,15 @@ export function ChatArea({
                           onClick={() => void rateAnswer(message.recordId!, 'down')}
                         >
                           <Icon name="thumb-down" size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className={starState[message.recordId] || message.starred ? 'fb-btn starred' : 'fb-btn'}
+                          aria-label="收藏这道菜"
+                          title="收藏"
+                          onClick={() => void starMessage(message.recordId!)}
+                        >
+                          <Icon name="star" size={13} />
                         </button>
                       </span>
                     )}
@@ -921,6 +948,28 @@ export function ChatArea({
             </div>
           </div>
         </div>
+
+        {dislikeHint && (
+          <div className="dislike-hint" role="status">
+            <span>
+              检测到你提到不吃「<strong>{dislikeHint}</strong>」——要加入画像忌口吗？之后每次推荐都会自动避开。
+            </span>
+            <span className="dislike-hint-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  void addDislike(dislikeHint)
+                  setDislikeHint(null)
+                }}
+              >
+                加入画像
+              </button>
+              <button type="button" className="ghost" onClick={() => setDislikeHint(null)}>
+                忽略
+              </button>
+            </span>
+          </div>
+        )}
 
         <div className="composer-status" role="status" aria-live="polite">
           {notice || '建议只作膳食参考；涉及疾病治疗与用药，请咨询专业医生。'}

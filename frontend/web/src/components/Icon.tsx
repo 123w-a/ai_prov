@@ -2,6 +2,7 @@ import type { SVGProps } from 'react'
 
 export type IconName =
   | 'book'
+  | 'star'
   | 'check'
   | 'chef'
   | 'chat'
@@ -54,6 +55,12 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
       return (
         <svg {...common}>
           <path d="m5 12 4 4L19 6" />
+        </svg>
+      )
+    case 'star':
+      return (
+        <svg {...common}>
+          <path d="M12 3.6l2.5 5.2 5.7.8-4.1 4 1 5.7L12 16.6l-5.1 2.7 1-5.7-4.1-4 5.7-.8z" />
         </svg>
       )
     case 'thumb-up':

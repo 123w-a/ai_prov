@@ -155,6 +155,32 @@ def add_member(payload: MemberPayload):
     _write_family(family)
     return {"code": 200, "messages": f"成员「{member['name']}」已建档并激活", "data": {"exists": True, "family": family}}
 
+class DislikeAddPayload(BaseModel):
+    item: str = Field(min_length=1, max_length=12)
+    member_id: str | None = None   # 缺省 = 活跃成员
+
+
+@router.post("/profile/dislikes/add")
+def add_dislike(payload: DislikeAddPayload):
+    """会话忌口沉淀：往指定（或缺省活跃）成员的 dislikes 里追加一项（去重）。
+
+    与 update_member 的整成员覆盖不同，这里是原子 append——避免前端
+    「先 GET 再 PUT」的合并竞态把并发修改冲掉。"""
+    family = _read_family() or _migrate({})
+    member_id = payload.member_id or family.get("active_id")
+    member = _find_member(family, member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    item = payload.item.strip()
+    dislikes = list(member["profile"].get("dislikes") or [])
+    if item not in dislikes:
+        dislikes.append(item)
+        member["profile"]["dislikes"] = dislikes[:12]   # 上限防膨胀
+        _write_family(family)
+        return {"code": 200, "messages": "已加入忌口", "data": {"added": True, "dislikes": dislikes}}
+    return {"code": 200, "messages": "忌口已存在", "data": {"added": False, "dislikes": dislikes}}
+
+
 @router.put("/profile/members/{member_id}")
 def update_member(member_id: str, payload: MemberPayload):
     """更新成员姓名与画像（整成员覆盖）。"""

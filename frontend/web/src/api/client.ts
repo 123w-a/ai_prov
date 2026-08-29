@@ -7,6 +7,7 @@ import type {
   ServicePreviewRequest,
   ServicePreviewResult,
   ServiceVision,
+  FavoriteItem,
   Session,
   WeeklyReport,
 } from '../types'
@@ -314,6 +315,30 @@ export async function fetchWeeklySummary(refresh = false): Promise<WeeklySummary
   return jsonRequest<WeeklySummaryResponse>(
     `/api/reports/weekly-summary${refresh ? "?refresh=1" : ""}`,
   )
+}
+
+export async function starMessage(
+  sessionId: string,
+  recordId: number,
+  starred: boolean,
+): Promise<{ starred: boolean }> {
+  const result = await jsonRequest<ApiEnvelope<{ starred: boolean }>>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(recordId)}/star`,
+    { method: 'POST', body: JSON.stringify({ starred }) },
+  )
+  return result.data
+}
+
+export async function fetchFavorites(): Promise<FavoriteItem[]> {
+  const result = await jsonRequest<ApiEnvelope<{ favorites: FavoriteItem[] }>>('/api/favorites')
+  return result.data.favorites
+}
+
+export async function addDislike(item: string): Promise<void> {
+  await jsonRequest('/api/profile/dislikes/add', {
+    method: 'POST',
+    body: JSON.stringify({ item }),
+  })
 }
 
 export interface FridgeVisionItem {

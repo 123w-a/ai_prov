@@ -13,6 +13,7 @@ import { Icon } from './components/Icon'
 import { InsightPanel } from './components/InsightPanel'
 import { ServicePreview } from './components/ServicePreview'
 import { WeeklyReportPage } from './components/WeeklyReportPage'
+import { FavoritesPanel } from './components/FavoritesPanel'
 import { SessionSidebar } from './components/SessionSidebar'
 // P1: sidebar hosts FamilyPanel (member switcher + profiles)
 import type {
@@ -331,13 +332,21 @@ export default function App() {
   }, [messages])
 
   const pageTitle =
-    view === 'decision' ? '今日膳食决策' : view === 'weekly' ? '本周饮食周报' : '上门私厨预演'
+    view === 'decision'
+      ? '今日膳食决策'
+      : view === 'weekly'
+        ? '本周饮食周报'
+        : view === 'favorites'
+          ? '我的收藏'
+          : '上门私厨预演'
   const pageDescription =
     view === 'decision'
       ? '健康优先的 AI 膳食工作台'
       : view === 'weekly'
         ? '近 7 天决策的健康小结'
-        : '查看真实可用能力与远期服务边界'
+        : view === 'favorites'
+          ? '点过 ★ 的好菜都在这里'
+          : '查看真实可用能力与远期服务边界'
 
   return (
     <div className="app-shell">
@@ -410,6 +419,14 @@ export default function App() {
           </div>
         ) : view === 'weekly' ? (
           <WeeklyReportPage />
+        ) : view === 'favorites' ? (
+          <FavoritesPanel
+            onOpenSession={(sid) => {
+              setView('decision')
+              const target = sessions.find((s) => s.session_id === sid)
+              if (target) selectSession(target)
+            }}
+          />
         ) : (
           <ServicePreview />
         )}
