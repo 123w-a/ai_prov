@@ -26,7 +26,7 @@ _cooldown = {}  # dish -> 上次尝试时间戳
 
 
 def scan_missing_images(max_items: int = MAX_ITEMS_PER_ROUND):
-    """扫描会话库，返回 [(sid, record_id, dish)]：有菜名但无图的记录。"""
+    """扫描会话库，返回 [(sid, record_id, dish)]：明确请求过配图但仍缺图的记录。"""
     now = time.time()
     targets = []
     if not SESSIONS_DIR.exists():
@@ -52,6 +52,8 @@ def scan_missing_images(max_items: int = MAX_ITEMS_PER_ROUND):
                 continue
             if not isinstance(ans, dict):
                 continue
+            if not ans.get("image_requested"):
+                continue  # 只补明确开过配图的轮次，避免普通问答被后台悄悄补图
             for recipe in ans.get("recipes") or []:
                 dish = str(recipe.get("name") or "").strip()
                 if not dish or recipe.get("image_url"):

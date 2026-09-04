@@ -6,7 +6,11 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 import feedback_store
-from feedback_store import read_events as _read_feedback_events, write_events as _write_feedback_events
+from feedback_store import (
+    read_events as _read_feedback_events,
+    write_events as _write_feedback_events,
+    forget_dish as _forget_dish,
+)
 from sessions_store import (
     create_session,
     list_sessions,
@@ -17,6 +21,7 @@ from sessions_store import (
     patch_message_feedback,
     star_message,
     list_starred,
+    rename_session,
     _read_session,
 )
 from main import image_bytes_to_oss_url
@@ -38,6 +43,17 @@ def api_create_session():
 def api_list_sessions():
     # 前端侧栏渲染全部会话+消息，靠这个接口拉数据
     return {"sessions": list_sessions()}
+
+
+class RenamePayload(BaseModel):
+    title: str = Field(..., max_length=40)
+
+
+@router.patch("/sessions/{sid}")
+def api_rename_session(sid: str, payload: RenamePayload):
+    if not rename_session(sid, payload.title):
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"ok": True, "msg": "会话标题已更新"}
 
 
 @router.delete("/sessions/{sid}")
@@ -140,8 +156,20 @@ def api_feedback_weekly():
             "up": up, "down": len(down_events),
             "total": len(events),
             "down_dishes": ["".join([d, f"×{n}"]) if n > 1 else d for d, n in top_down],
+            "down_items": [{"dish": d, "count": n} for d, n in top_down],
         },
     }
+
+
+class ForgetDishPayload(BaseModel):
+    dish: str = Field(..., min_length=1, max_length=40)
+
+
+@router.post("/feedback/forget-dish")
+def api_forget_dish(payload: ForgetDishPayload):
+    """忘记某道被踩菜：清除对应 down 事件与口味信号。"""
+    removed = _forget_dish(payload.dish)
+    return {"code": 200, "data": {"removed": removed, "dish": payload.dish}}
 
 
 @router.delete("/sessions/{sid}/messages/{msg_id}")

@@ -3,6 +3,7 @@ import type {
   FamilyData,
   FamilyMember,
   NearbyResult,
+  ResolvedLocation,
   PreferencesData,
   ServicePreviewRequest,
   ServicePreviewResult,
@@ -59,6 +60,14 @@ export async function clearSession(sessionId: string): Promise<void> {
   await jsonRequest(`/api/sessions/${encodeURIComponent(sessionId)}/clear`, { method: 'POST' })
 }
 
+export async function renameSession(sessionId: string, title: string): Promise<void> {
+  await jsonRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
 export async function deleteMessage(sessionId: string, messageId: number): Promise<void> {
   await jsonRequest(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
@@ -102,8 +111,22 @@ export interface ChatHandlers {
   onAnswer: (answer: ChefAnswer) => void
   onStage?: (stage: string) => void
   onHeartbeat?: (elapsedSeconds: number) => void
-  onImage?: (img: { index: number; url: string; ai_generated: boolean }) => void
+  onImage?: (img: { record_id?: number; index: number; url: string; ai_generated: boolean }) => void
+  onImageFailed?: (payload: { record_id?: number; indexes: number[] }) => void
   onFinish?: () => void
+}
+
+export interface ChatImageTarget {
+  recordId?: number
+  recipeIndex?: number
+  dishName?: string
+}
+
+export async function cancelImageDecision(sessionId: string, turnId?: string): Promise<void> {
+  const body = new FormData()
+  body.append('session_id', sessionId)
+  if (turnId) body.append('turn_id', turnId)
+  await jsonRequest('/api/chat/cancel-image', { method: 'POST', body })
 }
 
 export async function sendChat(
@@ -111,15 +134,26 @@ export async function sendChat(
   message: string,
   image: File | null,
   mode: string,
+  wantImage: boolean,
+  locationContext: string | null,
+  imageTarget: ChatImageTarget | null,
   handlers: ChatHandlers,
+  signal?: AbortSignal,
+  turnId?: string,
 ): Promise<void> {
   const body = new FormData()
   body.append('session_id', sessionId)
   body.append('message', message)
+  if (turnId) body.append('turn_id', turnId)
   if (image) body.append('image', image)
   body.append('mode', mode)
+  body.append('want_image', wantImage ? '1' : '0')
+  if (locationContext) body.append('location_context', locationContext)
+  if (imageTarget?.recordId != null) body.append('target_record_id', String(imageTarget.recordId))
+  if (imageTarget?.recipeIndex != null) body.append('target_recipe_index', String(imageTarget.recipeIndex))
+  if (imageTarget?.dishName) body.append('target_dish_name', imageTarget.dishName)
 
-  const resp = await fetch(`${API_BASE}/api/chat`, { method: 'POST', body })
+  const resp = await fetch(`${API_BASE}/api/chat`, { method: 'POST', body, signal })
   if (!resp.ok) throw new Error(await readError(resp))
   if (!resp.body) throw new Error('后端未返回流式响应')
 
@@ -148,8 +182,18 @@ export async function sendChat(
 
       if (event.working || event.status === 'working') handlers.onWorking?.()
       else if (event.heartbeat) handlers.onHeartbeat?.(Number((event.heartbeat as { elapsed?: number })?.elapsed ?? 0))
-      else if (event.image) handlers.onImage?.(event.image as { index: number; url: string; ai_generated: boolean })
-      else if (event.token != null) handlers.onToken(String(event.token))
+      else if (event.image) handlers.onImage?.(event.image as { record_id?: number; index: number; url: string; ai_generated: boolean })
+      else if (event.image_failed) handlers.onImageFailed?.(event.image_failed as { record_id?: number; indexes: number[] })
+      else if (event.token != null && typeof event.token === 'string') {
+        const token = event.token.trim()
+        if (
+          (token.startsWith('{') && token.endsWith('}')) ||
+          (token.startsWith('[') && token.endsWith(']'))
+        ) {
+          continue
+        }
+        handlers.onToken(event.token)
+      }
       else if (event.structuring) handlers.onStructuring()
       else if (event.answer) handlers.onAnswer(event.answer as ChefAnswer)
       else if (typeof event.stage === 'string') handlers.onStage?.(event.stage)
@@ -166,6 +210,8 @@ export async function fetchNearby(params?: {
   district?: string
   budget?: number
   location?: string
+  radius?: number
+  page?: number
 }): Promise<NearbyResult> {
   const search = new URLSearchParams()
   if (params?.query) search.set("query", params.query)
@@ -173,7 +219,16 @@ export async function fetchNearby(params?: {
   if (params?.district) search.set("district", params.district)
   if (params?.budget != null) search.set("budget", String(params.budget))
   if (params?.location) search.set("location", params.location)
+  if (params?.radius != null) search.set("radius", String(params.radius))
+  if (params?.page != null) search.set("page", String(params.page))
   const result = await jsonRequest<ApiEnvelope<NearbyResult>>(`/api/nearby?${search.toString()}`)
+  return result.data
+}
+
+export async function resolveLocation(location: string): Promise<ResolvedLocation> {
+  const search = new URLSearchParams()
+  search.set('location', location)
+  const result = await jsonRequest<ApiEnvelope<ResolvedLocation>>(`/api/location/resolve?${search.toString()}`)
   return result.data
 }
 
@@ -294,10 +349,23 @@ export interface FeedbackWeekly {
   down: number
   total: number
   down_dishes: string[]
+  down_items?: Array<{ dish: string; count: number }>
 }
 
 export async function fetchFeedbackWeekly(): Promise<FeedbackWeekly> {
   const result = await jsonRequest<ApiEnvelope<FeedbackWeekly>>("/api/feedback/weekly")
+  return result.data
+}
+
+export async function forgetDish(dish: string): Promise<{ removed: number; dish: string }> {
+  const result = await jsonRequest<ApiEnvelope<{ removed: number; dish: string }>>(
+    '/api/feedback/forget-dish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dish }),
+    },
+  )
   return result.data
 }
 

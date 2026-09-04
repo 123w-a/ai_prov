@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 
@@ -36,18 +37,18 @@ def create_embedding_function(backend: str | None = None) -> Any:
 
     model_name = os.getenv("KB_BGE_MODEL", "BAAI/bge-small-zh-v1.5")
     normalize = os.getenv("KB_BGE_NORMALIZE", "true").lower() != "false"
+    kwargs = {
+        "model_name": model_name,
+        "normalize_embeddings": normalize,
+    }
+    if not Path(model_name).expanduser().exists():
+        kwargs["local_files_only"] = True
     try:
-        return ef.SentenceTransformerEmbeddingFunction(
-            model_name=model_name,
-            normalize_embeddings=normalize,
-            local_files_only=True,
-        )
+        return ef.SentenceTransformerEmbeddingFunction(**kwargs)
     except TypeError:
         # 兼容旧版 Chroma：没有 local_files_only 参数时，仍保留离线环境变量。
-        return ef.SentenceTransformerEmbeddingFunction(
-            model_name=model_name,
-            normalize_embeddings=normalize,
-        )
+        kwargs.pop("local_files_only", None)
+        return ef.SentenceTransformerEmbeddingFunction(**kwargs)
     except Exception as exc:
         raise RuntimeError(
             f"bge 模型加载失败: {exc}；如果本机没有模型缓存，"

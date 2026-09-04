@@ -1,4 +1,5 @@
 import mimetypes  # 区分 JPG / PNG 等 MIME 类型
+import json
 from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息类 + 流式增量块类型
 
 # 主脑模型选择统一交给 .env 的 CHEF_PROVIDER 开关（见 model_name.resolve_provider）：
@@ -96,6 +97,15 @@ def load_preferences() -> str:
     return ""
 
 
+def _fridge_inventory() -> list[str]:
+    """读取当前冰箱库存（确定性注入，不依赖模型记忆）。"""
+    try:
+        from api.routes.fridge_route import get_fridge
+        return list((get_fridge() or {}).get("items") or [])
+    except Exception:
+        return []
+
+
 def image_to_oss_url(image_path):  # 本地图片 -> OSS 公网 URL
     mime_type, _ = mimetypes.guess_type(image_path)
     if mime_type is None:
@@ -112,12 +122,13 @@ def image_bytes_to_oss_url(image_bytes, mime_type="image/jpeg"):
     return upload_to_oss(image_bytes, mime_type)
 
 
-def build_human_message(text, image_url=None):
+def build_human_message(text, image_url=None, location_context=None):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
     所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
     偏好注入：每次请求都带上用户长期偏好（忌口/辣度/减脂/糖尿病忌糖），
     实现「记得你」的轻量长期记忆——文件持久化 + 会话初始化读取注入。
-    反馈注入：近期被踩菜名作为推荐约束（换做法/给替代），反馈闭环落地。"""
+    反馈注入：近期被踩菜名作为推荐约束（换做法/给替代），反馈闭环落地。
+    location_context 只作为内部上下文注入，不写回前端可见文本。"""
     prefix_parts: list[str] = []
     prefs = load_preferences()
     if prefs:
@@ -125,13 +136,24 @@ def build_human_message(text, image_url=None):
             "【用户长期偏好（每次对话自动加载，务必严格遵守）】\n"
             f"{prefs}\n"
         )
+    fridge = _fridge_inventory()
+    if fridge:
+        prefix_parts.append(
+            "【冰箱库存（用户当前已有，优先使用这些食材）】\n"
+            f"{'、'.join(fridge)}\n"
+        )
     downs = recent_down_dishes()
     if downs:
         prefix_parts.append(
-            "【近期不满意菜品（用户点过踩，务必参考）】\n"
+            "【近期不满意菜品（务必避开以下被踩菜品）】\n"
             f"{'、'.join(downs)}\n"
-            "若本次推荐命中同类菜品或做法，请主动换做法、口味或给出替代品；"
-            "若确实要推荐其中菜品，请说明这次在做法/口味上的具体不同。\n"
+            "请避开上述菜品和相近做法；若必须涉及其中菜品，请换做法、口味或给出明确替代品。\n"
+        )
+    if location_context:
+        location_block = str(location_context).strip()
+        prefix_parts.append(
+            "【当前位置（内部上下文，仅供推理与 nearby_food 使用，不要复述给用户）】\n"
+            f"{location_block}\n"
         )
     if prefix_parts:
         text = (
@@ -168,8 +190,33 @@ def _stage_for_node(node, message_chunk):
     if node == "verify_answer":
         return "auditing"
     if node == "structure_answer":
-        return "generating_image"
+        return "structuring"
     return None
+
+
+def _normalize_stream_content(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict)
+        )
+    return ""
+
+
+def _looks_like_structured_payload(content: str) -> bool:
+    raw = str(content or "").strip()
+    if not ((raw.startswith("{") and raw.endswith("}")) or (raw.startswith("[") and raw.endswith("]"))):
+        return False
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return False
+    if isinstance(data, dict):
+        return any(key in data for key in ("recipes", "health_lights", "guardrails", "image_url", "answer", "stage"))
+    return isinstance(data, list)
 
 def _stream_agent(message, session_id):
     """公共流式生成器：按"消息来自哪个节点"分流输出。"""
@@ -186,6 +233,17 @@ def _stream_agent(message, session_id):
     ):
         if mode == "updates":
             for node, update in (payload or {}).items():
+                if node == "run_tools":
+                    used = (update or {}).get("tool_calls_in_turn")
+                    if used is not None:
+                        print(f"[agent-metrics] tool_calls_in_turn={used}")
+                elif node == "tool_budget_finalize":
+                    print("[agent-metrics] tool_budget_exhausted=true")
+                elif node == "verify_answer":
+                    status = (update or {}).get("verify_status")
+                    attempts = (update or {}).get("verify_attempts")
+                    if status is not None:
+                        print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
                 if node != "structure_answer":
                     continue
                 msgs = (update or {}).get("messages") or []
@@ -208,8 +266,10 @@ def _stream_agent(message, session_id):
         if stage and stage != last_stage:
             yield ("stage", stage)
             last_stage = stage
-        content = getattr(message_chunk, "content", "")
+        content = _normalize_stream_content(getattr(message_chunk, "content", ""))
         if not content:
+            continue
+        if _looks_like_structured_payload(content):
             continue
         # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
         # ask_user 节点：只放行 LLM 流式块；节点最终返回的完整 AIMessage 会再次

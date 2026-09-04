@@ -12,6 +12,7 @@ export interface Recipe {
   steps: string[]
   image_url: string | null
   image_ai_generated: boolean
+  image_note?: string
 }
 
 export interface HealthLight {
@@ -35,9 +36,11 @@ export interface GuardrailItem {
 }
 
 export interface ChefAnswer {
+  opening?: string
   recipes: Recipe[]
   image_url?: string | null
   image_ai_generated?: boolean
+  image_requested?: boolean
   image_note?: string
   chef_tip?: string
   sources?: SourceRef[]
@@ -62,7 +65,7 @@ export interface Session {
   messages?: SessionMessage[]
 }
 
-export type DecisionMode = 'home' | 'dining' | 'fridge' | 'health'
+export type DecisionMode = 'home' | 'dining' | 'health'
 
 export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring' | 'switching_model'
 
@@ -75,11 +78,14 @@ export interface ChatMessage {
   text: string
   answer?: ChefAnswer | null
   imageUrl?: string | null
+  imageRequested?: boolean
   time?: string
   streaming?: boolean
+  imagePending?: boolean
   stage?: StreamStage
   elapsed?: number
   error?: boolean
+  imageCancelled?: boolean
 }
 
 export type WorkspaceView = 'decision' | 'service' | 'weekly' | 'favorites'
@@ -91,6 +97,7 @@ export interface FavoriteItem {
   user_text: string
   dish: string
   image_url?: string | null
+  answer?: ChefAnswer | null
 }
 
 export interface WeeklyReport {
@@ -102,7 +109,6 @@ export interface WeeklyReport {
   light_trends?: Record<string, string>
   guardrail_triggers?: number
   range?: [string, string]
-  next_week_shopping?: string[]
   recommendations?: string[]
   feedback_summary?: { count: number; tags: Record<string, number> }
 }
@@ -168,6 +174,16 @@ export interface NearbyResult {
   source: string
   amap_configured: boolean
   restaurants: NearbyRestaurant[]
+  warning?: string
+}
+
+export interface ResolvedLocation {
+  resolved: boolean
+  location: string
+  city?: string
+  district?: string
+  label: string
+  warning?: string
 }
 
 export interface PreferencesData {

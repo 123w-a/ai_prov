@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchFeedbackWeekly } from '../api/client'
+import { fetchFeedbackWeekly, forgetDish } from '../api/client'
 import type { FeedbackWeekly } from '../api/client'
 import { Icon } from './Icon'
 
@@ -16,7 +16,7 @@ export function FeedbackSummary() {
         .catch(() => {})
     }
     load()
-    const timer = window.setInterval(load, 60_000)
+    const timer = window.setInterval(load, 10_000)
     return () => {
       alive = false
       window.clearInterval(timer)
@@ -44,7 +44,24 @@ export function FeedbackSummary() {
         </span>
       </div>
       {data.down_dishes.length > 0 && (
-        <p className="feedback-down-list">不满意：{data.down_dishes.join('、')}</p>
+        <div className="feedback-down-list">
+          {(data.down_items || data.down_dishes.map((dish) => ({ dish, count: 0 }))).map((item) => (
+            <div key={item.dish} className="feedback-down-item">
+              <span>已为你避开：{item.dish}{item.count > 1 ? `（${item.count} 次不满意）` : ''}</span>
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => {
+                  void forgetDish(item.dish).then(() => {
+                    fetchFeedbackWeekly().then(setData).catch(() => {})
+                  })
+                }}
+              >
+                不再避开
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </section>
   )

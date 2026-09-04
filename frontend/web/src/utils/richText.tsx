@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 /**
  * 轻量 markdown 渲染：只处理 LLM 实际会输出的形态——
- *   ## / ### 标题、**加粗**、- 与 1) 列表、普通段落。
+ *   ## / ### 标题、**加粗**、- / • 与 1) 列表、引用、分隔线、普通段落。
  * 返回 React 节点（不用 dangerouslySetInnerHTML），天然免疫 XSS，
  * 零第三方依赖；超出支持的语法按原样显示（不猜测不吞字）。
  */
@@ -45,9 +45,23 @@ export function renderRichText(source: string): ReactNode {
   lines.forEach((raw, index) => {
     const line = raw.trimEnd()
     const heading = line.match(/^(#{1,3})\s+(.*)$/)
-    const bullet = line.match(/^[-*]\s+(.*)$/)
+    const divider = line.match(/^[-*_]{3,}$/)
+    const quote = line.match(/^>\s?(.*)$/)
+    const bullet = line.match(/^[-*•]\s+(.*)$/)
     const ordered = line.match(/^(\d+[).、])\s+(.*)$/)
 
+    if (divider) {
+      flushList()
+      blocks.push(<hr key={`hr-${index}`} />)
+      return
+    }
+    if (quote) {
+      flushList()
+      blocks.push(
+        <blockquote key={`q-${index}`}>{renderInline(quote[1], `q-${index}`)}</blockquote>,
+      )
+      return
+    }
     if (heading) {
       flushList()
       blocks.push(

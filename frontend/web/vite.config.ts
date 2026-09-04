@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 // 前端开发服务器：端口 5178，/api 请求代理到后端 8010（开发时无需处理跨域）
 export default defineConfig({
   plugins: [react()],
+  cacheDir: '.vite-cache',
   server: {
     port: 5178,
     watch: {

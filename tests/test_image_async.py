@@ -95,5 +95,16 @@ class StructureNoImageSearchTest(unittest.TestCase):
         self.assertNotIn("_search_recipe_image(", src)
 
 
+class ChatRouteImageGateTest(unittest.TestCase):
+    def test_non_dining_request_blocks_image_pipeline(self):
+        self.assertFalse(chat_route._should_enable_image_pipeline("查询下我周围有什么大型的体育赛事开始吗", "1"))
+
+    def test_dining_request_keeps_image_pipeline(self):
+        self.assertTrue(chat_route._should_enable_image_pipeline("帮我做个番茄炒蛋，配张图", "1"))
+
+    def test_explicit_image_phrase_without_toggle_keeps_pipeline(self):
+        self.assertTrue(chat_route._should_enable_image_pipeline("帮我做个番茄炒蛋，配张图", "0"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

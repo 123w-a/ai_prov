@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ChefAnswer, GuardrailItem, Recipe, SourceRef } from '../types'
 import { formatSourceSection } from '../utils/sourceFormat'
+import { renderRichText } from '../utils/richText'
 import { submitMealFeedback } from '../api/client'
 import { Icon } from './Icon'
 
@@ -122,15 +123,19 @@ function RecipeSheet({
   fallbackImage,
   fallbackAiImage,
   imageNote,
+  imageRequested,
 }: {
   recipe: Recipe
   index: number
   fallbackImage?: string | null
   fallbackAiImage?: boolean
   imageNote?: string
+  imageRequested?: boolean
 }) {
   const imageUrl = recipe.image_url || fallbackImage
   const aiImage = recipe.image_ai_generated || fallbackAiImage
+  const showVisual = Boolean(imageRequested)
+  const loadingVisual = showVisual && !imageUrl && !imageNote
 
   return (
     <article className="recipe-sheet">
@@ -148,17 +153,24 @@ function RecipeSheet({
           </div>
         </div>
 
-        <figure className={imageUrl ? 'recipe-visual' : 'recipe-visual no-image'}>
-          {imageUrl ? (
-            <img src={imageUrl} alt={`${recipe.name}成品图`} />
-          ) : (
-            <div className="image-placeholder">
-              <Icon name="utensils" size={28} />
-              <span>暂无可靠成品图</span>
-            </div>
-          )}
-          {aiImage && <figcaption>AI 生成示意图 · 非真实成品照</figcaption>}
-        </figure>
+        {showVisual && (
+          <figure className={imageUrl ? 'recipe-visual' : 'recipe-visual no-image'}>
+            {imageUrl ? (
+              <img src={imageUrl} alt={`${recipe.name}成品图`} />
+            ) : loadingVisual ? (
+              <div className="image-placeholder loading" role="status" aria-live="polite">
+                <Icon name="image" size={28} />
+                <span>小膳正在配图</span>
+              </div>
+            ) : (
+              <div className="image-placeholder">
+                <Icon name="utensils" size={28} />
+                <span>暂无成品图</span>
+              </div>
+            )}
+            {aiImage && <figcaption>AI 生成示意图 · 非真实成品照</figcaption>}
+          </figure>
+        )}
       </header>
 
       <div className="recipe-content">
@@ -205,7 +217,7 @@ function RecipeSheet({
           </ol>
         </section>
 
-        {!imageUrl && imageNote && (
+        {showVisual && !imageUrl && imageNote && (
           <div className="image-note">
             <Icon name="image" size={18} />
             <p>{imageNote}</p>
@@ -260,17 +272,25 @@ function InlineEvidence({
   )
 }
 
+function cleanExplainText(source?: string): string {
+  return (source || '')
+    .replace(/\*\*/g, '')
+    .trim()
+}
+
 export function RecipeCard({ answer }: { answer: ChefAnswer }) {
+  const [view, setView] = useState<'card' | 'explain'>('card')
   const recipes = answer.recipes ?? []
   const guards = answer.guardrails ?? []
   const sources = answer.sources ?? []
   const lights = answer.health_lights ?? []
   const LIGHT_ICON: Record<string, string> = { green: '🟢', yellow: '🟡', red: '🔴' }
   if (recipes.length === 0) return null
+  const explainText = cleanExplainText(answer.opening)
 
   return (
     <div className="recipe-stack">
-      {lights.length > 0 && (
+      {view === 'card' && lights.length > 0 && (
         <div className="health-lights" role="status" aria-label="健康红绿灯">
           {lights.map((l, i) => (
             <span key={`${l.label}-${i}`} title={l.reason || ''}>
@@ -280,30 +300,66 @@ export function RecipeCard({ answer }: { answer: ChefAnswer }) {
           ))}
         </div>
       )}
-      {recipes.map((recipe, index) => (
-        <RecipeSheet
-          key={`${recipe.name}-${index}`}
-          recipe={recipe}
-          index={index}
-          fallbackImage={index === 0 ? answer.image_url : undefined}
-          fallbackAiImage={index === 0 ? answer.image_ai_generated : undefined}
-          imageNote={index === 0 ? answer.image_note : undefined}
-        />
-      ))}
+      <div className="answer-tabs" role="tablist" aria-label="回答方式切换">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'card'}
+          className={view === 'card' ? 'answer-tab active' : 'answer-tab'}
+          onClick={() => setView('card')}
+        >
+          菜谱卡片
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'explain'}
+          className={view === 'explain' ? 'answer-tab active' : 'answer-tab'}
+          onClick={() => setView('explain')}
+        >
+          管家讲解
+        </button>
+      </div>
 
-      {answer.chef_tip && (
-        <aside className="chef-note">
-          <span className="chef-note-icon">
-            <Icon name="chef" size={22} />
-          </span>
-          <div>
-            <strong>管家叮嘱</strong>
-            <p>{answer.chef_tip}</p>
+      {view === 'explain' ? (
+        <section className="answer-explain" aria-label="管家讲解">
+          <div className="answer-explain-body">
+            {explainText ? (
+              renderRichText(explainText)
+            ) : (
+              <p className="answer-explain-empty">这次没有生成单独的管家讲解。</p>
+            )}
           </div>
-        </aside>
-      )}
+        </section>
+      ) : (
+        <>
+          {recipes.map((recipe, index) => (
+            <RecipeSheet
+              key={`${recipe.name}-${index}`}
+              recipe={recipe}
+              index={index}
+              fallbackImage={index === 0 ? answer.image_url : undefined}
+              fallbackAiImage={index === 0 ? answer.image_ai_generated : undefined}
+              imageNote={recipe.image_note || (index === 0 ? answer.image_note : undefined)}
+              imageRequested={answer.image_requested}
+            />
+          ))}
 
-      <InlineEvidence guards={guards} sources={sources} />
+          {answer.chef_tip && (
+            <aside className="chef-note">
+              <span className="chef-note-icon">
+                <Icon name="chef" size={22} />
+              </span>
+              <div>
+                <strong>管家叮嘱</strong>
+                <p>{answer.chef_tip}</p>
+              </div>
+            </aside>
+          )}
+
+          <InlineEvidence guards={guards} sources={sources} />
+        </>
+      )}
     </div>
   )
 }

@@ -55,6 +55,20 @@ def record_signals(tastes: list[str], sid: str, rec_id: int) -> None:
         pass
 
 
+def clear_signals_for(sid: str, rec_id: int) -> None:
+    """清除某条被踩记录产生过的口味信号（遗忘菜品时联动清理）。"""
+    try:
+        events = json.loads(_LOG.read_text(encoding="utf-8")) if _LOG.exists() else []
+    except Exception:
+        return
+    events = [e for e in events if not (e.get("sid") == sid and e.get("rec_id") == rec_id)]
+    try:
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        _LOG.write_text(json.dumps(events, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def suggest(min_count: int = 2) -> dict | None:
     """窗口内某口味被踩次数达阈值 → 返回建议 {taste, count, note_label}。"""
     try:

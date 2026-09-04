@@ -1,0 +1,68 @@
+{
+  "hash": "790cf487",
+  "configHash": "cff8852d",
+  "lockfileHash": "8b113852",
+  "browserHash": "91684ef8",
+  "optimized": {
+    "html2canvas": {
+      "src": "../../node_modules/html2canvas/dist/html2canvas.js",
+      "file": "html2canvas.js",
+      "fileHash": "ccd0081e",
+      "needsInterop": true
+    },
+    "jspdf": {
+      "src": "../../node_modules/jspdf/dist/jspdf.es.min.js",
+      "file": "jspdf.js",
+      "fileHash": "f0cfe306",
+      "needsInterop": false
+    },
+    "react-dom": {
+      "src": "../../node_modules/react-dom/index.js",
+      "file": "react-dom.js",
+      "fileHash": "ca222da4",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "4c752cf7",
+      "needsInterop": true
+    },
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "7e4663e2",
+      "needsInterop": true
+    },
+    "react/jsx-dev-runtime": {
+      "src": "../../node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "a49df676",
+      "needsInterop": true
+    },
+    "react/jsx-runtime": {
+      "src": "../../node_modules/react/jsx-runtime.js",
+      "file": "react_jsx-runtime.js",
+      "fileHash": "44f7a902",
+      "needsInterop": true
+    }
+  },
+  "chunks": {
+    "index.es-Dsf-wAU-": {
+      "file": "index.es-Dsf-wAU-.js",
+      "isDynamicEntry": true
+    },
+    "purify.es-B9UQWmjI": {
+      "file": "purify.es-B9UQWmjI.js",
+      "isDynamicEntry": true
+    },
+    "rolldown-runtime-BPOCksWG": {
+      "file": "rolldown-runtime-BPOCksWG.js",
+      "isDynamicEntry": false
+    },
+    "typeof-KEtdrNHU": {
+      "file": "typeof-KEtdrNHU.js",
+      "isDynamicEntry": false
+    }
+  }
+}

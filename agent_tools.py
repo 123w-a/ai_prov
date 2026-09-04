@@ -8,12 +8,15 @@ import csv          # 读取结构化营养表 nutrition_table.csv
 import json#工具返回值打包成结构化 JSON（文本与图片 URL 分字段）
 import requests#后端直接下载国内能访问的图片
 from pathlib import Path#路径解析
+from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage  # 发送图片给视觉模型做内容校验
 from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
 from model_name import get_langchain_llm  # 获取用于图片审核的视觉模型
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
+
+load_dotenv()
 
 # Tavily 搜索客户端（联网菜谱检索）。
 # 未配置 TAVILY_API_KEY 时优雅降级：tavily 置 None，web_search 返回友好提示、
@@ -25,9 +28,10 @@ try:
         search_depth="basic",         # 基础搜索深度（快速摘要，advanced会爬网页全文）
         include_answer=False,         # 不返回Tavily自带的总结答案
         include_raw_content=False,     # 不抓取网页原始完整HTML正文（省token、省钱）
-        include_images=True,          # 开启搜索返回图片链接
-        include_image_descriptions=True, # 给返回的每张图片附加文本描述
+        include_images=False,         # 默认聊天不顺带抓图，配图仅在显式请求时走独立链路
+        include_image_descriptions=False,
     )
+    print("[agent_tools] Tavily 已就绪，web_search 可用")
 except Exception as _tavily_exc:
     print(f"[agent_tools] Tavily 未配置或不可用，web_search 已降级：{_tavily_exc}")
 
@@ -283,7 +287,7 @@ def _bing_images(query: str, limit: int = 5):
         return []
 
 
-def find_recipe_image(recipe_name: str):#搜索一张对应成品图
+def find_recipe_image(recipe_name: str, allow_ai_fallback: bool = False):#搜索一张对应成品图
     """只为已经确定的最终菜名搜索一张对应成品图，返回 (OSS URL, 图源)。"""
     base_query = recipe_name.strip()#清洗字符串
     if not base_query:
@@ -323,9 +327,10 @@ def find_recipe_image(recipe_name: str):#搜索一张对应成品图
     if image_url is not None:
         return image_url, "real"
 
-    ai_url = generate_dish_image(base_query)
-    if ai_url:
-        return ai_url, "ai"
+    if allow_ai_fallback:
+        ai_url = generate_dish_image(base_query)
+        if ai_url:
+            return ai_url, "ai"
     return None, "none"
 
 
@@ -394,170 +399,6 @@ def get_file(file_path):
         return safe.read_text(encoding="utf-8")
     except Exception as e:
         return f"读取失败：{e}"
-
-
-# --------------------------------------------------------------------------- #
-#  外食 / 懒人点单导航（波次 A4）：附近餐厅推荐 + 菜系护栏
-#  真实部署：接入高德 Web 服务 POI API（.env 配置 AMAP_KEY）。
-#  无 key / 断网 / 接口报错时自动回退内置 mock 数据集，保证 demo 不挂。
-# --------------------------------------------------------------------------- #
-_MOCK_RESTAURANTS = [
-    {"name": "轻食说·沙拉碗", "cuisine": "轻食", "avg_price": 38, "distance_km": 0.6,
-     "guardrail": "优先油醋汁、少酱；避开培根/芝士增量"},
-    {"name": "老街家常菜", "cuisine": "家常菜", "avg_price": 45, "distance_km": 1.2,
-     "guardrail": "点蒸煮炖、避开红烧/干锅；叮嘱少油少盐"},
-    {"name": "渝味火锅", "cuisine": "火锅", "avg_price": 80, "distance_km": 0.9,
-     "guardrail": "清汤/番茄锅底；多涮菜少肉丸；蘸料避芝麻酱用醋+蒜"},
-    {"name": "街角烧烤", "cuisine": "烧烤", "avg_price": 60, "distance_km": 1.5,
-     "guardrail": "高血压/痛风避开啤酒+内脏+海鲜；多选烤蔬菜"},
-    {"name": "幸福食堂快餐", "cuisine": "快餐", "avg_price": 25, "distance_km": 0.4,
-     "guardrail": "选杂粮饭+清炒时蔬+蒸蛋；避开油炸窗口"},
-]
-
-
-def _infer_guardrail(name: str, ptype: str, cost=None) -> str:
-    """按店名/餐饮类型粗判点单红线（健康护栏）。高德不提供，是我们产品的差异点。"""
-    text = f"{name} {ptype}"
-    if "火锅" in text:
-        return "清汤/番茄锅底；多涮菜少肉丸；蘸料避芝麻酱用醋+蒜"
-    if "烧烤" in text or "烤肉" in text:
-        return "高血压/痛风避开啤酒+内脏+海鲜；多选烤蔬菜"
-    if "轻食" in text or "沙拉" in text or "西餐" in text:
-        return "优先油醋汁、少酱；避开培根/芝士增量"
-    if "快餐" in text or "小吃" in text or "炸" in text:
-        return "选杂粮饭+清炒时蔬+蒸蛋；避开油炸窗口"
-    if "家常" in text or "中餐" in text or "炒菜" in text:
-        return "点蒸煮炖、避开红烧/干锅；叮嘱少油少盐"
-    return "优先蒸煮炖凉拌、少油少盐；控制份量与主食比例"
-
-
-def _amap_poi_search(city, district, query, budget, location=""):
-    import re as _re
-    # 坐标清洗：模型可能把「[当前位置：经度,纬度]」整串塞进 location，只提取两个浮点数，
-    # 否则 amap 判定非法坐标退化为城市文本搜索，距离全是错位数字（如 128km）。
-    _m = _re.search(r"(\d{1,3}\.\d{3,})[,\s，]+(\d{1,3}\.\d{3,})", str(location or ""))
-    location = f"{_m.group(1)},{_m.group(2)}" if _m else ""
-    """调用高德 POI 接口，返回标准化候选列表；无 key / 断网 / 接口报错返回 None（触发 mock 兜底）。
-    location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。"""
-    if not AMAP_KEY:
-        return None
-    keyword = query.strip() if query else "餐厅"
-    city_param = (city or "").strip()
-    if district and district.strip():
-        city_param = f"{city_param}{district.strip()}" if city_param else district.strip()
-
-    around = bool(location) and "," in str(location)
-    common = {
-        "key": AMAP_KEY,
-        "keywords": keyword,
-        "types": "050000",          # 餐饮服务大类
-        "extensions": "all",        # 要拿 biz_ext.cost（人均）
-        "offset": 25,
-        "page": 1,
-    }
-    if around:
-        # 周边搜索：需要圆心经纬度，返回真实 distance（米）
-        url = "https://restapi.amap.com/v3/place/around"
-        params = {**common, "location": location, "radius": 3000}
-    else:
-        url = "https://restapi.amap.com/v3/place/text"
-        params = {**common, "city": city_param,
-                  "citylimit": "true" if city_param else "false"}
-
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-    except Exception:
-        return None
-    if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
-        return None
-    pois = data.get("pois", []) or []
-    results = []
-    for p in pois:
-        biz = p.get("biz_ext") or {}
-        if not isinstance(biz, dict):
-            biz = {}
-        cost_str = (biz.get("cost") or "").strip()
-        try:
-            cost = int(float(cost_str))
-        except Exception:
-            cost = None
-        raw_type = p.get("type", "") or ""
-        cuisine = raw_type.split(";")[-1] if raw_type else "餐饮"
-        dist_m = p.get("distance")   # 仅周边搜索返回（米）
-        try:
-            distance_km = round(int(dist_m) / 1000, 1) if dist_m not in (None, "") else None
-        except Exception:
-            distance_km = None
-        results.append({
-            "name": p.get("name", ""),
-            "cuisine": cuisine,
-            "avg_price": cost if cost is not None else 0,
-            "distance_km": distance_km,
-            "address": p.get("address", "") or "",
-            "guardrail": _infer_guardrail(p.get("name", ""), raw_type, cost),
-        })
-    return results
-
-
-@tool
-def nearby_food(city: str = "", district: str = "", budget: int = 50, query: str = "", location: str = "") -> str:
-    """当用户说"附近/随便/不知道吃啥/外卖/点单/懒得做"等在外或懒得做饭场景时调用。
-    按预算(budget,单位元)与菜系护栏过滤附近餐厅，返回店名、人均、距离与点单红线。
-    真实环境接入高德 POI API（.env 配 AMAP_KEY）；无 key / 断网时自动回退内置 mock 兜底。
-    location 可传 '经度,纬度'（如前端定位），传了就走周边搜索给出真实距离；不传则按城市文本搜索。"""
-    try:
-        budget = int(budget) if budget else 50
-    except Exception:
-        budget = 50
-
-    real = _amap_poi_search(city, district, query, budget, location)
-    if real is None:
-        candidates = _MOCK_RESTAURANTS
-        source = "mock"          # 无 key / 断网 / 接口报错 → 兜底
-    elif real:
-        candidates = real
-        source = "amap"
-    else:
-        candidates = _MOCK_RESTAURANTS
-        source = "mock_empty"    # 联网成功但 0 命中 → 仍用 mock 顶上
-
-    # 预算过滤：amap 仅保留有人均且≤预算者（无人均不误杀）；mock 按原价位
-    if source == "amap":
-        priced = [c for c in candidates if c["avg_price"] and c["avg_price"] <= budget]
-        candidates = priced if priced else candidates
-    else:
-        under = [c for c in candidates if c["avg_price"] <= budget]
-        candidates = under if under else _MOCK_RESTAURANTS[:3]
-
-    # query 命中菜系/店名/地址时优先排前
-    if query:
-        q = query.strip()
-        candidates.sort(
-            key=lambda c: (
-                q not in c["name"]
-                and q not in c["cuisine"]
-                and q not in c.get("address", "")
-            )
-        )
-    if not candidates:
-        candidates = _MOCK_RESTAURANTS[:3]
-
-    lines = []
-    for i, c in enumerate(candidates[:5], 1):
-        dist = c.get("distance_km")
-        dist_text = f"{dist}km" if dist is not None else "约—（未定位）"
-        addr = c.get("address", "")
-        addr_text = f"｜{addr}" if addr else ""
-        lines.append(
-            f"{i}. {c['name']}（{c['cuisine']}）｜人均约¥{c['avg_price'] or '?'}｜{dist_text}{addr_text}\n"
-            f"   点单红线：{c['guardrail']}"
-        )
-    return json.dumps(
-        {"city": city, "district": district, "budget": budget,
-         "count": len(lines), "source": source, "text": "\n\n".join(lines)},
-        ensure_ascii=False,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -805,9 +646,9 @@ def _resolve_section(source: str, anchor: str) -> str:
 
 @tool
 def web_search(query: str) -> str:
-    """当用户询问某道菜、食材搭配或家常菜做法时调用。
-    工具只负责联网搜索文字做法；最终菜名确定后，由 find_recipe_image 单独搜索对应成品图。
-    这样可以避免用户输入的食材名、口味词或泛查询直接被当成菜名搜图。"""
+    """联网搜索菜谱、做法、食材搭配，或任何需要外部网页结果的问题时调用。
+    工具先返回文字搜索结果；最终菜名确定后，再由 find_recipe_image 单独搜索对应成品图。
+    这样可以避免把食材名、口味词或泛查询直接当成菜名搜图。"""
     # 保留原始菜名查询，用于「AI 生图兜底」的提示词（不希望把"美食 成品图"后缀带进生图）
     base_query = query
     # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
@@ -818,7 +659,18 @@ def web_search(query: str) -> str:
              "image_url": None, "image_source": "real"},
             ensure_ascii=False,
         )
-    result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
+    try:
+        result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
+    except Exception as exc:
+        return json.dumps(
+            {
+                "text": f"联网搜索失败：{exc}",
+                "image_url": None,
+                "image_source": "real",
+                "error": str(exc),
+            },
+            ensure_ascii=False,
+        )
 
     items = result.get("results", [])#拿到result这个列表中的几条结果
     if not items:
@@ -906,7 +758,7 @@ def _infer_guardrail(name: str, ptype: str, cost=None) -> str:
     return "优先蒸煮炖凉拌、少油少盐；控制份量与主食比例"
 
 
-def _amap_poi_search(city, district, query, budget, location=""):
+def _amap_poi_search(city, district, query, budget, location="", page=1, radius=1500):
     import re as _re
     # 坐标清洗：模型可能把「[当前位置：经度,纬度]」整串塞进 location，只提取两个浮点数，
     # 否则 amap 判定非法坐标退化为城市文本搜索，距离全是错位数字（如 128km）。
@@ -916,37 +768,104 @@ def _amap_poi_search(city, district, query, budget, location=""):
     location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。"""
     if not AMAP_KEY:
         return None
-    keyword = query.strip() if query else "餐厅"
     city_param = (city or "").strip()
-    if district and district.strip():
-        city_param = f"{city_param}{district.strip()}" if city_param else district.strip()
+    district_param = (district or "").strip()
 
     around = bool(location) and "," in str(location)
+    clean_query = str(query or "")
+    if clean_query:
+        area_tokens = [
+            city_param,
+            district_param,
+            city,
+            district,
+            "北京", "上海", "天津", "重庆", "长沙", "益阳", "广州", "深圳",
+            "杭州", "南京", "武汉", "成都", "西安", "苏州", "朝阳", "海淀",
+            "岳麓", "芙蓉", "雨花", "资阳", "赫山", "资阳区", "南县", "安化", "桃江",
+            "区", "市", "县", "镇", "街道", "路", "附近", "周边",
+        ]
+        pattern = "|".join(
+            sorted(
+                {_re.escape(token) for token in area_tokens if token},
+                key=len,
+                reverse=True,
+            )
+        )
+        if pattern:
+            clean_query = _re.sub(pattern, " ", clean_query)
+        clean_query = _re.sub(r"[·、,，+\s]+", " ", clean_query)
+        clean_query = _re.sub(r"\s+", " ", clean_query).strip()
+        cuisine_tokens = [
+            "火锅", "烧烤", "烤肉", "自助", "家常菜", "炒菜", "中餐", "湘菜", "川菜", "粤菜", "鲁菜", "徽菜", "淮扬菜",
+            "日料", "寿司", "韩餐", "西餐", "披萨", "汉堡", "轻食", "沙拉", "面馆", "粉面", "米粉", "快餐", "小吃",
+            "麻辣烫", "冒菜", "砂锅", "粥", "早餐", "茶餐厅", "清真", "素食", "海鲜", "烤鱼", "烤鸭",
+        ]
+        matched = next((token for token in cuisine_tokens if token in clean_query), "")
+        if matched:
+            clean_query = matched
+        elif len(clean_query) > 8 or _re.search(r"想|推荐|适合|附近|周边|吃饭|吃啥|吃什么|今天|现在|帮我|给我|可以|最合适", clean_query):
+            clean_query = ""
+    if not clean_query:
+        clean_query = "餐厅"
     common = {
         "key": AMAP_KEY,
-        "keywords": keyword,
+        "keywords": clean_query,
         "types": "050000",          # 餐饮服务大类
         "extensions": "all",        # 要拿 biz_ext.cost（人均）
         "offset": 25,
-        "page": 1,
+        "page": max(1, int(page or 1)),
     }
+    pois = []
     if around:
         # 周边搜索：需要圆心经纬度，返回真实 distance（米）
-        url = "https://restapi.amap.com/v3/place/around"
-        params = {**common, "location": location, "radius": 3000}
+        radius_value = max(500, min(int(radius or 1500), 10000))
+        candidate_radii = [radius_value]
+        if radius_value < 3000:
+            candidate_radii.append(3000)
+        if radius_value < 5000:
+            candidate_radii.append(5000)
+        seen_radii = []
+        for current_radius in candidate_radii:
+            if current_radius in seen_radii:
+                continue
+            seen_radii.append(current_radius)
+            try:
+                resp = requests.get(
+                    "https://restapi.amap.com/v3/place/around",
+                    params={
+                        **common,
+                        "location": location,
+                        "radius": current_radius,
+                        "sortrule": "distance",
+                    },
+                    timeout=5,
+                )
+                data = resp.json()
+            except Exception:
+                return None
+            if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
+                return None
+            pois = data.get("pois", []) or []
+            if pois:
+                break
     else:
-        url = "https://restapi.amap.com/v3/place/text"
-        params = {**common, "city": city_param,
-                  "citylimit": "true" if city_param else "false"}
+        try:
+            resp = requests.get(
+                "https://restapi.amap.com/v3/place/text",
+                params={
+                    **common,
+                    "city": city_param or district_param,
+                    "citylimit": "true" if city_param else "false",
+                },
+                timeout=5,
+            )
+            data = resp.json()
+        except Exception:
+            return None
+        if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
+            return None
+        pois = data.get("pois", []) or []
 
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-    except Exception:
-        return None
-    if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
-        return None
-    pois = data.get("pois", []) or []
     results = []
     for p in pois:
         biz = p.get("biz_ext") or {}

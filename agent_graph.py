@@ -4,6 +4,7 @@
 
 import json#结构化回答打包成 JSON 字符串落进消息
 import os#读 SUMMARY_MODE_NAME 等环境变量
+import re
 from pathlib import Path#读取 data/profile.json（家庭档案激活成员）
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
@@ -146,20 +147,29 @@ checkpointer.setup()
 #  只总结 user/AI，跳过 ToolMessage 工具返回；总结 Prompt 针对膳食管家场景定制
 # --------------------------------------------------------------------------- #
 MAX_HISTORY_KEEP = 6  # 保留最近约 3 轮(user+ai)，更早的参与总结（调大以减少压缩触发、保住菜品编号上下文）
+MAX_TOOL_CALLS_PER_TURN = 4  # 本轮最多执行 4 次工具，防止模型在刁钻输入下失控循环
 #MessagesState是所有的状态消息，包含 messages 属性
 @trace_node("condense_history")
 def maybe_condense(state: MessagesState):#压缩历史对话
     msgs = state["messages"]
+    reset_turn_state = {
+        "verify_attempts": 0,
+        "verify_warning": "",
+        "verify_status": "ok",
+        "verify_violated": [],
+        "tool_calls_in_turn": 0,
+        "tool_budget_exhausted": False,
+    }
     # 最后一条消息不是用户发的或者没有消息的话就不执行后续操作
     if not msgs or not isinstance(msgs[-1], HumanMessage):
         return {}#不改变状态，防止打断正在运行的时候
     # 只统计 user + ai 对话，跳开 ToolMessage 工具返回，避免把冗长搜索结果搅进摘要
     talk = [m for m in msgs if isinstance(m, (HumanMessage, AIMessage))]#自动过滤没用消息
     if len(talk) <= MAX_HISTORY_KEEP:
-        return {}  # 还没到阈值，不压缩不做处理
+        return reset_turn_state  # 还没到阈值，只重置本轮运行状态
     old = talk[:-MAX_HISTORY_KEEP]#从开始到倒数第max_history_keep，老的对话要总结后删除
     if not old:
-        return {}
+        return reset_turn_state
     convo = "\n".join(#将列表转为字符串供llm生成摘要
         f"{'用户' if isinstance(m, HumanMessage) else 'AI'}：{m.content}"#用户：内容，ai：内容
         for m in old#循环把每一条旧对话转为字符串并拼接在一起
@@ -181,7 +191,7 @@ def maybe_condense(state: MessagesState):#压缩历史对话
         except (openai.InternalServerError, openai.APIConnectionError, openai.RateLimitError):
             time.sleep(1 + attempt)
     if not summary:
-        return {}#摘要生成失败就跳过没有增量
+        return reset_turn_state#摘要生成失败就跳过压缩，但仍重置本轮运行状态
     # 关键：被删 AIMessage 若带 tool_calls，它对应的 ToolMessage 必须"连坐"删除，
     # 否则孤儿 ToolMessage 留在历史里，下次请求 LLM 直接 400：
     # "No tool call found for function call output with call_id ..."
@@ -203,7 +213,7 @@ def maybe_condense(state: MessagesState):#压缩历史对话
             and getattr(m, "id", None)
         ]
     summary_msg = HumanMessage(content=f"[历史对话摘要，供参考]\n{summary}")#在state里看到HumanMessage就插入
-    return {"messages": removals + [summary_msg]}#返回给langgraph处理，看成是先删后加
+    return {**reset_turn_state, "messages": removals + [summary_msg]}#返回给langgraph处理，看成是先删后加
 #返回的是对状态的增量
 # --------------------------------------------------------------------------- #
 #  4. 节点1：LLM 思考节点（绑定系统提示词 + 工具调用能力）
@@ -255,10 +265,30 @@ def _message_has_image(message):
 
 def _current_request_text(text):
     """从用户消息中取出本次需求，排除每轮自动注入的长期偏好。"""
-    marker = "【以上为偏好约束，以下是本次需求】"
-    if marker in text:
-        text = text.split(marker, 1)[1]
+    markers = (
+        "【以上为自动加载约束，以下是本次需求】",
+        "【以上为偏好约束，以下是本次需求】",
+    )
+    for marker in markers:
+        if marker in text:
+            text = text.split(marker, 1)[1]
+            break
     return text.strip()
+
+
+def _wants_recipe_images(messages):
+    """判断本轮是否由后端明确授权配图。
+
+    用户自然语言里的“配图/图片”不再直接触发正常菜谱链路搜图；
+    不满意换图走 chat_route 的独立目标绑定流程。"""
+    text = _latest_user_text(messages)
+    if not text:
+        return False
+    if "【配图开关：开启】" in text or "【本轮需要配图】" in text:
+        return True
+    if _looks_like_dining_request(text):
+        return True
+    return False
 
 
 def _is_new_ingredient_image_request(text):
@@ -315,6 +345,21 @@ def chef_agent_node(state: MessagesState):
     # 前置插入系统提示词，再追加历史对话消息（先清掉孤儿 ToolMessage 防 API 400）
     latest_text = _latest_user_text(messages)
     latest_has_image = _latest_user_has_image(messages)
+    if _should_force_web_search(latest_text):
+        return {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": f"forced-web-search-{len(messages)}",
+                            "name": "web_search",
+                            "args": {"query": latest_text},
+                        }
+                    ],
+                )
+            ]
+        }
     is_new_image_request = (
         latest_has_image and _is_new_ingredient_image_request(latest_text)
     )
@@ -350,6 +395,63 @@ def chef_agent_node(state: MessagesState):
 
 # 节点2：工具执行节点（自动调用 web_search / get_file）产出 ToolMessage
 tool_executor = ToolNode(tools)#直接执行不思考
+
+
+def _latest_tool_call_count(messages) -> int:
+    """取最近一条 AI 工具调用消息里的 tool_call 数量。"""
+    for m in reversed(messages or []):
+        if isinstance(m, AIMessage):
+            return len(getattr(m, "tool_calls", None) or [])
+    return 0
+
+
+def chef_route_with_tool_budget(state: "ChefState") -> str:
+    """chef_think 后的路由：有工具且未超预算才执行工具，否则优雅收尾。"""
+    route = tools_condition(state)
+    if route != "tools":
+        return "verify"
+    used = int(state.get("tool_calls_in_turn", 0) or 0)
+    pending = _latest_tool_call_count(state.get("messages", []))
+    if used + max(pending, 1) > MAX_TOOL_CALLS_PER_TURN:
+        return "tool_budget_exhausted"
+    return "tools"
+
+
+@trace_node("run_tools")
+def run_tools_node(state: "ChefState"):
+    """执行工具并累计本轮工具调用次数。"""
+    result = tool_executor.invoke(state)
+    used = int(state.get("tool_calls_in_turn", 0) or 0)
+    return {
+        **(result or {}),
+        "tool_calls_in_turn": used + max(_latest_tool_call_count(state.get("messages", [])), 1),
+    }
+
+
+@trace_node("tool_budget_finalize")
+def tool_budget_finalize_node(state: "ChefState"):
+    """工具预算耗尽时，删除未执行 tool_call，给用户一个基于已有信息的普通结论。"""
+    messages = state.get("messages", [])
+    removals = []
+    for m in reversed(messages):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            if getattr(m, "id", None):
+                removals.append(RemoveMessage(id=m.id))
+            break
+    user_text = _current_request_text(_latest_user_text(messages))
+    used = int(state.get("tool_calls_in_turn", 0) or 0)
+    content = (
+        f"我已经完成了 {used} 次资料检索，为了避免继续空转，先基于现有信息给你收口："
+        "优先选少油少盐、食材明确、做法简单的一道；如果涉及慢病、腹泻、痛风或控糖，"
+        "避开油炸、重辣、冷饮和高糖饮料。"
+    )
+    if user_text:
+        content += f"\n\n针对你这次说的「{user_text[:60]}」，我会按这些边界给出稳妥建议。"
+    return {
+        "messages": removals + [AIMessage(content=content)],
+        "tool_budget_exhausted": True,
+        "verify_status": "ok",
+    }
 
 # --------------------------------------------------------------------------- #
 # 从整个对话消息列表里，提取、拼接给结构化 LLM 使用的 Prompt 上下文
@@ -389,10 +491,8 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
         if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
             ai_text = str(m.content).strip()
             if ai_text and not ai_text.startswith('{"opening"'):
-                parts.append(
-                    "本轮 Agent 已确认的回答（菜名和食材以此为准）：\n"
-                    + ai_text
-                )
+                _excerpt = ai_text[:800] + ("…（正文已截断）" if len(ai_text) > 800 else "")
+                parts.append("本轮 Agent 已确认的回答（菜名和食材以此为准）：\n" + _excerpt)
             break
     # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []#2.有连坐删除，删的时候会把工具的返回结果也会删除不搞混
@@ -411,10 +511,11 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
             except (ValueError, AttributeError):
                 pass
     if search_blocks:
+        _trimmed = [b[:1500] for b in search_blocks[-2:]]
         parts.append(
             "搜索结果（每条是 JSON：text 为搜索文本、image_url 为成品图链接或 null、"
             "image_source 为图源 real/ai）：\n"
-            + "\n\n".join(search_blocks[-3:])#最多取最近3次搜索，
+            + "\n\n".join(_trimmed)#最多取最近2次搜索，单条截断避免结构化阶段上下文过重
         )
     # 本轮所有 nutrition_kb_search 工具返回（权威健康依据，JSON 含 source 文件名与命中片段 text）
     kb_blocks = []
@@ -435,12 +536,61 @@ def _is_dining_scene(text: str) -> bool:
     return bool(_re.search(r"食堂|外卖|外吃|外出就餐|点餐|吃饭|省钱吃|怎么吃|餐厅|档口|套餐|就餐", text))
 
 
+def _looks_like_dining_request(text: str) -> bool:
+    """识别做菜、点餐、饮食建议等饮食相关请求。"""
+    text = str(text or "").strip()
+    if not text:
+        return False
+    markers = (
+        "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
+        "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
+        "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
+        "痛风", "尿酸", "健康饮食", "附近吃什么",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_restaurant_ordering_scene(text: str) -> bool:
+    """餐厅/外食点餐请求只保留纯文本，不进入菜谱卡片结构化。"""
+    text = str(text or "").strip()
+    if not text:
+        return False
+    restaurant_markers = (
+        "餐厅", "饭店", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
+        "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
+    )
+    cooking_markers = (
+        "做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅",
+        "食材", "冰箱", "在家做", "自己做",
+    )
+    return any(marker in text for marker in restaurant_markers) and not any(
+        marker in text for marker in cooking_markers
+    )
+
+
 def _latest_user_text(messages):
     """提取本轮用户的文字需求，图文消息只取文字部分。"""
     for m in reversed(messages):
         if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
             return _current_request_text(_message_text(m))
     return ""
+
+
+def _should_force_web_search(text: str) -> bool:
+    """把明显需要联网查网页/做法/最新信息的请求，提前转成 web_search 工具调用。"""
+    text = str(text or "").strip()
+    if not text:
+        return False
+    if _is_dining_scene(text):
+        return False
+    if any(word in text for word in ("高血压", "糖尿病", "血糖", "尿酸", "痛风", "减脂", "控糖", "低嘌呤", "能不能吃", "营养", "热量", "钠")):
+        return False
+    force_words = (
+        "联网", "网页", "网页搜索", "搜索一下", "查一下", "查查", "最新", "最新的",
+        "做法", "菜谱", "怎么做", "家常菜", "快手菜", "食材搭配", "配方", "推荐做法",
+        "网上", "上网", "外网", "百度", "Tavily",
+    )
+    return any(word in text for word in force_words)
 
 
 def _wants_multiple_recipes(messages):
@@ -456,7 +606,7 @@ def _wants_multiple_recipes(messages):
 def _search_recipe_image(recipe_name):
     """按最终菜名搜索图片，返回 (url, 是否AI生成)。"""
     try:
-        image_url, image_source = find_recipe_image(recipe_name)
+        image_url, image_source = find_recipe_image(recipe_name, allow_ai_fallback=False)
         return image_url, image_source == "ai"
     except Exception:
         return None, False
@@ -497,6 +647,9 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         opening = str(messages[-1].content)#这里已经传入前端了，所以比结构化卡片快
         #context是纯文本给了LCEL节构化链，其他的图片的链接和图片的来源在下文传出来的answer来赋值
     latest_text = _latest_user_text(messages)
+    if _is_restaurant_ordering_scene(latest_text):
+        return {"messages": []}
+    wants_images = _wants_recipe_images(messages)
     is_new_image_request = (
         _latest_user_has_image(messages)
         and _is_new_ingredient_image_request(latest_text)
@@ -522,37 +675,48 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         warning = state.get("verify_warning", "")
         if warning:
             answer.chef_tip = (answer.chef_tip + " " + warning).strip()
-        # 图片搜索已剥离到 chat_route 的后台线程（structure 曾在节点内串行搜图，
-        # 四级图源瀑布+逐候选下载+视觉审核动辄 120s，是全链最大瓶颈）。
-        # 这里只保留用户本轮上传图的兼容赋值；其余菜图由 SSE image 事件异步补推。
-        if allow_multiple and answer.recipes:
-            for index, recipe in enumerate(answer.recipes):
-                if not recipe.image_url and index == 0 and real_image_url:
-                    recipe.image_url = real_image_url
-                    recipe.image_ai_generated = real_image_ai
-        elif answer.recipes and real_image_url:
-            answer.recipes[0].image_url = real_image_url
-            answer.recipes[0].image_ai_generated = real_image_ai
-        # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
-        # 杜绝"正文说找到图、卡片却没图"的口径不一
-        if allow_multiple and answer.recipes:
-            # 多道菜时顶层字段只保留第一道，供旧前端/旧历史兼容；新前端读取每道菜自己的 image_url。
-            answer.image_url = answer.recipes[0].image_url
-            answer.image_ai_generated = answer.recipes[0].image_ai_generated
+        answer.image_requested = wants_images
+        if not wants_images:
+            for recipe in answer.recipes:
+                recipe.image_url = None
+                recipe.image_ai_generated = False
+            answer.image_url = None
+            answer.image_ai_generated = False
+            answer.image_note = ""
         else:
-            answer.image_url = answer.recipes[0].image_url if answer.recipes else None#赋值图片路径
-            # 透明标注（项目亮点）：图片若由通义万相生成，强制让前端知道，绝不伪装成实拍图
-            answer.image_ai_generated = (
-                answer.recipes[0].image_ai_generated if answer.recipes else False
-            )#赋值图片是否由 AI 生成
-        if answer.image_ai_generated:
-            # 强制图注带「AI 生成示意图」，防止模型漏写导致误导用户/评委
-            if not answer.image_note:#图片注为空
-                answer.image_note = "AI 生成示意图（非真实成品照，仅供样式参考）"
-            elif "AI 生成示意图" not in answer.image_note:#图片注不是这个
-                answer.image_note = "AI 生成示意图：" + answer.image_note#给他加上
-        elif answer.image_url is None and not answer.image_note:#图片注为空并且没有图片
-            answer.image_note = "未找到可正常展示的成品图片。"
+            # 图片搜索已剥离到 chat_route 的后台线程（structure 曾在节点内串行搜图，
+            # 四级图源瀑布+逐候选下载+视觉审核动辄 120s，是全链最大瓶颈）。
+            # 这里只保留用户本轮上传图的兼容赋值；其余菜图由 SSE image 事件异步补推。
+            if allow_multiple and answer.recipes:
+                for index, recipe in enumerate(answer.recipes):
+                    if not recipe.image_url and index == 0 and real_image_url:
+                        recipe.image_url = real_image_url
+                        recipe.image_ai_generated = real_image_ai
+            elif answer.recipes and real_image_url:
+                answer.recipes[0].image_url = real_image_url
+                answer.recipes[0].image_ai_generated = real_image_ai
+            # 代码兜底：图片 URL 以工具真实返回为准——有真链接才给图，没有就强制 null，
+            # 杜绝"正文说找到图、卡片却没图"的口径不一
+            if allow_multiple and answer.recipes:
+                # 多道菜时顶层字段只保留第一道，供旧前端/旧历史兼容；新前端读取每道菜自己的 image_url。
+                answer.image_url = answer.recipes[0].image_url
+                answer.image_ai_generated = answer.recipes[0].image_ai_generated
+            else:
+                answer.image_url = answer.recipes[0].image_url if answer.recipes else None#赋值图片路径
+                # 透明标注（项目亮点）：图片若由通义万相生成，强制让前端知道，绝不伪装成实拍图
+                answer.image_ai_generated = (
+                    answer.recipes[0].image_ai_generated if answer.recipes else False
+                )#赋值图片是否由 AI 生成
+            if answer.image_ai_generated:
+                # 强制图注带「AI 生成示意图」，防止模型漏写导致误导用户/评委
+                if not answer.image_note:#图片注为空
+                    answer.image_note = "AI 生成示意图（非真实成品照，仅供样式参考）"
+                elif "AI 生成示意图" not in answer.image_note:#图片注不是这个
+                    answer.image_note = "AI 生成示意图：" + answer.image_note#给他加上
+            elif answer.image_url is None:
+                # 要图时先保持空注解，前端据此显示「AI 正在生成菜品图片...」占位；
+                # 真正失败由 chat_route 的 image_failed 事件统一落失败文案。
+                answer.image_note = answer.image_note or ""
         payload = {"opening": opening, **answer.model_dump()}
         return {
             "messages": [
@@ -575,6 +739,8 @@ class ChefState(MessagesState):
     verify_violated: list = []  # 本轮被硬护栏命中的病种列表（供右栏『健康链』如实展示）
     profile_ready: bool = True  # 充分性门控：健康画像是否足够进入检索/审计（AgentMental 范式）
     profile_missing: list = []  # 充分性门控：本轮尚未确认的高风险病种
+    tool_calls_in_turn: int = 0  # 本轮已执行工具调用数，入口重置
+    tool_budget_exhausted: bool = False  # 本轮工具预算是否耗尽，供日志/降级识别
 
 @trace_node("verify_answer")
 def verify_answer_node(state: ChefState):
@@ -593,6 +759,12 @@ def verify_answer_node(state: ChefState):
     if not violations:
         return {"verify_status": "ok", "verify_attempts": attempts + 1,
                 "verify_warning": "", "verify_violated": []}
+    if state.get("tool_budget_exhausted"):
+        warn = "健康护栏提示：工具预算已耗尽，本轮先按已有信息保守收口；仍需注意——" + "；".join(
+            f"{v['condition']}忌{v['keyword']}" for v in violations
+        )
+        return {"verify_status": "degraded", "verify_warning": warn,
+                "verify_violated": violated_conditions}
     if attempts < MAX_VERIFY:
         feedback = HumanMessage(content=(
             "[健康护栏审核] 你给出的方案违反了以下硬禁忌，必须重新生成一道合规的菜：\n"
@@ -613,15 +785,38 @@ def verify_route(state: ChefState) -> str:
     P3 性能二段：仅当用户明确是非菜品查询（闲聊/纯健康问答）时才直通 END，
     跳过 structure LLM —— 任何可能输出菜品卡片（含图片）的轮次都保留结构化流程。"""
     status = state.get("verify_status", "ok")
+    if state.get("tool_budget_exhausted"):
+        return "plain"
     if status == "ok":
         has_tool_result = any(
             isinstance(m, ToolMessage) for m in state.get("messages", [])[-8:]
         )
+        if has_tool_result:
+            last_ai = ""
+            for m in reversed(state.get("messages", [])):
+                if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+                    last_ai = str(m.content).strip()
+                    break
+            if _is_followup_only(last_ai):
+                return "plain"
         if not has_tool_result:
             txt = _latest_user_text(state.get("messages", []))
             if txt and not _is_dining_scene(txt) and "菜" not in txt and "做" not in txt and "吃" not in txt:
                 return "plain"
     return status
+
+
+def _is_followup_only(text: str) -> bool:
+    """健康问答追问态：整段以问句收尾且没有菜谱结构时才跳过出菜。"""
+    text = str(text or "").strip()
+    if not text or not text.endswith(("？", "?")):
+        return False
+    recipe_markers = (
+        "食材", "做法", "步骤", "调料", "菜谱", "配料", "食用油",
+        "盐", "克", "毫升", "分钟", "翻炒", "蒸", "煮", "炸", "烤",
+        "食材清单", "用量", "第一道", "第二道",
+    )
+    return not any(marker in text for marker in recipe_markers)
 
 # --------------------------------------------------------------------------- #
 #  4.5 充分性门控（AgentMental 范式）：高风险健康决策前先确定性判断画像是否足够
@@ -765,12 +960,13 @@ def profile_gate_route(state: ChefState) -> str:
 workflow = StateGraph(ChefState)#创建状态图，状态容器扩展为带护栏字段的 ChefState
 # 注册两个节点，左是节点名，右是函数
 workflow.add_node("chef_think", chef_agent_node)#思考节点自己思考能看图片
-workflow.add_node("run_tools", tool_executor)#工具执行节点
+workflow.add_node("run_tools", run_tools_node)#工具执行节点
 workflow.add_node("condense_history", maybe_condense)# 注册长对话压缩节点
 workflow.add_node("verify_answer", verify_answer_node)# 注册健康护栏审计节点
 workflow.add_node("structure_answer", structure_answer_node)# 注册结构化回答节点
 workflow.add_node("profile_gate", profile_gate_node)# 注册充分性门控节点（AgentMental 范式）
 workflow.add_node("ask_user", ask_user_node)# 注册健康画像追问节点
+workflow.add_node("tool_budget_finalize", tool_budget_finalize_node)# 工具预算耗尽后的优雅收尾节点
 workflow.set_entry_point("condense_history")# 设置入口：先压缩历史
 workflow.add_edge("condense_history", "profile_gate")#连线长对话压缩→充分性门控
 workflow.add_conditional_edges(
@@ -787,12 +983,14 @@ workflow.add_edge("ask_user", END)#追问结束后本轮结束，等待用户下
 # 1. LLM 思考完，判断是否要调用工具：要调用→去执行工具；不调用→去健康护栏审计
 workflow.add_conditional_edges(#条件分支边
     source="chef_think",#源节点
-    path=tools_condition,# LangGraph 内置工具判断函数上面调的库：会返回有tools或常量END
+    path=chef_route_with_tool_budget,# 有工具调用时先过本轮预算
     path_map={#条件分支二选一对应目标节点
         "tools": "run_tools",#有就执行工具
-        END: "verify_answer",#不调用工具→先过健康护栏审计，再结构化收尾
+        "verify": "verify_answer",#不调用工具→先过健康护栏审计，再结构化收尾
+        "tool_budget_exhausted": "tool_budget_finalize",#工具超预算→普通结论收口
     },
 )
+workflow.add_edge("tool_budget_finalize", "verify_answer")
 
 # 2. 工具执行完毕，**回流到 LLM 节点再次思考（实现循环！）**
 #    这就是 create_agent 做不到的闭环：工具结果回来重新让 LLM 校验、二次搜索、反思修

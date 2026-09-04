@@ -63,7 +63,6 @@ def weekly_report():
         "light_trends": _light_trends(recent, since),
         "guardrail_triggers": sum(m.get("guardrails", 0) for m in recent),
         "range": [since.date().isoformat(), datetime.now().date().isoformat()],
-        "next_week_shopping": _next_week_shopping(dishes.most_common(5)),
         "recommendations": _weekly_recommendations(dishes.most_common(5), _light_trends(recent, since))
                              + _pantry_restock_tips(_read_pantry_log(), set(get_fridge().get("items", [])))
                              + _feedback_tips(_read_feedback_log()),
@@ -210,25 +209,6 @@ def _pantry_restock_tips(log: list[dict], owned: set[str], today: datetime | Non
             continue
         tips.append(f"「{item}」近两周已补货 {count} 次、冰箱暂时没有——下次采购记得带上。")
     return tips
-
-
-def _next_week_shopping(top_dishes: list) -> list[str]:
-    """T2-P1.5：把本周常吃菜对应的主料合并去重，作为下周购物参考清单。"""
-    try:
-        from api.routes.service_route import HOME_CHEF_RECIPES
-    except Exception:
-        return []
-    items: list[str] = []
-    seen: set[str] = set()
-    for dish, _n in top_dishes:
-        key = next((k for k in HOME_CHEF_RECIPES if k in dish or dish in k), None)
-        if not key:
-            continue
-        for ing in HOME_CHEF_RECIPES[key]:
-            if ing not in seen:
-                seen.add(ing)
-                items.append(ing)
-    return items
 
 
 def _recent_meals() -> list[dict]:

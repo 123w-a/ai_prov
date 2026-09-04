@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchFavorites, starMessage } from '../api/client'
 import type { FavoriteItem } from '../types'
 import { Icon } from './Icon'
+import { RecipeCard } from './RecipeCard'
 
 export function FavoritesPanel({ onOpenSession }: { onOpenSession: (sid: string) => void }) {
   const [items, setItems] = useState<FavoriteItem[] | null>(null)
@@ -44,8 +45,14 @@ export function FavoritesPanel({ onOpenSession }: { onOpenSession: (sid: string)
                 <img src={item.image_url} alt={item.dish} loading="lazy" />
               )}
               <div className="favorite-body">
-                <strong>{item.dish}</strong>
-                <small>来自会话：{item.session_title || item.user_text}</small>
+                {item.answer ? (
+                  <RecipeCard answer={item.answer} />
+                ) : (
+                  <>
+                    <strong>{item.dish}</strong>
+                    <small>来自会话：{item.session_title || item.user_text}</small>
+                  </>
+                )}
               </div>
               <div className="favorite-actions">
                 <button type="button" onClick={() => onOpenSession(item.sid)}>

@@ -178,17 +178,6 @@ export function WeeklyReportPage() {
         </section>
       )}
 
-      {(report.next_week_shopping?.length ?? 0) > 0 && (
-        <section className="weekly-card">
-          <h3>采购清单参考</h3>
-          <div className="weekly-chips">
-            {report.next_week_shopping!.map((item) => (
-              <span key={item} className="weekly-chip plain">{item}</span>
-            ))}
-          </div>
-        </section>
-      )}
-
       {feedback && feedback.down > 0 && feedback.down_dishes.length > 0 && (
         <section className="weekly-card warn">
           <h3>被踩的回答</h3>

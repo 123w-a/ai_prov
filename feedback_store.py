@@ -39,3 +39,29 @@ def recent_down_dishes(days: int = 14, limit: int = 5) -> list[str]:
         if dish:
             counts[str(dish)] += 1
     return [dish for dish, _ in counts.most_common(limit)]
+
+
+def forget_dish(dish: str) -> int:
+    """按菜名清除该菜的所有 down 事件，并同步清掉对应口味信号。"""
+    dish = str(dish or "").strip()
+    if not dish:
+        return 0
+    events = read_events()
+    removed_refs: list[tuple] = []
+    kept: list[dict] = []
+    for e in events:
+        if e.get("rating") == "down" and str(e.get("dish") or "") == dish:
+            sid = e.get("sid")
+            rec_id = e.get("rec_id")
+            if sid is not None and rec_id is not None:
+                removed_refs.append((sid, rec_id))
+            continue
+        kept.append(e)
+    write_events(kept)
+    try:
+        from taste_store import clear_signals_for
+        for sid, rec_id in removed_refs:
+            clear_signals_for(sid, rec_id)
+    except Exception:
+        pass
+    return len(events) - len(kept)

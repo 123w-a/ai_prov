@@ -1,4 +1,4 @@
-"""冰箱与采购清单的 FastAPI HTTP 契约回归测试。"""
+"""冰箱的 FastAPI HTTP 契约回归测试。"""
 
 import unittest
 from pathlib import Path
@@ -45,19 +45,6 @@ class FridgeHttpContractTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"], ["鸡蛋", "西兰花"])
-
-    def test_shopping_endpoint_deducts_owned_inventory(self):
-        response = self.client.get("/api/shopping/list", params={
-            "dishes": "番茄炒蛋",
-            "inventory": "鸡蛋,食用油",
-        })
-
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertNotIn("鸡蛋", body["main"])
-        self.assertNotIn("食用油", body["seasoning"])
-        self.assertIn("番茄", body["main"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

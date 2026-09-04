@@ -12,6 +12,7 @@ export type IconName =
   | 'leaf'
   | 'menu'
   | 'mic'
+  | 'pencil'
   | 'plus'
   | 'search'
   | 'send'
@@ -130,6 +131,13 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
         <svg {...common}>
           <rect x="9" y="3" width="6" height="11" rx="3" />
           <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+        </svg>
+      )
+    case 'pencil':
+      return (
+        <svg {...common}>
+          <path d="m4 20 4.5-1.5L20 7a2 2 0 0 0-3-3L5.5 15.5z" />
+          <path d="m14 6 4 4" />
         </svg>
       )
     case 'plus':

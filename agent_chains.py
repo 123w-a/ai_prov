@@ -5,14 +5,36 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.exceptions import OutputParserException  # LangChain 解析失败统一异常
 from pydantic import ValidationError  # Pydantic schema 越界/缺字段校验异常
+import os
+import json
 
 from model_name import get_langchain_llm
 from agent_schemas import ChefAnswer#就是要回答的东西得到全部规范
 
+
+class CompactPydanticOutputParser(PydanticOutputParser):
+    """保留 Pydantic 校验，但给 LLM 更短的 JSON Schema 指令。"""
+
+    def get_format_instructions(self) -> str:
+        schema = self.pydantic_object.model_json_schema()
+
+        def _strip_schema_noise(node):
+            if isinstance(node, dict):
+                node.pop("title", None)
+                for value in node.values():
+                    _strip_schema_noise(value)
+            elif isinstance(node, list):
+                for item in node:
+                    _strip_schema_noise(item)
+
+        _strip_schema_noise(schema)
+        compact_schema = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        return "只输出一个符合此 JSON Schema 的 JSON 对象，不要解释或代码围栏：\n" + compact_schema
+
 # --------------------------------------------------------------------------- #
 #  1. Parser：按 ChefAnswer 生成"输出格式说明书"，并负责最终解析 + schema 校验
 # --------------------------------------------------------------------------- #
-chef_parser = PydanticOutputParser(pydantic_object=ChefAnswer)#做出实例按照chefanswer的规则
+chef_parser = CompactPydanticOutputParser(pydantic_object=ChefAnswer)#做出实例按照chefanswer的规则
 #向下解析 LLM 返回的 JSON 字符串，实例化为 Python 对象（校验 + 反序列化）做了2个事情
 # --------------------------------------------------------------------------- #
 #  2. Prompt 模板：告诉模型"把对话上下文整理成 ChefAnswer JSON"
@@ -35,7 +57,8 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "7. 若上下文中出现『权威健康依据检索结果（来自 nutrition_kb_search）』块，必须将其中的 source 文件名与命中片段填入 sources 字段，"
         "每条含 source（文件名）、section（章节/条目名，原样照抄工具返回的 section 字段，没有则留空串）与 snippet（片段摘录）；凡健康/忌口/标签类结论都要有对应出处，无则 sources 留空列表。\n"
         "9. health_lights：依据 recipes 实际用料给钠/糖/脂肪三盏灯（level 取 green/yellow/red，附一句话 reason）；拿不准的维度可省略。\n"
-        "10. 场景化：外出就餐/食堂/外卖场景时 recipes 的 steps 写「取餐/点餐/怎么吃」步骤，tips 里写「点什么、怎么搴配、避雷什么」及忌口原因；自炊场景才写烹饪火候步骤。\n"
+        "10. 场景化：本结构化整理只服务居家做菜/索要菜谱/烹饪做法；"
+        "外出就餐、具体餐厅、食堂、外卖、点餐场景禁止整理成 recipes，必须交由上游纯文本回答承载。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题
@@ -46,7 +69,12 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
 #     温度调低保 JSON 稳定（不要创意要准确）；max_tokens 加大防多道菜时 JSON 被截断
 #     | 是 LCEL 管道运算符：前一环的输出自动成为后一环的输入
 # --------------------------------------------------------------------------- #
-structure_llm = get_langchain_llm("deepseek", temperature=0.2, max_tokens=2048)
+structure_llm = get_langchain_llm(
+    os.getenv("STRUCTURE_PROVIDER") or "deepseek",
+    temperature=0.2,
+    max_tokens=2048,
+    model_name=os.getenv("STRUCTURE_MODEL_NAME") or None,
+)
 
 chef_answer_chain = STRUCTURE_PROMPT | structure_llm | chef_parser#这里接受通过链后的 PydanticOutputParser类示例
 

@@ -23,6 +23,7 @@ import ctypes
 import glob
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -73,6 +74,29 @@ def _write_session(data):
     _session_file(data["session_id"]).write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def _strip_context_prefix(text: str) -> str:
+    """把用户消息开头的 [当前位置：...] / [实时状态：...] 等前缀剥掉。"""
+    text = str(text or "").strip()
+    while text.startswith("["):
+        end = text.find("]")
+        if end == -1:
+            break
+        text = text[end + 1 :].lstrip("\r\n ")
+    return text
+
+
+def _first_recipe_name(answer) -> str | None:
+    """从结构化答案里取第一道菜名，作为会话标题的主规则。"""
+    if not answer:
+        return None
+    try:
+        data = json.loads(answer) if isinstance(answer, str) else answer
+        recipes = data.get("recipes") or []
+        return str(recipes[0].get("name") or "").strip() or None
+    except Exception:
+        return None
 
 
 def init_db():
@@ -179,6 +203,17 @@ def delete_message(sid, msg_id):
         _write_session(data)
 
 
+def rename_session(sid, title):
+    """重命名会话标题；标题为空则回落为新对话。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        data["title"] = str(title or "").strip()[:40] or "新对话"
+        _write_session(data)
+        return True
+
+
 def append_message(
     sid,
     user_text,
@@ -213,7 +248,8 @@ def append_message(
         )
         # 只有第一条消息时，用问题前 22 字做侧栏标题
         if len(data["messages"]) == 1:
-            data["title"] = user_text[:22]
+            cleaned = _strip_context_prefix(user_text) or user_text
+            data["title"] = cleaned[:22]
         _write_session(data)
         return new_id
 
@@ -233,6 +269,10 @@ def update_message_answer(sid, record_id, answer, image_name=None, image_type=No
                     m["image_type"] = image_type
                 if image_url is not None:
                     m["image_url"] = image_url
+                if len(data["messages"]) == 1:
+                    dish = _first_recipe_name(answer)
+                    if dish:
+                        data["title"] = dish[:22]
                 _write_session(data)
                 return True
     return False
@@ -256,6 +296,8 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
                 return False
             if not isinstance(ans, dict):
                 return False
+            if not ans.get("image_requested"):
+                return False
             changed = False
             for recipe in ans.get("recipes") or []:
                 if recipe.get("name") == dish_name and not recipe.get("image_url"):
@@ -270,6 +312,112 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
                 m["image_url"] = image_url  # 与实时链路的顶层字段保持一致
                 _write_session(data)
             return changed
+    return False
+
+
+def find_recent_recipe_for_image(sid, requested_name=None):
+    """为“看看图片/配图”这类后续请求，找到最近一条可补图的菜谱。
+
+    返回 dict: {record_id, recipe_index, dish_name, answer}；找不到返回 None。
+    requested_name 为空时默认取最近一条结构化菜谱里的第一道菜。
+    """
+    data = _read_session(sid)
+    if data is None:
+        return None
+    needle = str(requested_name or "").strip()
+    for m in reversed(data.get("messages") or []):
+        try:
+            ans = json.loads(m.get("answer") or "")
+        except Exception:
+            continue
+        if not isinstance(ans, dict):
+            continue
+        recipes = ans.get("recipes") or []
+        for index, recipe in enumerate(recipes):
+            dish_name = str(recipe.get("name") or "").strip()
+            if not dish_name:
+                continue
+            if needle and needle not in dish_name and dish_name not in needle:
+                continue
+            return {
+                "record_id": m.get("id"),
+                "recipe_index": index,
+                "dish_name": dish_name,
+                "answer": ans,
+            }
+    return None
+
+
+def find_recipe_for_image_target(sid, record_id, recipe_index=0, dish_name=None):
+    """按前端显式传入的可见菜谱目标找补图对象。"""
+    data = _read_session(sid)
+    if data is None:
+        return None
+    try:
+        target_id = int(record_id)
+    except Exception:
+        return None
+    try:
+        target_index = int(recipe_index or 0)
+    except Exception:
+        target_index = 0
+    for m in data.get("messages") or []:
+        if m.get("id") != target_id:
+            continue
+        try:
+            ans = json.loads(m.get("answer") or "")
+        except Exception:
+            return None
+        if not isinstance(ans, dict):
+            return None
+        recipes = ans.get("recipes") or []
+        if target_index < 0 or target_index >= len(recipes):
+            return None
+        recipe = recipes[target_index]
+        found_name = str(recipe.get("name") or dish_name or "").strip()
+        if not found_name:
+            return None
+        return {
+            "record_id": m.get("id"),
+            "recipe_index": target_index,
+            "dish_name": found_name,
+            "answer": ans,
+        }
+    return None
+
+
+def update_answer_image_at_index(sid, record_id, recipe_index, image_url, image_ai, note):
+    """按记录 id + 菜谱索引补图，允许用户后续单独请求给历史菜谱补图/换图。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            try:
+                ans = json.loads(m.get("answer") or "")
+            except Exception:
+                return False
+            if not isinstance(ans, dict):
+                return False
+            recipes = ans.get("recipes") or []
+            if recipe_index < 0 or recipe_index >= len(recipes):
+                return False
+            recipe = recipes[recipe_index]
+            recipe["image_url"] = image_url
+            recipe["image_ai_generated"] = bool(image_ai)
+            recipe["image_note"] = note
+            ans["image_requested"] = True
+            if recipe_index == 0:
+                ans["image_url"] = image_url
+                ans["image_ai_generated"] = bool(image_ai)
+                ans["image_note"] = note
+            m["answer"] = json.dumps(ans, ensure_ascii=False)
+            if recipe_index == 0:
+                m["image_url"] = image_url
+            _write_session(data)
+            return True
     return False
 
 
@@ -318,6 +466,7 @@ def list_starred() -> list[dict]:
                 "user_text": (m.get("user_text") or "")[:60],
                 "dish": dish or (m.get("user_text") or "")[:24],
                 "image_url": m.get("image_url"),
+                "answer": ans,
             })
     return out
 

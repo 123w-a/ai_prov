@@ -12,6 +12,12 @@ const STATUS_COPY: Record<string, string> = {
 export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
   const guards = answer?.guardrails ?? []
   const sources = answer?.sources ?? []
+  const primaryGuard =
+    guards.find((guard) => guard.status === 'warn') ??
+    guards.find((guard) => guard.status === 'adjusted') ??
+    guards[0] ??
+    null
+  const leadSource = sources[0] ?? null
 
   // 一句话结论横幅：warn 优先 > adjusted > 全 pass
   const warnCount = guards.filter((g) => g.status === 'warn').length
@@ -30,16 +36,38 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
   const statusIcon = (status: string) =>
     status === 'warn' ? 'warning' : status === 'adjusted' ? 'shield' : 'check'
 
+  const decisionHeadline =
+    warnCount > 0
+      ? '这次先处理风险，再决定吃什么'
+      : adjustedCount > 0
+        ? '这次能吃，但已经被护栏修正过'
+        : guards.length > 0
+          ? '这次推荐已通过健康审计'
+          : '这次没有触发额外健康约束'
+
+  const decisionLead =
+    primaryGuard?.status === 'warn'
+      ? primaryGuard.rule || primaryGuard.reason || `${primaryGuard.condition} 需要优先关注`
+      : primaryGuard?.status === 'adjusted'
+        ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已自动调整到合规`
+        : primaryGuard
+          ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已通过审计`
+          : '护栏没有拦截，但这不代表可以忽略长期约束。'
+
+  const evidenceLead = leadSource
+    ? `${leadSource.source}${leadSource.section ? ` · ${formatSourceSection(leadSource.source, leadSource.section)}` : ''}`
+    : '本轮暂未引用知识库来源'
+
   return (
     <aside className="insight-panel" aria-label="健康护栏与证据链">
       <header className="insight-header">
         <div>
           <span className="eyebrow">Decision trace</span>
-          <h2>健康决策链</h2>
+          <h2>健康裁判席</h2>
         </div>
         <span className={answer ? 'trace-status ready' : 'trace-status'}>
           <i aria-hidden="true" />
-          {answer ? '本轮已审计' : '等待本轮'}
+          {answer ? '本轮已裁决' : '等待本轮'}
         </span>
       </header>
 
@@ -67,6 +95,25 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
         </div>
       ) : (
         <div className="insight-scroll">
+          <section className="decision-summary" aria-label="本轮决策摘要">
+            <div className="decision-summary-head">
+              <span>本轮为什么重要</span>
+              <strong>{warnCount > 0 ? '高优先级' : adjustedCount > 0 ? '已校正' : '已通过'}</strong>
+            </div>
+            <h3>{decisionHeadline}</h3>
+            <p>{decisionLead}</p>
+            <div className="decision-summary-grid">
+              <div>
+                <span>关键约束</span>
+                <strong>{primaryGuard ? primaryGuard.condition : '无新增约束'}</strong>
+              </div>
+              <div>
+                <span>依据焦点</span>
+                <strong>{evidenceLead}</strong>
+              </div>
+            </div>
+          </section>
+
           <section className="insight-section" aria-labelledby="guardrail-heading">
             <div className="insight-section-title">
               <span className="insight-section-icon guard-icon">

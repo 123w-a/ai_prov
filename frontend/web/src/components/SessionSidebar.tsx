@@ -11,6 +11,7 @@ interface Props {
   connection: 'checking' | 'online' | 'offline'
   onViewChange: (view: WorkspaceView) => void
   onSelect: (session: Session) => void
+  onRename: (sessionId: string, title: string) => void
   onNew: () => void
   onDelete: (sessionId: string) => void
   onClose: () => void
@@ -24,12 +25,15 @@ export function SessionSidebar({
   connection,
   onViewChange,
   onSelect,
+  onRename,
   onNew,
   onDelete,
   onClose,
 }: Props) {
   const [query, setQuery] = useState('')
   const [familyOpen, setFamilyOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
   const visibleSessions = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase()
     if (!keyword) return sessions
@@ -47,6 +51,21 @@ export function SessionSidebar({
     onSelect(session)
     onViewChange('decision')
     onClose()
+  }
+
+  const startRename = (session: Session) => {
+    setEditingId(session.session_id)
+    setEditTitle(session.title || '新对话')
+  }
+
+  const commitRename = (session: Session) => {
+    const title = editTitle.trim()
+    if (!title) {
+      setEditingId(null)
+      return
+    }
+    onRename(session.session_id, title)
+    setEditingId(null)
   }
 
   return (
@@ -175,11 +194,33 @@ export function SessionSidebar({
                     <Icon name="chat" size={16} />
                   </span>
                   <span className="session-copy">
-                    <span className="session-title">{session.title || '新对话'}</span>
+                    {editingId === session.session_id ? (
+                      <input
+                        autoFocus
+                        value={editTitle}
+                        className="session-title-input"
+                        onChange={(event) => setEditTitle(event.target.value)}
+                        onBlur={() => commitRename(session)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') commitRename(session)
+                          if (event.key === 'Escape') setEditingId(null)
+                        }}
+                      />
+                    ) : (
+                      <span className="session-title">{session.title || '新对话'}</span>
+                    )}
                     <span className="session-meta">
                       {session.created_at || '刚刚'} · {messageCount} 轮
                     </span>
                   </span>
+                </button>
+                <button
+                  type="button"
+                  className="session-rename"
+                  aria-label={`重命名会话：${session.title || '新对话'}`}
+                  onClick={() => startRename(session)}
+                >
+                  <Icon name="pencil" size={15} />
                 </button>
                 <button
                   type="button"

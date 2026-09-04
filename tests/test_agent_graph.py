@@ -10,14 +10,18 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from agent_graph import (
     MAX_VERIFY,
     _wants_multiple_recipes,
+    _wants_recipe_images,
     _message_has_image,
     _drop_orphan_tool_messages,
     _build_structure_context,
     _latest_user_text,
     _messages_for_current_turn,
     maybe_condense,
+    structure_answer_node,
+    _should_force_web_search,
     verify_answer_node,
 )
+from agent_schemas import ChefAnswer, Recipe
 
 
 class TestWantsMultiple(unittest.TestCase):
@@ -31,6 +35,41 @@ class TestWantsMultiple(unittest.TestCase):
         for w in ["多几道", "几道菜", "供我选择", "多推荐几道"]:
             msgs = [HumanMessage(content=f"帮我{w}")]
             self.assertTrue(_wants_multiple_recipes(msgs), f"关键词「{w}」应开启多菜")
+
+
+class TestWantsRecipeImages(unittest.TestCase):
+    """配图默认关闭，仅在自然语言或显式开关触发。"""
+
+    def test_default_false(self):
+        msgs = [HumanMessage(content="帮我做道番茄炒蛋")]
+        self.assertFalse(_wants_recipe_images(msgs))
+
+    def test_keyword_or_toggle_true(self):
+        cases = [
+            "帮我做道番茄炒蛋，配张图",
+            "想看看图",
+            "给我看看这个菜长什么样",
+            "想看实拍图",
+            "发张图片看看",
+            "【配图开关：开启】\n番茄炒蛋",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertTrue(_wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_plain_dining_request_stays_false(self):
+        self.assertFalse(_wants_recipe_images([HumanMessage(content="想吃个番茄炒蛋")]))
+
+
+class TestForceWebSearch(unittest.TestCase):
+    """联网搜索路由应覆盖明显的网页/菜谱/最新信息请求。"""
+
+    def test_force_for_recipe_search(self):
+        self.assertTrue(_should_force_web_search("帮我查一下这个菜的做法"))
+
+    def test_skip_health_and_dining(self):
+        self.assertFalse(_should_force_web_search("我有高血压，能不能吃火锅"))
+        self.assertFalse(_should_force_web_search("我在外面吃饭，附近有什么推荐"))
 
 
 class TestMessageHasImage(unittest.TestCase):
@@ -109,6 +148,81 @@ class TestBuildStructureContext(unittest.TestCase):
         # 只取最近 3 次，应出现 r2/r3/r4 而不含 r0/r1
         self.assertIn("r2", ctx)
         self.assertNotIn("r0", ctx)
+
+
+class TestStructureImagePolicy(unittest.TestCase):
+    def _answer_with_image(self):
+        return ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="番茄炒蛋",
+                    intro="酸甜清爽",
+                    difficulty=1,
+                    nutrition=4,
+                    steps=["鸡蛋炒熟盛出", "番茄炒软后合炒"],
+                    image_url="http://x/egg.jpg",
+                    image_ai_generated=True,
+                )
+            ],
+            image_url="http://x/top.jpg",
+            image_ai_generated=True,
+            image_note="AI 生成示意图",
+        )
+
+    def test_default_clears_recipe_images(self):
+        state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertFalse(payload["image_requested"])
+        self.assertIsNone(payload["image_url"])
+        self.assertFalse(payload["image_ai_generated"])
+        self.assertEqual(payload["image_note"], "")
+        self.assertIsNone(payload["recipes"][0]["image_url"])
+
+    def test_toggle_keeps_recipe_image(self):
+        state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
+        self.assertTrue(payload["image_ai_generated"])
+
+    def test_explicit_image_phrase_keeps_recipe_image(self):
+        state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋，配张图"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
+        self.assertTrue(payload["image_ai_generated"])
+
+    def test_toggle_without_image_keeps_loading_state(self):
+        answer = ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="番茄炒蛋",
+                    intro="酸甜清爽",
+                    difficulty=1,
+                    nutrition=4,
+                    steps=["鸡蛋炒熟盛出", "番茄炒软后合炒"],
+                    image_url=None,
+                    image_ai_generated=False,
+                )
+            ],
+            image_url=None,
+            image_ai_generated=False,
+            image_note="",
+        )
+        state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent_graph.build_structured_answer", return_value=answer):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertIsNone(payload["image_url"])
+        self.assertEqual(payload["image_note"], "")
+        self.assertIsNone(payload["recipes"][0]["image_url"])
 
 
 class TestVerifyAnswerNode(unittest.TestCase):

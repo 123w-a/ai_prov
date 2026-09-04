@@ -42,7 +42,7 @@ def _warmup_knowledge_base() -> None:
         retriever.store.search("知识库预热", n_results=1)  # 走一次真实向量检索
         print(f"[warmup] 知识库预热完成，用时 {time.time() - started:.1f}s（reranker={'on' if retriever._reranker else 'off'}）", flush=True)
     except Exception as exc:  # 预热失败不阻塞服务启动，首次提问时再惰性加载
-        print(f"[warmup] 知识库预热失败（将在首次提问时重试）：{exc}", flush=True)
+        print(f"[warmup] 知识库预热失败，知识库降级为仅文本检索（将在首次提问时重试）：{exc}", flush=True)
 
 
 threading.Thread(target=_warmup_knowledge_base, name="kb-warmup", daemon=True).start()
@@ -83,8 +83,6 @@ from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
 from api.routes.fridge_route import router as fridge_router
 app.include_router(fridge_router, prefix="/api")
-from api.routes.shopping_route import router as shopping_router
-app.include_router(shopping_router, prefix="/api")
 
 # 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
 from api.routes.speech_route import router as speech_router

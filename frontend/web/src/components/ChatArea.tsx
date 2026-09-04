@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchNearby, sendMessageFeedback } from '../api/client'
-import type { ChatMessage, DecisionMode, NearbyResult } from '../types'
+import { fetchNearby, resolveLocation, sendMessageFeedback } from '../api/client'
+import type { ChatMessage, DecisionMode, NearbyResult, ResolvedLocation } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
 import { starMessage as starMessageApi, addDislike, fetchTasteSuggestion, addTasteNote } from '../api/client'
@@ -13,33 +13,29 @@ interface Props {
   activeSessionId: string | null
   messages: ChatMessage[]
   sending: boolean
-  onSend: (text: string, image: File | null, mode: DecisionMode, imagePreview: string | null) => void
+  onSend: (
+    text: string,
+    image: File | null,
+    mode: DecisionMode,
+    imagePreview: string | null,
+    wantImage: boolean,
+    locationContext?: string | null,
+  ) => void
+  onCancelImageDecision: () => Promise<boolean>
+  onRenameTitle: (title: string) => void
   onClear: () => void
   onDeleteTurn: (messageId: number) => void
   onTranscribe: (audio: File) => Promise<string>
 }
 
-const MODES: Array<{
-  id: DecisionMode
-  label: string
-  hint: string
-  icon: 'utensils' | 'concierge' | 'image' | 'shield'
-}> = [
-  { id: 'home', label: '在家做', hint: '用现有食材', icon: 'utensils' },
-  { id: 'dining', label: '出去吃', hint: '帮我做选择', icon: 'concierge' },
-  { id: 'fridge', label: '看冰箱', hint: '图片或清单', icon: 'image' },
-  { id: 'health', label: '健康问答', hint: '先查证再回答', icon: 'shield' },
-]
-
 const QUICK_PROMPTS: Array<{ text: string; mode: DecisionMode; tag: string }> = [
   { text: '今晚想吃清淡一点，30 分钟内能做好', mode: 'home', tag: '快手晚餐' },
   { text: '高血压，想吃面，帮我避开高盐做法', mode: 'health', tag: '健康护栏' },
-  { text: '冰箱里有鸡蛋、番茄和青椒，做什么合适？', mode: 'fridge', tag: '清理冰箱' },
-  { text: '不想做饭，预算 40 元，怎么点更均衡？', mode: 'dining', tag: '懒人点单' },
+  { text: '冰箱里有鸡蛋、番茄和青椒，做什么合适？', mode: 'home', tag: '清理冰箱' },
 ]
 
 const STAGE_COPY = {
-  thinking: '正在理解你的需求',
+  thinking: '小膳思考中',
   writing: '正在形成膳食建议',
   searching: '正在检索做法与营养依据',
   auditing: '正在做健康护栏审计',
@@ -47,6 +43,10 @@ const STAGE_COPY = {
   structuring: '正在完成健康审计与卡片整理',
   switching_model: '主模型超时，已切换备用模型重试',
 }
+
+const STRONG_IMAGE_REQUESTS = ['配图', '配张图', '补图', '换图', '换张图', '生成图片', '生成一张图', '来张图', '发图', '发张图', '发图片', '发个图', '出图', '出个图', '看看图', '看看图片', '看图片', '看图', '看一下图', '看一下图片', '看个图', '给我看图', '给我看看', '让我看看', '想看图片', '想看图', '图片欣赏', '成品图', '成品照', '实拍图', '示意图', '效果图', '样图', '参考图', '想看看', '长什么样', '什么样子', '啥样', '样式', '外观', '照片', '实拍', '再来一张', '换一张', '另一张', '重新生成']
+
+const hasStrongImageRequest = (value: string) => STRONG_IMAGE_REQUESTS.some((phrase) => value.includes(phrase))
 
 // T1 即时状态打卡：一次性生效，随下次发送注入消息前缀并自动清空
 const STATUS_TAGS = ['昨晚没睡好', '今天肌肉酸痛', '肠胃不太舒服', '很累没力气'] as const
@@ -59,12 +59,15 @@ export function ChatArea({
   messages,
   sending,
   onSend,
+  onCancelImageDecision,
+  onRenameTitle,
   onClear,
   onDeleteTurn,
   onTranscribe,
 }: Props) {
   const [text, setText] = useState('')
   const [mode, setMode] = useState<DecisionMode>('home')
+  const [wantImage, setWantImage] = useState(false)
   const [image, setImage] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
@@ -74,6 +77,12 @@ export function ChatArea({
   const [starState, setStarState] = useState<Record<number, boolean>>({})
   const [dislikeHint, setDislikeHint] = useState<string | null>(null)
   const [tasteHint, setTasteHint] = useState<TasteSuggestion | null>(null)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [coords, setCoords] = useState('')
+  const [locationInfo, setLocationInfo] = useState<ResolvedLocation | null>(null)
+  const [locating, setLocating] = useState(false)
+  const [locationPressed, setLocationPressed] = useState(false)
 
   const starMessage = async (recordId: number) => {
     if (!activeSessionId) return
@@ -106,41 +115,9 @@ export function ChatArea({
       setFbState((s) => ({ ...s, [recordId]: null }))
     }
   }
-  // 浏览器定位（附近餐厅用）：拿不到就静默降级，不阻塞输入
-  const [coords, setCoords] = useState('')
-  const [locating, setLocating] = useState(false)
-  const [panelOpen, setPanelOpen] = useState(true)
-  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; light_trends?: Record<string, 'improving' | 'worsening' | 'stable' | 'insufficient'>; guardrail_triggers?: number; range?: [string, string]; next_week_shopping?: string[]; recommendations?: string[] } | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [report, setReport] = useState<{ has_data: boolean; message?: string; meals?: number; top_dishes?: [string, number][]; lights?: Record<string, number>; light_trends?: Record<string, 'improving' | 'worsening' | 'stable' | 'insufficient'>; guardrail_triggers?: number; range?: [string, string]; recommendations?: string[] } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
-  const [shopDishes, setShopDishes] = useState('')
-  const [shopInv, setShopInv] = useState('')
-  const [shopResult, setShopResult] = useState<{ matched_dishes: string[]; unknown_dishes: string[]; main: string[]; seasoning: string[]; sections?: Array<{ name: string; items: string[] }> } | null>(null)
-  const [shopOpen, setShopOpen] = useState(false)
-  const [fridgeItems, setFridgeItems] = useState<string[]>([])
-  const [shopNotice, setShopNotice] = useState('')
-  const [savingFridge, setSavingFridge] = useState(false)
-  const [visionBusy, setVisionBusy] = useState(false)
-  const [visionDraft, setVisionDraft] = useState<Array<{ name: string; quantity: string }> | null>(null)
-  const visionInputRef = useRef<HTMLInputElement>(null)
-  const loadShopping = async () => {
-    setShopOpen(true)
-    try {
-      const fridgeRes = await fetch('/api/fridge')
-      if (!fridgeRes.ok) throw new Error('fridge request failed')
-      const fridge = await fridgeRes.json() as { items?: string[] }
-      const savedInventory = fridge.items || []
-      setFridgeItems(savedInventory)
-      const inventory = [...savedInventory, ...shopInv.split(',').map((item) => item.trim()).filter(Boolean)]
-      const res = await fetch(`/api/shopping/list?dishes=${encodeURIComponent(shopDishes)}&inventory=${encodeURIComponent(inventory.join(','))}`)
-      if (!res.ok) throw new Error('shopping request failed')
-      setShopResult(await res.json())
-      setSelectedItems([])
-      setShopNotice('清单已按当前冰箱库存更新。')
-    } catch {
-      setShopResult(null)
-      setShopNotice('清单加载失败，请稍后重试。')
-    }
-  }
   const loadReport = async () => {
     setReportOpen(true)
     try {
@@ -151,23 +128,63 @@ export function ChatArea({
     }
   }
   useEffect(() => {
-    if (!('geolocation' in navigator)) return
+    const savedCoords = window.localStorage.getItem('xiaoshan-coords') || ''
+    if (savedCoords) {
+      setCoords(savedCoords)
+      void syncCoords(savedCoords)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      setNotice('当前浏览器不支持定位。')
+      return
+    }
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        setCoords(
-          `${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`,
-        ),
+      (pos) => void syncCoords(`${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`),
       () => {},
-      { timeout: 8000 },
+      { timeout: 12000, enableHighAccuracy: true, maximumAge: 0 },
     )
   }, [])
   const [nearbyResult, setNearbyResult] = useState<NearbyResult | null>(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyError, setNearbyError] = useState('')
-  const [selectedItems, setSelectedItems] = useState<string[]>([])
+  const [nearbyPage, setNearbyPage] = useState(1)
+  const [nearbyBudget, setNearbyBudget] = useState(50)
+  const [nearbyRadius, setNearbyRadius] = useState(1500)
+  const [nearbySort, setNearbySort] = useState<'distance' | 'price'>('distance')
+  const lastNearbyKeyRef = useRef('')
   const reportRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const toggleItem = (item: string) => setSelectedItems((p) => (p.includes(item) ? p.filter((i) => i !== item) : [...p, item]))
+  const syncCoords = async (value: string, announce = false) => {
+    setCoords(value)
+    window.localStorage.setItem('xiaoshan-coords', value)
+    window.dispatchEvent(new CustomEvent('xiaoshan-coords-change', { detail: value }))
+    try {
+      const resolved = await resolveLocation(value)
+      setLocationInfo(resolved)
+      if (announce) {
+        setNotice(
+          resolved.resolved && resolved.label
+            ? `附近餐厅 已定位【${resolved.label}】`
+            : resolved.warning || resolved.label || '定位解析失败，请手动选择城市',
+        )
+      }
+      return resolved
+    } catch {
+      const fallback = {
+        resolved: false,
+        location: value,
+        city: '',
+        district: '',
+        label: '定位解析失败，请手动选择城市',
+        warning: '定位解析失败，请手动选择城市',
+      }
+      setLocationInfo(fallback)
+      if (announce) setNotice(fallback.warning)
+      return fallback
+    }
+  }
   const exportReport = async () => {
     if (!reportRef.current) return
     const canvas = await html2canvas(reportRef.current, { scale: 2 })
@@ -186,78 +203,54 @@ export function ChatArea({
     pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, width, height)
     pdf.save(`饮食周报_${new Date().toISOString().slice(0, 10)}.pdf`)
   }
-  const pickFridgePhoto = async (file: File) => {
-    if (visionBusy) return
-    setVisionBusy(true)
-    setShopNotice('正在识别照片中的食材…')
-    try {
-      const body = new FormData()
-      body.append('image', file)
-      const res = await fetch('/api/fridge/vision', { method: 'POST', body })
-      if (!res.ok) {
-        const detail = await res.json().catch(() => null) as { detail?: string } | null
-        throw new Error(detail?.detail || 'vision failed')
-      }
-      const payload = await res.json() as { items: Array<{ name: string; quantity: string }> }
-      if (!payload.items.length) {
-        setShopNotice('照片里没有识别出食材，请换一张更清晰的照片。')
-        return
-      }
-      setVisionDraft(payload.items)
-      setShopNotice('识别完成，请确认或删改后写入冰箱。')
-    } catch (exc) {
-      setShopNotice(`识别失败：${exc instanceof Error ? exc.message : '请稍后重试'}`)
-    } finally {
-      setVisionBusy(false)
-    }
-  }
-  const confirmVisionDraft = async () => {
-    if (!visionDraft?.length || savingFridge) return
-    setSavingFridge(true)
-    try {
-      const names = visionDraft.map((item) => item.name)
-      const res = await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: names.join(',') }) })
-      if (!res.ok) throw new Error('fridge save failed')
-      const saved = await res.json() as { items?: string[] }
-      setFridgeItems(saved.items || [])
-      setVisionDraft(null)
-      setShopNotice(`已把识别的 ${names.length} 项写入冰箱。`)
-    } catch {
-      setShopNotice('写入失败，请检查后端服务后重试。')
-    } finally {
-      setSavingFridge(false)
-    }
-  }
-  const saveFridge = async () => {
-    if (!selectedItems.length || savingFridge) return
-    setSavingFridge(true)
-    try {
-      const res = await fetch('/api/fridge/add', { method: 'POST', body: new URLSearchParams({ items: selectedItems.join(',') }) })
-      if (!res.ok) throw new Error('fridge save failed')
-      const saved = await res.json() as { items?: string[] }
-      const savedCount = selectedItems.length
-      setFridgeItems(saved.items || [])
-      setSelectedItems([])
-      setShopNotice(`已保存 ${savedCount} 项到冰箱，当前库存已刷新。`)
-    } catch {
-      setShopNotice('保存失败，请检查后端服务后重试。')
-    } finally {
-      setSavingFridge(false)
-    }
-  }
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const recordingStreamRef = useRef<MediaStream | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const stickToBottomRef = useRef(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [liveElapsed, setLiveElapsed] = useState(0)
 
   const canSend = !sending && voiceState !== 'transcribing' && (text.trim().length > 0 || image)
+  const canCancelImageDecision = messages.some(
+    (message) =>
+      message.role === 'assistant' && (message.streaming || message.imagePending),
+  )
 
   useEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior: messages.length > 2 ? 'smooth' : 'auto' })
+    if (stickToBottomRef.current) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: messages.length > 2 ? 'smooth' : 'auto' })
+    }
   }, [messages])
+
+  useEffect(() => {
+    if (!sending) {
+      setLiveElapsed(0)
+      return
+    }
+    setLiveElapsed(0)
+    const timer = window.setInterval(() => setLiveElapsed((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [sending])
+
+  const handleFeedScroll = () => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
+    stickToBottomRef.current = nearBottom
+    setShowScrollBtn(!nearBottom)
+  }
+
+  const scrollToBottom = () => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    stickToBottomRef.current = true
+    setShowScrollBtn(false)
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+  }
 
   useEffect(
     () => () => {
@@ -273,27 +266,48 @@ export function ChatArea({
 
   const submit = () => {
     if (!canSend) return
+    const trimmedText = text.trim()
+    const explicitImageRequested = hasStrongImageRequest(trimmedText)
+    const turnWantsImage = wantImage || explicitImageRequested
     // 忌口语义检测：随口说的「不吃/别放/过敏 X」提示一键沉淀进画像（用户确认式，防误检）
-    const dislikeMatch = text.match(/(?:不吃|别放|不要放|讨厌|过敏)[，, ]?([\u4e00-\u9fa5]{1,4})/)
+    const dislikeMatch = trimmedText.match(/(?:不吃|别放|不要放|讨厌|过敏)[，, ]?([\u4e00-\u9fa5]{1,4})/)
     if (dislikeMatch) setDislikeHint(dislikeMatch[1])
-    // 即时状态打卡（一次性）+ 当前位置（外食查询用）前缀注入
+    // 即时状态打卡（一次性）；定位坐标走 API 入参，不再混进聊天文本
     const parts: string[] = []
     if (statusTags.length > 0) parts.push(`[实时状态：${statusTags.join('、')}]
 `)
-    if (coords) parts.push(`[当前位置：${coords}]
-`)
     const prefix = parts.join('')
-    onSend(`${prefix}${text.trim()}`, image, mode, preview)
+    stickToBottomRef.current = true
+    setShowScrollBtn(false)
+    const locationContext = (() => {
+      const lines: string[] = []
+      if (coords) lines.push(`GPS坐标：${coords}`)
+      if (locationResolved) {
+        const area = [locationInfo?.city, locationInfo?.district].filter(Boolean).join(' · ') || locationDetail
+        lines.push(`解析位置：${area}`)
+      } else if (locationInfo?.label) {
+        lines.push(`位置提示：${locationInfo.label}`)
+      }
+      return lines.length > 0 ? lines.join('\n') : null
+    })()
+    onSend(`${prefix}${trimmedText}`, image, mode, preview, turnWantsImage, locationContext)
     setText('')
     setStatusTags([])
     setImage(null)
     setPreview(null)
-    setNotice('')
-    if (fileRef.current) fileRef.current.value = ''
+      setWantImage(false)
+      setNotice('')
+      if (fileRef.current) fileRef.current.value = ''
+    }
+
+  const cancelImageDecision = async () => {
+    const cancelled = await onCancelImageDecision()
+    if (cancelled) setNotice('已取消当前决策')
   }
 
   const choosePrompt = (prompt: (typeof QUICK_PROMPTS)[number]) => {
     setMode(prompt.mode)
+    setWantImage(false)
     setText(prompt.text)
     textareaRef.current?.focus()
   }
@@ -379,17 +393,61 @@ export function ChatArea({
     }
   }
 
-  const loadNearby = async () => {
+  const buildNearbyKey = (locationValue = coords, budgetValue = nearbyBudget, radiusValue = nearbyRadius) =>
+    [locationValue || '', locationInfo?.city || '', locationInfo?.district || '', budgetValue, radiusValue].join('|')
+
+  const loadNearby = async (page = 1, budget = nearbyBudget, locationValue?: string, radiusValue = nearbyRadius) => {
+    const activeLocation = locationValue || coords || undefined
+    lastNearbyKeyRef.current = buildNearbyKey(activeLocation, budget, radiusValue)
     setNearbyLoading(true)
     setNearbyError('')
     try {
-      const data = await fetchNearby({ query: text.trim(), budget: 50 })
+      const data = await fetchNearby({
+        city: locationInfo?.city || undefined,
+        district: locationInfo?.district || undefined,
+        budget,
+        location: activeLocation,
+        radius: radiusValue,
+        page,
+      })
+      const sorted = [...data.restaurants]
+      if (nearbySort === 'distance') {
+        sorted.sort((a, b) => (a.distance_km ?? 999) - (b.distance_km ?? 999))
+      } else {
+        sorted.sort((a, b) => (a.avg_price ?? 999) - (b.avg_price ?? 999))
+      }
+      data.restaurants = sorted
       setNearbyResult(data)
+      setNearbyError(data.warning || '')
+      setNearbyPage(page)
     } catch (error) {
       setNearbyError(error instanceof Error ? error.message : String(error))
     } finally {
       setNearbyLoading(false)
     }
+  }
+
+  const requestLocation = () => {
+    if (!('geolocation' in navigator)) return
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const nextCoords = `${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`
+        void syncCoords(nextCoords, true)
+          .then((resolved) => {
+            if (resolved.resolved) {
+              setNearbyResult(null)
+              void loadNearby(1, nearbyBudget, nextCoords, nearbyRadius)
+            }
+          })
+          .finally(() => setLocating(false))
+      },
+      () => {
+        setLocating(false)
+        setNotice('定位获取失败，请检查浏览器权限')
+      },
+      { timeout: 12000, enableHighAccuracy: true, maximumAge: 0 },
+    )
   }
 
   const toggleVoice = () => {
@@ -400,12 +458,77 @@ export function ChatArea({
     if (voiceState === 'idle') void startVoiceRecording()
   }
 
+  const locationResolved = Boolean(locationInfo?.resolved && locationInfo.label)
+  const locationStatus = locating ? 'locating' : locationResolved ? 'resolved' : coords ? 'gps' : 'denied'
+  const locationDetail = locationResolved
+    ? locationInfo!.label
+    : locationInfo?.warning || locationInfo?.label || (coords ? '已获取 GPS 坐标' : '未获取定位')
+  const locationButtonText = locating
+    ? '定位中…'
+    : locationPressed && locationResolved
+      ? locationDetail
+      : locationResolved
+      ? '📍 已定位'
+      : coords
+        ? '📍 已获 GPS'
+        : '📍 定位'
+  const locationButtonTitle = locationPressed
+    ? locationResolved
+      ? `附近餐厅 已定位【${locationDetail}】`
+      : locationDetail
+    : locationResolved
+      ? `长按查看城市/区名：${locationDetail}`
+      : coords
+        ? '已获取 GPS 坐标，正在等待逆地理解析'
+        : '点击请求浏览器定位授权'
+
+  useEffect(() => {
+    if (!panelOpen || nearbyLoading) return
+    if (!coords && !locationResolved) return
+    const nextKey = buildNearbyKey(coords || undefined, nearbyBudget, nearbyRadius)
+    if (lastNearbyKeyRef.current === nextKey) return
+    void loadNearby(1, nearbyBudget, coords || undefined, nearbyRadius)
+  }, [panelOpen, coords, locationResolved, locationInfo?.city, locationInfo?.district, nearbyLoading, nearbyBudget, nearbyRadius])
+
   return (
     <main className="chat-workspace">
       <header className="conversation-header">
         <div>
           <span className="eyebrow">Active decision</span>
-          <h2>{activeTitle || '新的膳食决策'}</h2>
+          {editingTitle ? (
+            <input
+              autoFocus
+              className="title-editor"
+              value={draftTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onBlur={() => {
+                const next = draftTitle.trim()
+                if (next) onRenameTitle(next)
+                setEditingTitle(false)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  const next = draftTitle.trim()
+                  if (next) onRenameTitle(next)
+                  setEditingTitle(false)
+                }
+                if (event.key === 'Escape') setEditingTitle(false)
+              }}
+            />
+          ) : (
+            <h2>{activeTitle || '新的膳食决策'}</h2>
+          )}
+          <button
+            type="button"
+            className="title-edit-btn"
+            aria-label="编辑会话标题"
+            onClick={() => {
+              setDraftTitle(activeTitle || '新的膳食决策')
+              setEditingTitle(true)
+            }}
+          >
+            <Icon name="pencil" size={14} />
+          </button>
         </div>
         <div className="conversation-actions">
           <span className="memory-badge">
@@ -424,7 +547,7 @@ export function ChatArea({
         </div>
       </header>
 
-      <div className="chat-feed" ref={scrollRef}>
+      <div className="chat-feed" ref={scrollRef} onScroll={handleFeedScroll}>
         {messages.length === 0 ? (
           <section className="welcome-panel">
             <div className="welcome-copy">
@@ -502,7 +625,7 @@ export function ChatArea({
                 </div>
                 <div className="message-column">
                   <header className="message-meta">
-                    <strong>{message.role === 'assistant' ? '小膳管家' : '你'}</strong>
+                    {message.role === 'assistant' && <strong>小膳管家</strong>}
                     {message.time && <time>{message.time}</time>}
                     {message.role === 'assistant' && message.recordId && !message.streaming && (
                       <span className="msg-feedback">
@@ -550,17 +673,28 @@ export function ChatArea({
                     {message.imageUrl && (
                       <img className="message-image" src={message.imageUrl} alt="本轮上传的食材图片" />
                     )}
-                    {message.text && <div className="message-text">{renderRichText(message.text)}</div>}
-                    {message.answer && <RecipeCard answer={message.answer} />}
-                    {message.streaming && (
+                    {message.text && (message.streaming || message.imagePending || !message.answer || message.error) && (
+                      <div className="message-text">{renderRichText(message.text)}</div>
+                    )}
+                    {message.answer && !message.imagePending && <RecipeCard answer={message.answer} />}
+                    {(message.streaming || message.imagePending) && (
                       <div className="stream-state" role="status" aria-live="polite">
                         <span className="stream-dots" aria-hidden="true">
                           <i />
                           <i />
                           <i />
                         </span>
-                        {STAGE_COPY[message.stage || 'thinking']}
-                        {message.elapsed != null && message.elapsed >= 15 && message.stage !== 'writing' && message.stage !== 'structuring' && (` · 已等待 ${message.elapsed}s（上游模型响应较慢）`)}
+                        {STAGE_COPY[message.imagePending ? 'generating_image' : message.stage || 'thinking']}
+                        {liveElapsed >= 15 && message.stage !== 'writing' && message.stage !== 'structuring' && (` · 已等待 ${liveElapsed}s`)}
+                        {(message.streaming || message.imagePending) && (
+                          <button
+                            type="button"
+                            className="cancel-decision-inline"
+                            onClick={() => void cancelImageDecision()}
+                          >
+                            取消决策
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -569,130 +703,14 @@ export function ChatArea({
             ))}
           </div>
         )}
+        {showScrollBtn && (
+          <button type="button" className="scroll-bottom-btn" aria-label="回到底部" onClick={scrollToBottom}>
+            ↓
+          </button>
+        )}
       </div>
 
       <footer className="composer-shell">
-        <div className="mode-switcher" aria-label="选择决策场景">
-          {MODES.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={mode === item.id}
-              className={mode === item.id ? 'mode-option active' : 'mode-option'}
-              onClick={() => setMode(item.id)}
-            >
-              <Icon name={item.icon} size={17} />
-              <span>
-                <strong>{item.label}</strong>
-                <small>{item.hint}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {shopOpen && mode === 'fridge' && (
-          <section className="nearby-panel report-card" aria-label="采购清单">
-            <header className="nearby-panel-head">
-              <div><Icon name="concierge" size={18} /><span>采购清单</span></div>
-              <button type="button" aria-label="关闭清单" onClick={() => setShopOpen(false)}>×</button>
-            </header>
-            <input
-              value={shopDishes}
-              onChange={(e) => setShopDishes(e.target.value)}
-              placeholder="想吃的菜，逗号分隔：番茄炒蛋,青椒肉丝"
-              style={{ width: '100%', marginBottom: 6 }}
-            />
-            <input
-              value={shopInv}
-              onChange={(e) => setShopInv(e.target.value)}
-              placeholder="家里已有的（可选）：鸡蛋,盐"
-              style={{ width: '100%', marginBottom: 8 }}
-            />
-            <button type="button" className="tool-btn" onClick={() => void loadShopping()} disabled={!shopDishes.trim()}>
-              {shopResult ? '重新生成' : '生成清单'}
-            </button>
-            {shopResult && (
-              <div className="nearby-list shopping-result" style={{ marginTop: 10 }}>
-                <div className="shopping-ingredients owned-ingredients">
-                  <strong>已拥有（冰箱 {fridgeItems.length} 项）：</strong>
-                  {fridgeItems.length > 0 ? fridgeItems.map((ing) => <span key={ing} className="ingredient-chip owned-chip">{ing}</span>) : <span className="shopping-empty">暂无已记录库存</span>}
-                </div>
-                <div className="vision-row">
-                  <input
-                    ref={visionInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    style={{ display: 'none' }}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void pickFridgePhoto(f); e.currentTarget.value = '' }}
-                    aria-label="选择冰箱照片"
-                  />
-                  <button
-                    type="button"
-                    className="tool-btn"
-                    disabled={visionBusy}
-                    onClick={() => visionInputRef.current?.click()}
-                  >
-                    {visionBusy ? '识别中…' : '📷 拍照清点冰箱'}
-                  </button>
-                  <span className="shopping-empty">拍一张冰箱内部照，AI 列出食材草稿</span>
-                </div>
-                {visionDraft && visionDraft.length > 0 && (
-                  <div className="shopping-ingredients vision-draft">
-                    <strong>识别草稿：</strong>
-                    {visionDraft.map((item, index) => (
-                      <span key={`${item.name}-${index}`} className="ingredient-chip vision-chip">
-                        {item.name}{item.quantity ? ` ${item.quantity}` : ''}
-                        <button
-                          type="button"
-                          aria-label={`删除 ${item.name}`}
-                          onClick={() => setVisionDraft(visionDraft.filter((_, i) => i !== index))}
-                        >×</button>
-                      </span>
-                    ))}
-                    <button type="button" className="tool-btn" disabled={savingFridge} onClick={() => void confirmVisionDraft()}>
-                      {savingFridge ? '写入中…' : '确认写入冰箱'}
-                    </button>
-                  </div>
-                )}
-                {(shopResult.main.length > 0 || shopResult.seasoning.length > 0) && <strong className="shopping-section-title">待购买</strong>}
-                {(shopResult.sections || []).length > 0 ? shopResult.sections!.map((sec) => (
-                  <div key={sec.name} className="shopping-ingredients">
-                    <strong>{sec.name}：</strong>
-                    {sec.items.map((ing) => (
-                      <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
-                    ))}
-                  </div>
-                )) : (
-                  <>
-                    {shopResult.main.length > 0 && (
-                      <div className="shopping-ingredients">
-                        <strong>主料：</strong>
-                        {shopResult.main.map((ing) => (
-                          <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
-                        ))}
-                      </div>
-                    )}
-                    {shopResult.seasoning.length > 0 && (
-                      <div className="shopping-ingredients"><strong>调味料：</strong>{shopResult.seasoning.map((ing) => (
-                        <label key={ing} className="ingredient-chip"><input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} /><span>{ing}</span></label>
-                      ))}</div>
-                    )}
-                  </>
-                )}
-                {shopResult.main.length === 0 && shopResult.seasoning.length === 0 && (
-                  <p className="shopping-empty">当前库存已满足这份清单，无需采购。</p>
-                )}
-                {shopResult.unknown_dishes.length > 0 && (
-                  <p style={{ opacity: 0.7 }}>未收录菜谱：{shopResult.unknown_dishes.join('、')}</p>
-                )}
-                <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length || savingFridge} onClick={() => void saveFridge()}>{savingFridge ? '保存中…' : '保存选中到冰箱'}</button>
-                {shopNotice && <p className="shop-notice" role="status">{shopNotice}</p>}
-              </div>
-            )}
-          </section>
-        )}
-
         {reportOpen && (
           <section className="nearby-panel report-card" aria-label="本周周报" ref={reportRef}>
             <header className="nearby-panel-head">
@@ -763,61 +781,130 @@ export function ChatArea({
                 {report.range && (
                   <div className="report-range">{report.range[0]} ~ {report.range[1]}</div>
                 )}
-                {(report.next_week_shopping || []).length > 0 && (
-                  <div className="report-shopping">
-                    <div className="block-label">下周购物清单</div>
-                    <div className="dish-chips">
-                      {(report.next_week_shopping || []).map((ing: string) => (
-                        <label key={ing} className="ingredient-chip">
-                          <input type="checkbox" checked={selectedItems.includes(ing)} onChange={() => toggleItem(ing)} />
-                          <span>{ing}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <button type="button" className="tool-btn" style={{ marginTop: 8, width: '100%' }} disabled={!selectedItems.length} onClick={() => void saveFridge()}>
-                      保存选中到冰箱
-                    </button>
-                  </div>
-                )}
               </div>
             )}
           </section>
         )}
 
-        {mode === 'dining' && panelOpen && (
+        {panelOpen && (
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
               <div>
                 <Icon name="concierge" size={18} />
                 <span>附近餐厅</span>
+                <span
+                  className={`location-pill ${locationStatus}`}
+                  onPointerDown={() => setLocationPressed(true)}
+                  onPointerUp={() => setLocationPressed(false)}
+                  onPointerCancel={() => setLocationPressed(false)}
+                  onPointerLeave={() => setLocationPressed(false)}
+                  title={locationButtonTitle}
+                >
+                  {locationPressed && locationResolved ? locationDetail : locating ? '定位中' : locationResolved ? '已定位' : coords ? 'GPS 已获' : '未授权'}
+                </span>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button type="button" onClick={() => void loadNearby()} disabled={nearbyLoading}>
-                  {nearbyLoading ? '查询中' : '查询附近'}
-                </button>
-                <button type="button" aria-label="关闭面板" onClick={() => setPanelOpen(false)}>×</button>
-              </div>
+              <button type="button" aria-label="关闭面板" onClick={() => setPanelOpen(false)}>×</button>
             </header>
 
             {nearbyError && <p className="nearby-error">{nearbyError}</p>}
 
-            {nearbyResult && (
-              <div className="nearby-list">
-                {nearbyResult.restaurants.map((restaurant) => (
-                  <article key={restaurant.name} className="nearby-card">
-                    <div className="nearby-card-title">
-                      <strong>{restaurant.name}</strong>
-                      <span>{restaurant.cuisine}</span>
-                    </div>
-                    <div className="nearby-meta">
-                      <span>人均 ¥{restaurant.avg_price ?? '?'}</span>
-                      {restaurant.distance_km != null && <span>{restaurant.distance_km}km</span>}
-                      {restaurant.address && <span>{restaurant.address}</span>}
-                    </div>
-                    {restaurant.guardrail && <p>{restaurant.guardrail}</p>}
-                  </article>
-                ))}
-              </div>
+            {!nearbyResult ? (
+              <p className="nearby-empty">
+                {nearbyLoading
+                  ? '正在拉取附近餐厅…'
+                  : coords || locationResolved
+                    ? '已拿到定位，点击上方预算或半径后会刷新附近餐厅'
+                    : '先点定位，再看附近餐厅会更准'}
+              </p>
+            ) : (
+              <>
+                <div className="nearby-controls">
+                  <div className="budget-chips" aria-label="预算筛选">
+                    <span>预算</span>
+                    {[30, 50, 0].map((budget) => (
+                      <button
+                        type="button"
+                        key={budget}
+                        className={nearbyBudget === budget ? 'budget-chip active' : 'budget-chip'}
+                        onClick={() => {
+                          setNearbyBudget(budget)
+                          void loadNearby(1, budget, undefined, nearbyRadius)
+                        }}
+                      >
+                        {budget === 0 ? '不限' : `¥${budget}`}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="budget-chips" aria-label="搜索半径">
+                    <span>半径</span>
+                    {[800, 1500, 3000].map((radius) => (
+                      <button
+                        type="button"
+                        key={radius}
+                        className={nearbyRadius === radius ? 'budget-chip active' : 'budget-chip'}
+                        onClick={() => {
+                          setNearbyRadius(radius)
+                          void loadNearby(1, nearbyBudget, undefined, radius)
+                        }}
+                      >
+                        {radius}m
+                      </button>
+                    ))}
+                  </div>
+                  <div className="sort-control">
+                    <button
+                      type="button"
+                      className={nearbySort === 'distance' ? 'sort-btn active' : 'sort-btn'}
+                      onClick={() => setNearbySort('distance')}
+                    >
+                      距离优先
+                    </button>
+                    <button
+                      type="button"
+                      className={nearbySort === 'price' ? 'sort-btn active' : 'sort-btn'}
+                      onClick={() => setNearbySort('price')}
+                    >
+                      价格优先
+                    </button>
+                  </div>
+                </div>
+                <p className="nearby-hint">
+                  {locationResolved
+                    ? `以【${locationDetail}】为中心，半径 ${nearbyRadius} 米`
+                    : coords
+                      ? '已拿到 GPS 坐标，正在等待城市解析'
+                      : '先定位后再搜附近餐厅，结果会更准'}
+                </p>
+                <div className="nearby-list">
+                  {nearbyResult.restaurants.map((restaurant) => (
+                    <article key={restaurant.name} className="nearby-card">
+                      <div className="nearby-card-title">
+                        <strong>{restaurant.name}</strong>
+                        <span>{restaurant.cuisine}</span>
+                      </div>
+                      <div className="nearby-meta">
+                        <span>人均 ¥{restaurant.avg_price ?? '?'}</span>
+                        {restaurant.distance_km != null ? <span>{restaurant.distance_km}km</span> : <span>距离—</span>}
+                        {restaurant.address && <span>{restaurant.address}</span>}
+                      </div>
+                      {restaurant.guardrail && <p>{restaurant.guardrail}</p>}
+                    </article>
+                  ))}
+                </div>
+                <div className="nearby-footer">
+                  <span className="nearby-source">
+                    {nearbyResult.source === 'amap' ? '数据来源：高德地图 · 实时' : '数据来源：离线演示数据 · 非实时推荐'}
+                  </span>
+                    <button
+                      type="button"
+                      className="refresh-btn"
+                      onClick={() => void loadNearby(nearbyPage + 1, nearbyBudget, undefined, nearbyRadius)}
+                      disabled={nearbyLoading}
+                    >
+                    换一批
+                  </button>
+                </div>
+              </>
             )}
           </section>
         )}
@@ -867,37 +954,30 @@ export function ChatArea({
           <div className="composer-tools" role="group" aria-label="实时状态打卡">
             <button
               type="button"
-              className={coords ? 'tool-btn' : 'tool-btn mood-active'}
+              className={`tool-btn location-btn ${locationStatus}`}
               disabled={locating}
-              title={coords ? `已定位：${coords}` : '点击重新请求浏览器定位授权（附近餐厅需要）'}
-              onClick={() => {
-                if (!('geolocation' in navigator)) return
-                setLocating(true)
-                navigator.geolocation.getCurrentPosition(
-                  (pos) => {
-                    setCoords(`${pos.coords.longitude.toFixed(6)},${pos.coords.latitude.toFixed(6)}`)
-                    setLocating(false)
-                  },
-                  () => setLocating(false),
-                  { timeout: 8000 },
-                )
-              }}
+              title={locationButtonTitle}
+              onPointerDown={() => setLocationPressed(true)}
+              onPointerUp={() => setLocationPressed(false)}
+              onPointerCancel={() => setLocationPressed(false)}
+              onPointerLeave={() => setLocationPressed(false)}
+              onTouchStart={() => setLocationPressed(true)}
+              onTouchEnd={() => setLocationPressed(false)}
+              onClick={requestLocation}
             >
-              {locating ? '定位中…' : coords ? '📍 已定位' : '📍 未定位·点此授权'}
+              {locationButtonText}
             </button>
-            {mode === 'dining' && !panelOpen && (
-              <button type="button" className="tool-btn" onClick={() => setPanelOpen(true)}>
-                🍽 附近餐厅
-              </button>
-            )}
+            <button
+              type="button"
+              className={panelOpen ? 'tool-btn mood-active' : 'tool-btn'}
+              onClick={() => setPanelOpen((open) => !open)}
+            >
+              <Icon name="concierge" size={16} />
+              {panelOpen ? '收起附近' : '附近餐厅'}
+            </button>
             <button type="button" className="tool-btn" onClick={() => void loadReport()}>
               📊 本周周报
             </button>
-            {mode === 'fridge' && (
-              <button type="button" className="tool-btn" onClick={() => setShopOpen(!shopOpen)}>
-                🛒 采购清单
-              </button>
-            )}
             {STATUS_TAGS.map((tag) => {
               const active = statusTags.includes(tag)
               return (
@@ -951,6 +1031,11 @@ export function ChatArea({
 
             <div className="send-zone">
               <span>Enter 发送 · Shift + Enter 换行</span>
+              {sending && canCancelImageDecision && (
+                <button type="button" className="cancel-decision-btn" onClick={() => void cancelImageDecision()}>
+                  取消决策
+                </button>
+              )}
               <button type="button" className="send-btn" disabled={!canSend} onClick={submit}>
                 <span>{sending ? '正在决策' : '开始决策'}</span>
                 <Icon name="send" size={18} />
