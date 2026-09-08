@@ -33,6 +33,18 @@ class StarStoreTest(unittest.TestCase):
             self.assertTrue(found and not cur)
             self.assertNotIn("starred", self.session["messages"][0])
 
+    def test_list_starred_handles_plain_text_answer(self):
+        self.session["messages"][0]["starred"] = True
+        self.session["messages"][0]["answer"] = "纯文本回答"
+        self.session["messages"][0]["image_url"] = None
+        tmp_dir = Path(self.tmp.name)
+        (tmp_dir / "s_star.json").write_text(json.dumps(self.session, ensure_ascii=False), encoding="utf-8")
+        with patch.object(sessions_store, "SESSIONS_DIR", tmp_dir):
+            items = sessions_store.list_starred()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["dish"], "q")
+        self.assertIsNone(items[0]["answer"])
+
 
 class DislikeAddTest(unittest.TestCase):
     def test_add_dedup_and_active_default(self):

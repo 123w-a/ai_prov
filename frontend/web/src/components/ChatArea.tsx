@@ -84,9 +84,9 @@ export function ChatArea({
   const [locating, setLocating] = useState(false)
   const [locationPressed, setLocationPressed] = useState(false)
 
-  const starMessage = async (recordId: number) => {
+  const starMessage = async (recordId: number, currentStarred?: boolean) => {
     if (!activeSessionId) return
-    const next = !(starState[recordId] ?? false)
+    const next = !(starState[recordId] ?? currentStarred ?? false)
     setStarState((s) => ({ ...s, [recordId]: next })) // 乐观更新
     try {
       const result = await starMessageApi(activeSessionId, recordId, next)
@@ -127,6 +127,18 @@ export function ChatArea({
       setReport({ has_data: false, message: '周报加载失败，请稍后再试。' })
     }
   }
+  useEffect(() => {
+    const nextStarState: Record<number, boolean> = {}
+    const nextFbState: Record<number, 'up' | 'down' | null> = {}
+    for (const message of messages) {
+      if (message.recordId == null) continue
+      if (message.starred) nextStarState[message.recordId] = true
+      if (message.feedback) nextFbState[message.recordId] = message.feedback
+    }
+    setStarState(nextStarState)
+    setFbState(nextFbState)
+  }, [messages])
+
   useEffect(() => {
     const savedCoords = window.localStorage.getItem('xiaoshan-coords') || ''
     if (savedCoords) {
@@ -649,10 +661,14 @@ export function ChatArea({
                         </button>
                         <button
                           type="button"
-                          className={starState[message.recordId] || message.starred ? 'fb-btn starred' : 'fb-btn'}
+                          className={
+                            (starState[message.recordId] ?? message.starred ?? false)
+                              ? 'fb-btn starred'
+                              : 'fb-btn'
+                          }
                           aria-label="收藏这道菜"
                           title="收藏"
-                          onClick={() => void starMessage(message.recordId!)}
+                          onClick={() => void starMessage(message.recordId!, message.starred)}
                         >
                           <Icon name="star" size={13} />
                         </button>

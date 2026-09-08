@@ -113,7 +113,7 @@ export interface ChatHandlers {
   onHeartbeat?: (elapsedSeconds: number) => void
   onImage?: (img: { record_id?: number; index: number; url: string; ai_generated: boolean }) => void
   onImageFailed?: (payload: { record_id?: number; indexes: number[] }) => void
-  onFinish?: () => void
+  onFinish?: (payload: { session_id?: string; record_id?: number }) => void
 }
 
 export interface ChatImageTarget {
@@ -197,7 +197,7 @@ export async function sendChat(
       else if (event.structuring) handlers.onStructuring()
       else if (event.answer) handlers.onAnswer(event.answer as ChefAnswer)
       else if (typeof event.stage === 'string') handlers.onStage?.(event.stage)
-      else if (event.finish) handlers.onFinish?.()
+      else if (event.finish) handlers.onFinish?.(event as { session_id?: string; record_id?: number })
       else if (event.error) throw new Error(String(event.error))
     }
   }

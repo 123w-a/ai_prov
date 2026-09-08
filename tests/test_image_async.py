@@ -102,8 +102,31 @@ class ChatRouteImageGateTest(unittest.TestCase):
     def test_dining_request_keeps_image_pipeline(self):
         self.assertTrue(chat_route._should_enable_image_pipeline("帮我做个番茄炒蛋，配张图", "1"))
 
+    def test_make_dish_phrase_keeps_image_pipeline(self):
+        self.assertTrue(chat_route._should_enable_image_pipeline("帮我做道番茄炒蛋，配张图", "1"))
+
     def test_explicit_image_phrase_without_toggle_keeps_pipeline(self):
         self.assertTrue(chat_route._should_enable_image_pipeline("帮我做个番茄炒蛋，配张图", "0"))
+
+    def test_standalone_image_answer_reuses_recipe_body(self):
+        answer = chat_route._standalone_image_answer(
+            "番茄香菇荞麦面",
+            "https://example.com/noodle.jpg",
+            False,
+            "",
+            {
+                "intro": "酸甜鲜香，适合运动后补能。",
+                "difficulty": 2,
+                "nutrition": 4,
+                "seasonings": [{"name": "生抽", "amount": "少许"}],
+                "steps": ["煮面", "炒番茄香菇", "合拌"],
+            },
+        )
+        recipe = answer["recipes"][0]
+        self.assertEqual(answer["image_url"], "https://example.com/noodle.jpg")
+        self.assertEqual(recipe["image_url"], "https://example.com/noodle.jpg")
+        self.assertEqual(recipe["intro"], "酸甜鲜香，适合运动后补能。")
+        self.assertEqual(recipe["steps"], ["煮面", "炒番茄香菇", "合拌"])
 
 
 if __name__ == "__main__":

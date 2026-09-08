@@ -453,6 +453,7 @@ def list_starred() -> list[dict]:
             if not m.get("starred"):
                 continue
             dish = None
+            ans = None
             try:
                 ans = json.loads(m.get("answer") or "")
                 recipes = ans.get("recipes") or []

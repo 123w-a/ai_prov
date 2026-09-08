@@ -103,3 +103,6 @@ data/agent_trace.jsonl
 data/feedback.json
 data/profile.json
 .npm-cache-playwright/
+
+# 配图分流判断门测试（AI 临时验证测试，按用户要求不入库）
+tests/test_image_gating.py

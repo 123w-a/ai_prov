@@ -2,14 +2,18 @@ import { useEffect, useState } from 'react'
 import { fetchFavorites, starMessage } from '../api/client'
 import type { FavoriteItem } from '../types'
 import { Icon } from './Icon'
-import { RecipeCard } from './RecipeCard'
 
 export function FavoritesPanel({ onOpenSession }: { onOpenSession: (sid: string) => void }) {
   const [items, setItems] = useState<FavoriteItem[] | null>(null)
+  const [toggling, setToggling] = useState<Record<string, true>>({})
 
   const load = () =>
     fetchFavorites()
-      .then(setItems)
+      .then((list) =>
+        setItems(
+          (list ?? []).filter((item) => item && item.sid && Number.isFinite(item.rec_id)),
+        ),
+      )
       .catch(() => setItems([]))
 
   useEffect(() => {
@@ -17,8 +21,20 @@ export function FavoritesPanel({ onOpenSession }: { onOpenSession: (sid: string)
   }, [])
 
   const remove = (sid: string, recId: number) => {
+    const key = `${sid}:${recId}`
+    if (toggling[key]) return
+    setToggling((state) => ({ ...state, [key]: true }))
     setItems((list) => (list ?? []).filter((i) => !(i.sid === sid && i.rec_id === recId)))
-    void starMessage(sid, recId, false).then(load).catch(load)
+    void starMessage(sid, recId, false)
+      .then(load)
+      .catch(load)
+      .finally(() => {
+        setToggling((state) => {
+          const next = { ...state }
+          delete next[key]
+          return next
+        })
+      })
   }
 
   return (
@@ -45,14 +61,9 @@ export function FavoritesPanel({ onOpenSession }: { onOpenSession: (sid: string)
                 <img src={item.image_url} alt={item.dish} loading="lazy" />
               )}
               <div className="favorite-body">
-                {item.answer ? (
-                  <RecipeCard answer={item.answer} />
-                ) : (
-                  <>
-                    <strong>{item.dish}</strong>
-                    <small>来自会话：{item.session_title || item.user_text}</small>
-                  </>
-                )}
+                <strong>{item.dish}</strong>
+                <small>来自会话：{item.session_title || item.user_text}</small>
+                {item.answer?.opening && <p>{item.answer.opening}</p>}
               </div>
               <div className="favorite-actions">
                 <button type="button" onClick={() => onOpenSession(item.sid)}>

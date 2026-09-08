@@ -25,6 +25,10 @@ router = APIRouter()  # 分文件写接口的小路由
 ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 _CANCELLED_IMAGE_TURNS: set[str] = set()
 _CANCELLED_IMAGE_LOCK = threading.Lock()
+_RECIPE_IMAGE_CACHE: dict[tuple[str, bool], tuple[str | None, str, float]] = {}
+_RECIPE_IMAGE_CACHE_LOCK = threading.Lock()
+_SEARCH_IMAGE_CACHE_TTL = 60 * 60 * 6
+_AI_IMAGE_CACHE_TTL = 60 * 60 * 24 * 7
 
 
 def _image_cancel_key(session_id: str, turn_id: str | None = None) -> str:
@@ -61,6 +65,7 @@ def _wants_image(message: str, want_image: str | None) -> bool:
     strong_phrases = (
         "配图", "配张图", "补图", "换图", "生成图片", "生成一张图", "来张图",
         "发图", "发张图", "发图片", "发个图", "出图", "出个图", "图给我",
+        "带图", "带图片", "有图", "有图片",
         "看看图", "看看图片", "看图片", "看图", "看一下图", "看一下图片", "看个图",
         "给我看图", "给我看看", "让我看看", "想看图片", "想看图", "图片欣赏",
         "成品图", "成品照", "实拍图", "示意图", "效果图", "样图", "参考图",
@@ -70,18 +75,51 @@ def _wants_image(message: str, want_image: str | None) -> bool:
     return any(phrase in text for phrase in strong_phrases)
 
 
+def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
+    """调用层图片缓存：不改 agent_tools，也避免同菜反复搜图/生图。"""
+    name = str(recipe_name or "").strip()
+    if not name:
+        return None, "none"
+    key = (name.lower(), bool(allow_ai_fallback))
+    now = time.time()
+    ttl = _AI_IMAGE_CACHE_TTL if allow_ai_fallback else _SEARCH_IMAGE_CACHE_TTL
+    with _RECIPE_IMAGE_CACHE_LOCK:
+        cached = _RECIPE_IMAGE_CACHE.get(key)
+        if cached and now - cached[2] < ttl:
+            return cached[0], cached[1]
+    image_url, source = find_recipe_image(name, allow_ai_fallback=allow_ai_fallback)
+    with _RECIPE_IMAGE_CACHE_LOCK:
+        _RECIPE_IMAGE_CACHE[key] = (image_url, source, now)
+    return image_url, source
+
+
+def _is_recipe_change_request(message: str) -> bool:
+    """用户在追问里要求换一道/改做法时，应走完整对话，不当作给上一道补图。"""
+    text = str(message or "")
+    broad_change_words = ("没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的", "没食欲")
+    if any(word in text for word in broad_change_words):
+        return True
+    change_words = ("换成", "改成", "做成", "换做", "改做", "改为", "变成")
+    recipe_words = ("面", "汤", "菜", "饭", "粥", "粉", "肉", "鱼", "鸡", "牛", "虾", "豆腐")
+    return any(word in text for word in change_words) and any(word in text for word in recipe_words)
+
+
 def _is_image_revision_request(message: str, want_image: str | None) -> bool:
-    if not _wants_image(message, want_image):
+    if not _wants_image(message, None):
+        return False
+    if _is_recipe_change_request(message):
         return False
     text = str(message or "")
-    contextual_refs = ("上一道", "上一道菜", "刚才", "刚刚", "前面", "这道", "这道菜", "这个", "它", "上面", "上一份", "这张")
+    contextual_refs = ("上一道", "上一道菜", "刚才", "刚刚", "前面", "这道", "这道菜", "这个", "这种", "那种", "这份", "这个方案", "它", "上面", "上一份", "这张")
     revision_phrases = ("换图", "换张图", "换一张", "再来一张", "重新生成", "重新配", "重画", "不满意", "不好看", "另一张")
     return any(ref in text for ref in contextual_refs) or any(phrase in text for phrase in revision_phrases)
 
 
 def _is_visual_dish_lookup_request(message: str, want_image: str | None) -> bool:
     """识别“某道菜长什么样/想看看”这类无历史菜谱也应直接出图的请求。"""
-    if not _wants_image(message, want_image):
+    if not _wants_image(message, None):
+        return False
+    if _is_recipe_change_request(message):
         return False
     text = str(message or "")
     visual_phrases = (
@@ -100,20 +138,66 @@ def _looks_like_dining_request(message: str) -> bool:
         return False
     markers = (
         "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
+        "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
         "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
+        "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
         "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
         "痛风", "尿酸", "健康饮食", "附近吃什么",
     )
     return any(marker in text for marker in markers)
 
 
-def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
-    """首次菜谱流程：只有明确开配图且属于饮食场景时才启动补图。"""
-    return (
-        _wants_image(message, want_image)
-        and _looks_like_dining_request(message)
-        and not _is_image_revision_request(message, want_image)
+def _is_restaurant_ordering_scene(text: str) -> bool:
+    text = str(text or "").strip()
+    if not text:
+        return False
+    restaurant_markers = (
+        "餐厅", "饭店", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
+        "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
     )
+    restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
+    signature_words = ("招牌", "推荐几道菜", "推荐几个菜", "点什么菜")
+    cooking_markers = ("做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅", "食材", "冰箱", "在家做", "自己做")
+    if any(marker in text for marker in cooking_markers):
+        return False
+    return any(marker in text for marker in restaurant_markers) or (
+        any(word in text for word in signature_words)
+        and any(ctx in text for ctx in restaurant_context)
+    )
+
+
+def _looks_like_home_service_request(text: str) -> bool:
+    markers = ("上门", "到家服务", "私厨", "厨师到家", "请厨师", "预约厨师", "上门做")
+    return any(marker in str(text or "") for marker in markers)
+
+
+def _classify_turn_intent(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return "other"
+    if _looks_like_home_service_request(text):
+        return "home_service"
+    if _is_restaurant_ordering_scene(text):
+        return "restaurant"
+    if _is_recipe_change_request(text):
+        return "change_one"
+    confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道", "第一道", "第二道", "第三道")
+    if any(word in text for word in confirm_words):
+        return "confirm_one"
+    followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪")
+    if any(word in text for word in followup_words) and not _looks_like_dining_request(text):
+        return "followup"
+    if _looks_like_dining_request(text):
+        return "recommend"
+    return "other"
+
+
+def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
+    """首次菜谱流程：显式配图最高优先；自动配图只给确认一道/换一道。"""
+    if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
+        return _looks_like_dining_request(message)
+    intent = _classify_turn_intent(message)
+    return intent in {"confirm_one", "change_one"}
 
 
 def _is_standalone_image_request(message: str, want_image: str | None) -> bool:
@@ -123,7 +207,7 @@ def _is_standalone_image_request(message: str, want_image: str | None) -> bool:
 
 def _extract_requested_dish(message: str) -> str | None:
     raw = str(message or "")
-    contextual_refs = ("上一道", "上一道菜", "刚才", "刚刚", "前面", "这道", "这道菜", "这个", "它", "上面", "上一份")
+    contextual_refs = ("上一道", "上一道菜", "刚才", "刚刚", "前面", "这道", "这道菜", "这个", "这种", "那种", "这份", "这个方案", "它", "上面", "上一份")
     if any(ref in raw for ref in contextual_refs):
         return None
     text = re.sub(r"【[^】]+】", "", raw)
@@ -151,22 +235,29 @@ def _looks_like_control_json(text: str) -> bool:
     return isinstance(data, list)
 
 
-def _standalone_image_answer(dish_name: str, image_url: str | None, image_ai: bool, note: str):
+def _standalone_image_answer(
+    dish_name: str,
+    image_url: str | None,
+    image_ai: bool,
+    note: str,
+    recipe_base: dict | None = None,
+    opening: str | None = None,
+):
+    base = recipe_base if isinstance(recipe_base, dict) else {}
+    recipe = {
+        "name": dish_name,
+        "intro": str(base.get("intro") or note or ""),
+        "difficulty": base.get("difficulty") or 1,
+        "nutrition": base.get("nutrition") or 3,
+        "seasonings": base.get("seasonings") or [],
+        "steps": base.get("steps") or [],
+        "image_url": image_url,
+        "image_ai_generated": bool(image_ai),
+        "image_note": note,
+    }
     return {
-        "opening": f"已为「{dish_name}」补上配图。" if image_url else f"暂时没能为「{dish_name}」生成可靠配图。",
-        "recipes": [
-            {
-                "name": dish_name,
-                "intro": note,
-                "difficulty": 1,
-                "nutrition": 3,
-                "seasonings": [],
-                "steps": [],
-                "image_url": image_url,
-                "image_ai_generated": bool(image_ai),
-                "image_note": note,
-            }
-        ],
+        "opening": opening or (f"已为「{dish_name}」补上配图。" if image_url else f"暂时没能为「{dish_name}」生成可靠配图。"),
+        "recipes": [recipe],
         "image_url": image_url,
         "image_ai_generated": bool(image_ai),
         "image_requested": True,
@@ -265,7 +356,8 @@ async def chat(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"图片处理失败：{exc}") from exc
-    image_requested = _should_enable_image_pipeline(message, want_image) or _looks_like_dining_request(message)
+    turn_intent = _classify_turn_intent(message)
+    image_requested = _should_enable_image_pipeline(message, want_image)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
     human_message = build_human_message(
         _apply_mode_prompt(effective_message, mode),
@@ -286,7 +378,7 @@ async def chat(
         pending_rec_id = None
 
     standalone_image_request = _is_standalone_image_request(message, want_image)
-    if not standalone_image_request and _wants_image(message, want_image):
+    if not standalone_image_request and _wants_image(message, want_image) and not _is_recipe_change_request(message):
         try:
             from sessions_store import find_recent_recipe_for_image
 
@@ -326,7 +418,7 @@ async def chat(
                     return
                 yield f"data: {json.dumps({'stage': 'generating_image'}, ensure_ascii=False)}\n\n"
                 try:
-                    image_url, source = find_recipe_image(dish_hint, allow_ai_fallback=True)
+                    image_url, source = _find_recipe_image_cached(dish_hint, allow_ai_fallback=True)
                 except Exception:
                     image_url, source = None, "none"
                 image_ai = source == "ai"
@@ -351,13 +443,38 @@ async def chat(
             recipe_index = int(target["recipe_index"])
             recipes = target.get("answer", {}).get("recipes") or []
             current_recipe = recipes[recipe_index] if 0 <= recipe_index < len(recipes) else {}
+            existing_image_url = (
+                current_recipe.get("image_url")
+                or (target.get("answer", {}).get("image_url") if recipe_index == 0 else None)
+            )
+            if existing_image_url:
+                image_ai = bool(
+                    current_recipe.get("image_ai_generated")
+                    or (target.get("answer", {}).get("image_ai_generated") if recipe_index == 0 else False)
+                )
+                note = str(
+                    current_recipe.get("image_note")
+                    or target.get("answer", {}).get("image_note")
+                    or ("AI 生成示意图（非真实成品照，仅供样式参考）" if image_ai else "")
+                )
+                answer_obj = _standalone_image_answer(
+                    dish_name,
+                    existing_image_url,
+                    image_ai,
+                    note,
+                    current_recipe,
+                    f"「{dish_name}」上一轮已经有配图，我直接给你贴出来。",
+                )
+                final_answer = json.dumps(answer_obj, ensure_ascii=False)
+                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
+                return
             if _is_image_cancelled(session_id, turn_id):
                 final_answer = "已取消配图决策"
                 yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
                 return
             yield f"data: {json.dumps({'stage': 'generating_image'}, ensure_ascii=False)}\n\n"
             try:
-                image_url, source = find_recipe_image(dish_name, allow_ai_fallback=True)
+                image_url, source = _find_recipe_image_cached(dish_name, allow_ai_fallback=True)
             except Exception:
                 image_url, source = None, "none"
             if _is_image_cancelled(session_id, turn_id):
@@ -375,14 +492,14 @@ async def chat(
                     note,
                 )
                 yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai}}, ensure_ascii=False)}\n\n"
-                text = f"已给上一道「{dish_name}」补上配图。"
-                final_answer = text
-                yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+                answer_obj = _standalone_image_answer(dish_name, image_url, image_ai, note, current_recipe)
+                final_answer = json.dumps(answer_obj, ensure_ascii=False)
+                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
             else:
                 note = "暂无成品图，文字做法完整可照做"
-                text = f"暂时没能为上一道「{dish_name}」生成可靠配图。"
-                final_answer = text
-                yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+                answer_obj = _standalone_image_answer(dish_name, None, False, note, current_recipe)
+                final_answer = json.dumps(answer_obj, ensure_ascii=False)
+                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'image_failed': {'record_id': target['record_id'], 'indexes': [target['recipe_index']]}}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
@@ -393,7 +510,7 @@ async def chat(
                     _update_answer(session_id, pending_rec_id, final_answer or "（本轮配图请求未能完成。）", save_img_name, save_img_type, save_img_url)
             except Exception:
                 pass
-        yield f"data: {json.dumps({'finish': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     def event_generator():
         full_parts = []     # 正文 token 碎片（兜底落库用）
@@ -441,8 +558,9 @@ async def chat(
         image_failed_sent = False  # image_failed 去重：补图线程早到 / done 分支补发只发一次
 
         def _fill_images():
-            """后台补图：对无图菜名搜成品图，25s 预算内逐个补，实时推 image 事件。"""
-            deadline = time.time() + 25
+            """后台补图：推荐阶段只搜现成图；确定/换一道才允许 AI 生图。"""
+            allow_ai_fallback = turn_intent in {"confirm_one", "change_one"}
+            deadline = time.time() + (60 if allow_ai_fallback else 25)
             for index, recipe in enumerate(list(answer_dict.get("recipes") or [])):
                 if _is_image_cancelled(session_id, turn_id):
                     return
@@ -452,7 +570,7 @@ async def chat(
                 if not name:
                     continue
                 try:
-                    image_url, source = find_recipe_image(name, allow_ai_fallback=True)
+                    image_url, source = _find_recipe_image_cached(name, allow_ai_fallback=allow_ai_fallback)
                 except Exception:
                     continue
                 if _is_image_cancelled(session_id, turn_id):
@@ -619,7 +737,7 @@ async def chat(
             _persist_once()
 
         # 整轮正常结束（持久化已由 finally 完成，此处幂等）
-        yield f"data: {json.dumps({'finish': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         standalone_image_generator() if standalone_image_request else event_generator(),

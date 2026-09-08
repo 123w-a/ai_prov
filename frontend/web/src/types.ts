@@ -56,6 +56,8 @@ export interface SessionMessage {
   image_name?: string | null
   image_type?: string | null
   image_url?: string | null
+  starred?: boolean
+  feedback?: 'up' | 'down' | null
 }
 
 export interface Session {

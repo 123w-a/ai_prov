@@ -279,16 +279,95 @@ def _current_request_text(text):
 def _wants_recipe_images(messages):
     """判断本轮是否由后端明确授权配图。
 
-    用户自然语言里的“配图/图片”不再直接触发正常菜谱链路搜图；
-    不满意换图走 chat_route 的独立目标绑定流程。"""
+    配图跟随“决策阶段”，不再按“像饮食请求”粗暴触发：
+    推荐/追问/餐馆/上门服务不烧图；确定一道或换一道才进入配图。"""
     text = _latest_user_text(messages)
     if not text:
         return False
     if "【配图开关：开启】" in text or "【本轮需要配图】" in text:
         return True
-    if _looks_like_dining_request(text):
-        return True
-    return False
+    return _classify_turn_intent(messages) in ("confirm_one", "change_one")
+
+
+def _recent_recipe_names(messages, limit=8):
+    """从最近结构化卡片里取菜名，给确定/指代判断一个确定性锚点。"""
+    names = []
+    for m in reversed(messages or []):
+        if not isinstance(m, AIMessage) or getattr(m, "tool_calls", None):
+            continue
+        raw = str(getattr(m, "content", "") or "").strip()
+        if not raw.startswith("{"):
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        recipes = data.get("recipes") if isinstance(data, dict) else None
+        if not isinstance(recipes, list):
+            continue
+        for recipe in recipes:
+            if not isinstance(recipe, dict):
+                continue
+            name = str(recipe.get("name") or "").strip()
+            if name and name not in names:
+                names.append(name)
+                if len(names) >= limit:
+                    return names
+    return names
+
+
+def _mentions_recent_recipe(text: str, names) -> bool:
+    text = str(text or "")
+    return any(name and name in text for name in names)
+
+
+def _has_recipe_index_ref(text: str) -> bool:
+    return bool(re.search(r"(第[一二三四五六七八九十123456789]\s*道|一道|二道|三道|第一道|第二道|第三道|这个|这道|这道菜|来这个|做这个|吃这个)", str(text or "")))
+
+
+def _looks_like_home_service_request(text: str) -> bool:
+    text = str(text or "")
+    markers = ("上门", "到家服务", "私厨", "厨师到家", "请厨师", "预约厨师", "上门做")
+    return any(marker in text for marker in markers)
+
+
+def _classify_turn_intent(messages) -> str:
+    """确定性意图门：recommend | confirm_one | change_one | followup | restaurant | home_service | other。"""
+    text = _latest_user_text(messages)
+    if not text:
+        return "other"
+    current = _current_request_text(text)
+    if _looks_like_home_service_request(current):
+        return "home_service"
+    if _is_restaurant_ordering_scene(current):
+        return "restaurant"
+
+    recipe_names = _recent_recipe_names(messages)
+    has_prior_recipe = bool(recipe_names)
+
+    change_words = (
+        "没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的",
+        "换成", "改成", "做成", "换做", "改做", "改为", "变成", "没食欲",
+    )
+    recipe_replacement_words = ("面", "汤", "菜", "饭", "粥", "粉", "肉", "鱼", "鸡", "牛", "虾", "豆腐")
+    broad_change_words = ("没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的", "没食欲")
+    if any(word in current for word in broad_change_words) or (
+        any(word in current for word in change_words)
+        and any(word in current for word in recipe_replacement_words)
+    ):
+        return "change_one"
+
+    confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道")
+    if any(word in current for word in confirm_words) or (_has_recipe_index_ref(current) and _mentions_recent_recipe(current, recipe_names)):
+        return "confirm_one"
+
+    followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪", "怎么吃")
+    if has_prior_recipe and not _mentions_recent_recipe(current, recipe_names) and any(word in current for word in followup_words):
+        return "followup"
+
+    if _looks_like_dining_request(current):
+        return "recommend"
+    return "other"
 
 
 def _is_new_ingredient_image_request(text):
@@ -496,7 +575,7 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
             break
     # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []#2.有连坐删除，删的时候会把工具的返回结果也会删除不搞混
-    for m in context_messages:#把工具返回的搜索结果都塞进parts不搞混，1.只要最后3条并且是从最晚覆盖最早这样找的
+    for m in context_messages:#把工具返回的搜索结果都塞进parts不搞混，只取最近2条控制结构化上下文长度
         if isinstance(m, ToolMessage) and getattr(m, "name", "") == "web_search":
             content = str(m.content)
             search_blocks.append(content)#存储搜索结果
@@ -543,7 +622,9 @@ def _looks_like_dining_request(text: str) -> bool:
         return False
     markers = (
         "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
+        "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
         "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
+        "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
         "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
         "痛风", "尿酸", "健康饮食", "附近吃什么",
     )
@@ -559,12 +640,17 @@ def _is_restaurant_ordering_scene(text: str) -> bool:
         "餐厅", "饭店", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
         "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
     )
+    restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
+    signature_words = ("招牌", "推荐几道菜", "推荐几个菜", "点什么菜")
     cooking_markers = (
         "做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅",
         "食材", "冰箱", "在家做", "自己做",
     )
-    return any(marker in text for marker in restaurant_markers) and not any(
-        marker in text for marker in cooking_markers
+    if any(marker in text for marker in cooking_markers):
+        return False
+    return any(marker in text for marker in restaurant_markers) or (
+        any(word in text for word in signature_words)
+        and any(ctx in text for ctx in restaurant_context)
     )
 
 
@@ -647,7 +733,8 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         opening = str(messages[-1].content)#这里已经传入前端了，所以比结构化卡片快
         #context是纯文本给了LCEL节构化链，其他的图片的链接和图片的来源在下文传出来的answer来赋值
     latest_text = _latest_user_text(messages)
-    if _is_restaurant_ordering_scene(latest_text):
+    turn_intent = _classify_turn_intent(messages)
+    if turn_intent in ("restaurant", "home_service"):
         return {"messages": []}
     wants_images = _wants_recipe_images(messages)
     is_new_image_request = (

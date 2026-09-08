@@ -4076,7 +4076,12 @@ img {
 .weekly-range { font-size: 10.5px; color: rgba(13, 27, 42, 0.4); }
 
 /* ---- 收藏按钮 / 忌口提示 / 收藏面板 ---- */
-.fb-btn.starred { color: #b8860b; border-color: rgba(184, 134, 11, 0.45); }
+.fb-btn.starred {
+  color: #b8860b;
+  border-color: rgba(184, 134, 11, 0.45);
+  background: rgba(184, 134, 11, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(184, 134, 11, 0.18);
+}
 
 .dislike-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 20px 8px; padding: 10px 14px; border: 1px solid rgba(184, 134, 11, 0.35); border-radius: 12px; background: rgba(250, 243, 221, 0.85); font-size: 12px; color: rgba(13, 27, 42, 0.8); }
 
@@ -4107,6 +4112,13 @@ img {
 .favorite-body strong { display: block; font-size: 14px; color: rgba(13, 27, 42, 0.85); }
 
 .favorite-body small { display: block; margin-top: 3px; font-size: 11px; color: rgba(13, 27, 42, 0.45); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.favorite-body p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(13, 27, 42, 0.72);
+}
 
 .favorite-actions { display: flex; gap: 8px; }
 

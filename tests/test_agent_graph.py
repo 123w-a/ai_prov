@@ -38,24 +38,27 @@ class TestWantsMultiple(unittest.TestCase):
 
 
 class TestWantsRecipeImages(unittest.TestCase):
-    """配图默认关闭，仅在自然语言或显式开关触发。"""
+    """配图开关跟随决策阶段：仅 confirm_one/change_one 或显式开关触发，自然语言配图词走 chat_route 独立链路。"""
 
     def test_default_false(self):
         msgs = [HumanMessage(content="帮我做道番茄炒蛋")]
         self.assertFalse(_wants_recipe_images(msgs))
 
-    def test_keyword_or_toggle_true(self):
-        cases = [
+    def test_natural_image_phrases_no_longer_trigger(self):
+        # 语义变更：自然语言配图词（配张图/想看看图等）已移交 chat_route 独立配图链路，
+        # _wants_recipe_images 不再对这些词返回 True，只在 confirm_one/change_one 或显式开关时配图
+        for text in [
             "帮我做道番茄炒蛋，配张图",
             "想看看图",
             "给我看看这个菜长什么样",
             "想看实拍图",
             "发张图片看看",
-            "【配图开关：开启】\n番茄炒蛋",
-        ]
-        for text in cases:
+        ]:
             with self.subTest(text=text):
-                self.assertTrue(_wants_recipe_images([HumanMessage(content=text)]))
+                self.assertFalse(_wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_explicit_toggle_true(self):
+        self.assertTrue(_wants_recipe_images([HumanMessage(content="【配图开关：开启】\n番茄炒蛋")]))
 
     def test_plain_dining_request_stays_false(self):
         self.assertFalse(_wants_recipe_images([HumanMessage(content="想吃个番茄炒蛋")]))
@@ -136,7 +139,7 @@ class TestBuildStructureContext(unittest.TestCase):
         self.assertEqual(img, "http://x/pic.png")
         self.assertTrue(ai, "ai 来源应标记为 AI 生成（透明标注依据）")
 
-    def test_only_last_three_searches(self):
+    def test_only_last_two_searches(self):
         blocks = []
         for i in range(5):
             blocks.append(ToolMessage(
@@ -145,9 +148,12 @@ class TestBuildStructureContext(unittest.TestCase):
             ))
         msgs = [HumanMessage(content="x")] + blocks
         ctx, img, ai = _build_structure_context(msgs)
-        # 只取最近 3 次，应出现 r2/r3/r4 而不含 r0/r1
-        self.assertIn("r2", ctx)
+        # 当前实现只取最近 2 次搜索结果（agent_graph.py:593 `search_blocks[-2:]`，性能优化），
+        # 应出现 r3/r4 而不含更早的 r0/r1/r2；若需 3 条，把 `[-2:]` 改回 `[-3:]` 并同步本断言
+        self.assertIn("r3", ctx)
+        self.assertIn("r4", ctx)
         self.assertNotIn("r0", ctx)
+        self.assertNotIn("r2", ctx)
 
 
 class TestStructureImagePolicy(unittest.TestCase):
@@ -189,14 +195,13 @@ class TestStructureImagePolicy(unittest.TestCase):
         self.assertEqual(payload["image_url"], "http://x/egg.jpg")
         self.assertTrue(payload["image_ai_generated"])
 
-    def test_explicit_image_phrase_keeps_recipe_image(self):
+    def test_explicit_image_phrase_no_longer_keeps_recipe_image(self):
+        # 语义变更：自然语言「配张图」走 chat_route 独立配图链路，structure 层不再据此保留图
         state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋，配张图"), AIMessage(content="推荐番茄炒蛋")]}
         with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
             result = structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
-        self.assertTrue(payload["image_requested"])
-        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
-        self.assertTrue(payload["image_ai_generated"])
+        self.assertFalse(payload["image_requested"])
 
     def test_toggle_without_image_keeps_loading_state(self):
         answer = ChefAnswer(
