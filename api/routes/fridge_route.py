@@ -44,9 +44,9 @@ def _parse_vision_json(text: str):
 def _vision_extract_items(image_bytes: bytes, content_type: str) -> list[dict]:
     """调用视觉模型把冰箱/食材照片转成结构化食材清单。"""
     from langchain_core.messages import HumanMessage
-    from model_name import get_langchain_llm
+    from model_name import get_vision_llm
 
-    llm = get_langchain_llm("gpt", temperature=0, max_tokens=600)
+    llm = get_vision_llm(temperature=0, max_tokens=600, timeout=45)
     image_url = "data:{};base64,{}".format(content_type, base64.b64encode(image_bytes).decode("ascii"))
     message = HumanMessage(content=[
         {"type": "text", "text": (

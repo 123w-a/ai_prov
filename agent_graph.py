@@ -3,14 +3,18 @@
 # 具体工具怎么干活看 agent_tools.py，提示词内容看 agent_prompts.py
 
 import json#结构化回答打包成 JSON 字符串落进消息
-import os#读 SUMMARY_MODE_NAME 等环境变量
 import re
 from pathlib import Path#读取 data/profile.json（家庭档案激活成员）
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
 import time#重试间隔用
 import sqlite3#持久化短期记忆（断点续跑、循环状态保存）
-from model_name import get_langchain_llm, resolve_provider#一个创造模型，一个说明用的是哪个模型
+from model_name import (
+    extract_message_text,
+    get_langchain_llm,
+    get_summary_llm,
+    resolve_provider,
+)
 from langchain_core.messages import (  # 系统提示词节点用 + 长对话压缩用
     SystemMessage,
     HumanMessage,
@@ -77,6 +81,7 @@ SINGLE_RECIPE_RULE = (
 # 没配 / 配了但没 key → 自动用 configs 第一个可用的（已将 gpt 放第一，不写即默认 gpt）。
 # 本文件不硬编码任何模型名，切换模型只改 .env，无需动代码。
 provider = resolve_provider()#不写默认是.env中设置的第一个key
+MAIN_AGENT_MAX_TOKENS = 4096  # DeepSeek 的推理 token 与正文共用上限，1024 会把长回答截成半句
 llm = None
 llm_with_tools = None
 retrieval_llm = None
@@ -88,17 +93,16 @@ def rebuild_llms(force_provider=None):
     """构建/重建全部模块级 LLM。failover 时换 provider 重跑整轮。"""
     global provider, llm, llm_with_tools, retrieval_llm, summary_llm
     provider = force_provider or resolve_provider()#不写默认是.env中设置的第一个key
-    llm = get_langchain_llm(provider)#获取模型对象
+    llm = get_langchain_llm(provider, max_tokens=MAIN_AGENT_MAX_TOKENS)#获取模型对象
     # 检索侧思考（查询改写 / 多查询 / HyDE）：高频低难度任务，跟随主 provider 保证可用性
     try:
         retrieval_llm = get_langchain_llm(provider, temperature=0.3, max_tokens=200)
     except Exception:
         retrieval_llm = llm
-    # 历史摘要专用模型：摘要容错高，deepseek 时强制 flash（实测 2.1s vs pro 88.9s）；
-    # failover 到其他 provider 时不覆盖型号名（flash 名只对 deepseek 端点有效）
+    # 历史摘要专用模型：DeepSeek 默认独立使用 deepseek-chat，避免 thinking 模型
+    # 只把正文写进 reasoning_content；failover 到其他 provider 时不覆盖型号名。
     try:
-        flash_name = os.getenv("SUMMARY_MODE_NAME") if provider == "deepseek" else None
-        summary_llm = get_langchain_llm(provider, temperature=0.3, model_name=flash_name)
+        summary_llm = get_summary_llm(provider, temperature=0.3)
     except Exception:
         summary_llm = llm
     llm_with_tools = llm.bind_tools(tools)#传个大模型告诉他有什么工具和怎么正确的用变成json格式给LLM
@@ -186,7 +190,10 @@ def maybe_condense(state: MessagesState):#压缩历史对话
     summary = None#标记摘要是否成功生成
     for attempt in range(3):
         try:
-            summary = summary_llm.invoke([HumanMessage(content=summary_prompt)]).content#获取摘要（用廉价 deepseek）
+            summary = extract_message_text(
+                summary_llm.invoke([HumanMessage(content=summary_prompt)]),
+                allow_reasoning_fallback=True,
+            )
             break#服务器错误，网络错误，调用次数超过限制
         except (openai.InternalServerError, openai.APIConnectionError, openai.RateLimitError):
             time.sleep(1 + attempt)
@@ -276,17 +283,30 @@ def _current_request_text(text):
     return text.strip()
 
 
+def _is_recipe_selection_request(text: str) -> bool:
+    """只把已经进入菜品选择的请求送入图片链路，健康泛问答不启动搜图。"""
+    text = str(text or "").strip()
+    if any(marker in text for marker in ("帮我做", "做道", "做个", "做一份", "来道", "来个", "菜品", "菜谱", "食谱")):
+        return True
+    if any(marker in text for marker in ("推荐", "想吃")):
+        return any(char in text for char in ("鸡", "鱼", "肉", "蛋", "虾", "豆腐", "面", "饭", "菜", "汤", "粥", "粉"))
+    return False
+
+
 def _wants_recipe_images(messages):
     """判断本轮是否由后端明确授权配图。
 
-    配图跟随“决策阶段”，不再按“像饮食请求”粗暴触发：
-    推荐/追问/餐馆/上门服务不烧图；确定一道或换一道才进入配图。"""
+    配图跟随“决策阶段”：健康闲聊/追问/餐馆/上门服务不烧图；
+    具体菜品推荐、确认或更换一道菜时进入配图链路，最终仍以 recipes 为准。"""
     text = _latest_user_text(messages)
     if not text:
         return False
     if "【配图开关：开启】" in text or "【本轮需要配图】" in text:
         return True
-    return _classify_turn_intent(messages) in ("confirm_one", "change_one")
+    intent = _classify_turn_intent(messages)
+    return intent in ("confirm_one", "change_one") or (
+        intent == "recommend" and _is_recipe_selection_request(text)
+    )
 
 
 def _recent_recipe_names(messages, limit=8):
@@ -418,13 +438,23 @@ def _messages_for_current_turn(messages, isolate_old_context=False):
     return messages[index:]
 
 
+def _current_turn_has_tool_result(messages) -> bool:
+    """本轮是否已经执行过工具，避免强制搜索在回边后重复触发。"""
+    start = _latest_user_index(messages)
+    if start is None:
+        return False
+    return any(isinstance(m, ToolMessage) for m in messages[start + 1:])
+
+
 @trace_node("chef_think")
 def chef_agent_node(state: MessagesState):
     messages = state["messages"]#已经被压缩过后的4种消息类的消息
     # 前置插入系统提示词，再追加历史对话消息（先清掉孤儿 ToolMessage 防 API 400）
     latest_text = _latest_user_text(messages)
     latest_has_image = _latest_user_has_image(messages)
-    if _should_force_web_search(latest_text):
+    # 强制搜索只负责本轮第一次决策；工具结果回流到 chef_think 后必须交给
+    # LLM 基于结果收口，否则同一轮会反复创建同样的 web_search，直到耗尽预算。
+    if _should_force_web_search(latest_text) and not _current_turn_has_tool_result(messages):
         return {
             "messages": [
                 AIMessage(
@@ -519,18 +549,73 @@ def tool_budget_finalize_node(state: "ChefState"):
             break
     user_text = _current_request_text(_latest_user_text(messages))
     used = int(state.get("tool_calls_in_turn", 0) or 0)
-    content = (
+    fallback = (
         f"我已经完成了 {used} 次资料检索，为了避免继续空转，先基于现有信息给你收口："
         "优先选少油少盐、食材明确、做法简单的一道；如果涉及慢病、腹泻、痛风或控糖，"
         "避开油炸、重辣、冷饮和高糖饮料。"
     )
     if user_text:
-        content += f"\n\n针对你这次说的「{user_text[:60]}」，我会按这些边界给出稳妥建议。"
+        fallback += f"\n\n针对你这次说的「{user_text[:60]}」，我会按这些边界给出稳妥建议。"
+
+    # 预算耗尽不是错误：用已有工具结果做一次不带工具的收口生成。若上游仍失败，
+    # 或生成内容命中健康硬禁忌，则退回确定性的安全文案，绝不让本轮落库为空。
+    content = fallback
+    evidence = _tool_result_evidence(messages)
+    if evidence:
+        try:
+            response = llm.invoke([
+                SystemMessage(content=(
+                    "你是小膳管家。请只根据用户需求和已经检索到的资料，直接给出最终中文建议。"
+                    "不要再索取或调用工具，不要描述内部流程；优先用一道可执行、少油少盐的菜收口。"
+                    "资料不足时明确说明不确定，不要编造。"
+                )),
+                HumanMessage(content=(
+                    f"用户需求：{user_text or '继续完成本轮建议'}\n\n"
+                    f"已检索到的工具资料：\n{evidence}"
+                )),
+            ])
+            candidate = response.content
+            if isinstance(candidate, list):
+                candidate = "".join(
+                    str(block.get("text", ""))
+                    for block in candidate
+                    if isinstance(block, dict)
+                )
+            candidate = str(candidate or "").strip()
+            if candidate and not audit(candidate, _merged_conditions(user_text)):
+                content = candidate
+        except Exception:
+            pass
     return {
         "messages": removals + [AIMessage(content=content)],
         "tool_budget_exhausted": True,
         "verify_status": "ok",
     }
+
+
+def _tool_result_evidence(messages, max_items=3, max_chars=1800) -> str:
+    """把最近工具结果压成供收口模型使用的短证据，避免把原始长 JSON 再灌满上下文。"""
+    blocks = []
+    for message in reversed(messages or []):
+        if not isinstance(message, ToolMessage):
+            continue
+        raw = str(message.content or "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            raw = str(parsed.get("text") or parsed.get("content") or raw)
+        raw = re.sub(r"\s+", " ", raw).strip()
+        if not raw:
+            continue
+        name = str(getattr(message, "name", "") or "tool")
+        blocks.append(f"[{name}] {raw}")
+        if len(blocks) >= max_items:
+            break
+    return "\n\n".join(reversed(blocks))[:max_chars]
 
 # --------------------------------------------------------------------------- #
 # 从整个对话消息列表里，提取、拼接给结构化 LLM 使用的 Prompt 上下文
@@ -623,7 +708,7 @@ def _looks_like_dining_request(text: str) -> bool:
     markers = (
         "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
         "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
-        "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
+        "推荐", "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
         "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
         "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
         "痛风", "尿酸", "健康饮食", "附近吃什么",

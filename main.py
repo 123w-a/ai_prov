@@ -10,6 +10,7 @@ from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 UR
 from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
 from feedback_store import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
 from pathlib import Path
+from vision_service import describe_image
 
 # 用户长期偏好文件路径（白名单目录 data/ 下）
 _PREFS_PATH = str(Path(__file__).resolve().parent / "data" / "preferences.txt")
@@ -162,12 +163,21 @@ def build_human_message(text, image_url=None, location_context=None):
             + text
         )
     if image_url:
-        return HumanMessage(
-            content=[
-                {"type": "text", "text": text},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ]
-        )
+        try:
+            vision_text = describe_image(image_url, text)
+            text = (
+                f"{text}\n\n"
+                "【视觉模型识别结果（客观事实，仅用于本轮推理）】\n"
+                f"{vision_text}"
+            )
+        except Exception as exc:
+            print(f"[vision] 图片预处理失败，主脑改走文字降级：{exc}")
+            text = (
+                f"{text}\n\n"
+                "【图片识别未完成】当前视觉服务不可用，"
+                "请明确告诉我图片里的食材和数量，我再继续推荐。"
+            )
+        return HumanMessage(content=text)
     return HumanMessage(content=text)
 
 
@@ -239,6 +249,15 @@ def _stream_agent(message, session_id):
                         print(f"[agent-metrics] tool_calls_in_turn={used}")
                 elif node == "tool_budget_finalize":
                     print("[agent-metrics] tool_budget_exhausted=true")
+                    msgs = (update or {}).get("messages") or []
+                    tail_type = type(msgs[-1]).__name__ if msgs else "none"
+                    if msgs and tail_type == "AIMessage":
+                        content = _normalize_stream_content(msgs[-1].content).strip()
+                        if content:
+                            # 预算耗尽路线不会进入 structure_answer，收口正文必须
+                            # 在这里显式转发，否则前端与落库都会拿到空回答。
+                            yield ("token", content)
+                    continue
                 elif node == "verify_answer":
                     status = (update or {}).get("verify_status")
                     attempts = (update or {}).get("verify_attempts")

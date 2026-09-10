@@ -24,25 +24,128 @@ router = APIRouter()  # 分文件写接口的小路由
 # 图片 MIME 白名单：挡掉非图片和可能的恶意文件
 ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 _CANCELLED_IMAGE_TURNS: set[str] = set()
+_CANCELLED_IMAGE_KEEP_TEXT: set[str] = set()
 _CANCELLED_IMAGE_LOCK = threading.Lock()
 _RECIPE_IMAGE_CACHE: dict[tuple[str, bool], tuple[str | None, str, float]] = {}
 _RECIPE_IMAGE_CACHE_LOCK = threading.Lock()
 _SEARCH_IMAGE_CACHE_TTL = 60 * 60 * 6
 _AI_IMAGE_CACHE_TTL = 60 * 60 * 24 * 7
+_ACTIVE_TURN_RECORDS: dict[str, int] = {}
+_ACTIVE_TURN_RECORDS_LOCK = threading.Lock()
+
+
+def _find_global_dish_asset(name: str):
+    try:
+        from dish_assets_store import find_dish_asset
+        return find_dish_asset(name)
+    except Exception:
+        return None
+
+
+def _save_global_dish_assets(answer_obj: dict, session_id: str) -> None:
+    if not isinstance(answer_obj, dict):
+        return
+    try:
+        from dish_assets_store import upsert_dish_asset
+        for recipe in answer_obj.get("recipes") or []:
+            if isinstance(recipe, dict) and str(recipe.get("name") or "").strip():
+                upsert_dish_asset(recipe, session_id)
+    except Exception:
+        pass
+
+
+def _global_asset_prompt(message: str) -> str:
+    """把跨会话资产作为参考资料注入当前请求，不把旧会话结论当成当前结论。"""
+    requested_name = _extract_requested_dish(message)
+    asset = _find_global_dish_asset(requested_name) if requested_name else None
+    if not asset:
+        try:
+            from dish_assets_store import find_dish_asset_in_text
+            asset = find_dish_asset_in_text(message)
+        except Exception:
+            asset = None
+    if not asset:
+        return ""
+    recipe = asset.get("recipe") or {}
+    image_url = asset.get("image_url") or recipe.get("image_url")
+    lines = [
+        "【跨对话菜品资产参考】",
+        f"系统曾保存过基础菜品「{asset.get('name') or recipe.get('name') or requested_name}」。",
+        "这只是基础资料，不能继承来源对话的健康结论；必须根据本次对话的健康状态、口味和场景重新判断。",
+    ]
+    if image_url:
+        lines.append(f"- 已有可复用配图：{image_url}")
+    for field, label in (("intro", "基础介绍"), ("seasonings", "调味"), ("steps", "基础步骤")):
+        value = recipe.get(field)
+        if value:
+            lines.append(f"- {label}：{json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else value}")
+    return "\n".join(lines)
 
 
 def _image_cancel_key(session_id: str, turn_id: str | None = None) -> str:
     return f"{session_id}:{turn_id}" if turn_id else session_id
 
 
-def _cancel_image_for_turn(session_id: str, turn_id: str | None = None) -> None:
+def _cancel_image_for_turn(
+    session_id: str,
+    turn_id: str | None = None,
+    keep_text: bool = False,
+) -> None:
+    key = _image_cancel_key(session_id, turn_id)
     with _CANCELLED_IMAGE_LOCK:
-        _CANCELLED_IMAGE_TURNS.add(_image_cancel_key(session_id, turn_id))
+        _CANCELLED_IMAGE_TURNS.add(key)
+        if keep_text:
+            _CANCELLED_IMAGE_KEEP_TEXT.add(key)
+        else:
+            _CANCELLED_IMAGE_KEEP_TEXT.discard(key)
 
 
 def _clear_image_cancel(session_id: str, turn_id: str | None = None) -> None:
+    key = _image_cancel_key(session_id, turn_id)
     with _CANCELLED_IMAGE_LOCK:
-        _CANCELLED_IMAGE_TURNS.discard(_image_cancel_key(session_id, turn_id))
+        _CANCELLED_IMAGE_TURNS.discard(key)
+        _CANCELLED_IMAGE_KEEP_TEXT.discard(key)
+
+
+def _clear_image_cancel_after_thread(session_id: str, turn_id: str | None, image_thread) -> None:
+    """后台补图线程结束后再清理取消标记，避免取消与回写竞态。"""
+    if image_thread is None or not image_thread.is_alive():
+        _clear_image_cancel(session_id, turn_id)
+        _forget_turn_record(session_id, turn_id)
+        return
+
+    def wait_and_clear():
+        try:
+            image_thread.join()
+        finally:
+            _clear_image_cancel(session_id, turn_id)
+            _forget_turn_record(session_id, turn_id)
+
+    threading.Thread(target=wait_and_clear, daemon=True).start()
+
+
+def _clear_stale_image_cancel_for_new_turn(session_id: str, turn_id: str | None = None) -> None:
+    """新一轮开始前清掉上一轮遗留的取消标记。
+
+    兼容旧客户端不传 turn_id 的情况：同时移除会话级旧标记，避免它
+    永久影响同一会话后续请求。
+    """
+    prefix = f"{session_id}:"
+    with _CANCELLED_IMAGE_LOCK:
+        _CANCELLED_IMAGE_TURNS.difference_update(
+            {
+                key
+                for key in _CANCELLED_IMAGE_TURNS
+                if key == session_id or key.startswith(prefix)
+            }
+        )
+        _CANCELLED_IMAGE_KEEP_TEXT.difference_update(
+            {
+                key
+                for key in _CANCELLED_IMAGE_KEEP_TEXT
+                if key == session_id or key.startswith(prefix)
+            }
+        )
 
 
 def _is_image_cancelled(session_id: str, turn_id: str | None = None) -> bool:
@@ -51,6 +154,40 @@ def _is_image_cancelled(session_id: str, turn_id: str | None = None) -> bool:
             _image_cancel_key(session_id, turn_id) in _CANCELLED_IMAGE_TURNS
             or session_id in _CANCELLED_IMAGE_TURNS
         )
+
+
+def _should_keep_text_on_cancel(session_id: str, turn_id: str | None = None) -> bool:
+    with _CANCELLED_IMAGE_LOCK:
+        return (
+            _image_cancel_key(session_id, turn_id) in _CANCELLED_IMAGE_KEEP_TEXT
+            or session_id in _CANCELLED_IMAGE_KEEP_TEXT
+        )
+
+
+def _active_turn_key(session_id: str, turn_id: str | None) -> str | None:
+    return f"{session_id}:{turn_id}" if turn_id else None
+
+
+def _remember_turn_record(session_id: str, turn_id: str | None, record_id: int | None) -> None:
+    key = _active_turn_key(session_id, turn_id)
+    if key and record_id is not None:
+        with _ACTIVE_TURN_RECORDS_LOCK:
+            _ACTIVE_TURN_RECORDS[key] = record_id
+
+
+def _get_turn_record(session_id: str, turn_id: str | None) -> int | None:
+    key = _active_turn_key(session_id, turn_id)
+    if not key:
+        return None
+    with _ACTIVE_TURN_RECORDS_LOCK:
+        return _ACTIVE_TURN_RECORDS.get(key)
+
+
+def _forget_turn_record(session_id: str, turn_id: str | None) -> None:
+    key = _active_turn_key(session_id, turn_id)
+    if key:
+        with _ACTIVE_TURN_RECORDS_LOCK:
+            _ACTIVE_TURN_RECORDS.pop(key, None)
 
 
 def _apply_mode_prompt(message: str, mode: str) -> str:
@@ -91,6 +228,66 @@ def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
     with _RECIPE_IMAGE_CACHE_LOCK:
         _RECIPE_IMAGE_CACHE[key] = (image_url, source, now)
     return image_url, source
+
+
+def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
+    """确认上一道已有配图的菜时，直接复用原答案，避免重新命名和换图。
+
+    只有上一轮确实已经有图才走这个短路；没有图时仍交给原有确认流程补图，
+    这样不会改变首次确认菜品的行为。
+    """
+    try:
+        from sessions_store import find_recent_recipe_for_image
+
+        requested_name = _extract_requested_dish(message)
+        target = find_recent_recipe_for_image(session_id, requested_name)
+        if not target and requested_name:
+            target = find_recent_recipe_for_image(session_id, None)
+        if not target:
+            return None
+
+        answer = target.get("answer")
+        if not isinstance(answer, dict):
+            return None
+        recipes = answer.get("recipes") or []
+        recipe_index = int(target.get("recipe_index") or 0)
+        if recipe_index < 0 or recipe_index >= len(recipes):
+            return None
+        recipe = recipes[recipe_index]
+        if not isinstance(recipe, dict):
+            return None
+
+        image_url = recipe.get("image_url")
+        if not image_url and recipe_index == 0:
+            image_url = answer.get("image_url")
+        if not image_url:
+            return None
+
+        # 通过 JSON 深拷贝，避免修改会话读取结果中的嵌套对象。
+        reused = json.loads(json.dumps(answer, ensure_ascii=False))
+        reused["opening"] = (
+            f"好，就按「{target['dish_name']}」来。我沿用上一轮的方案和配图，"
+            "下面给你最终做法。"
+        )
+        reused["image_requested"] = True
+        reused_recipe = (reused.get("recipes") or [])[recipe_index]
+        reused_recipe["image_url"] = image_url
+        reused_recipe["image_ai_generated"] = bool(
+            recipe.get("image_ai_generated")
+            or (answer.get("image_ai_generated") if recipe_index == 0 else False)
+        )
+        if recipe_index == 0:
+            reused["image_url"] = image_url
+            reused["image_ai_generated"] = reused_recipe["image_ai_generated"]
+            reused["image_note"] = (
+                reused_recipe.get("image_note")
+                or answer.get("image_note")
+                or reused.get("image_note")
+                or ""
+            )
+        return reused
+    except Exception:
+        return None
 
 
 def _is_recipe_change_request(message: str) -> bool:
@@ -139,7 +336,7 @@ def _looks_like_dining_request(message: str) -> bool:
     markers = (
         "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
         "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
-        "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
+        "推荐", "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
         "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
         "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
         "痛风", "尿酸", "健康饮食", "附近吃什么",
@@ -192,12 +389,39 @@ def _classify_turn_intent(message: str) -> str:
     return "other"
 
 
+def _home_service_redirect_text() -> str:
+    """说明上门私厨的能力边界，并把用户转到当前可用的饮食功能。"""
+    return (
+        "我理解你是想让别人直接帮你做好这顿饭。\n\n"
+        "目前小膳管家还没有真实的私厨上门预约、派单、支付或上门履约功能，"
+        "所以现在不能直接替你安排厨师上门，也不会假装已经进入预约流程。\n\n"
+        "但我可以马上帮你换一种方式解决：\n\n"
+        "1. 在家自己做：根据你的食材、口味和健康情况，给你一道能直接照做的菜谱。\n"
+        "2. 推荐附近餐馆：结合位置、预算和健康要求，帮你筛选适合到店吃的餐馆和菜品。\n"
+        "3. 帮你选外卖/看菜单：分析菜单里的高盐、高油、腌制品和不适合你的做法。\n"
+        "4. 了解未来私厨服务：介绍以后选择私厨时需要确认的资质、价格、卫生和服务范围。\n\n"
+        "你直接回复“1、2、3 或 4”，我就按对应方式继续。"
+    )
+
+
+def _is_recipe_selection_request(message: str) -> bool:
+    """只把已经进入菜品选择的请求送入图片链路，健康泛问答不启动搜图。"""
+    text = str(message or "").strip()
+    if any(marker in text for marker in ("帮我做", "做道", "做个", "做一份", "来道", "来个", "菜品", "菜谱", "食谱")):
+        return True
+    if any(marker in text for marker in ("推荐", "想吃")):
+        return any(char in text for char in ("鸡", "鱼", "肉", "蛋", "虾", "豆腐", "面", "饭", "菜", "汤", "粥", "粉"))
+    return False
+
+
 def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
-    """首次菜谱流程：显式配图最高优先；自动配图只给确认一道/换一道。"""
+    """菜品推荐/确认流程允许配图；没有具体 recipes 时由 answer 阶段关闭展示。"""
     if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
         return _looks_like_dining_request(message)
     intent = _classify_turn_intent(message)
-    return intent in {"confirm_one", "change_one"}
+    return intent in {"confirm_one", "change_one"} or (
+        intent == "recommend" and _is_recipe_selection_request(message)
+    )
 
 
 def _is_standalone_image_request(message: str, want_image: str | None) -> bool:
@@ -324,9 +548,34 @@ def health():
 
 
 @router.post("/chat/cancel-image")
-async def cancel_image_decision(session_id: str = Form(...), turn_id: str | None = Form(None)):
-    _cancel_image_for_turn(session_id, turn_id)
-    return {"code": 200, "messages": "已取消配图决策", "data": {"session_id": session_id, "turn_id": turn_id}}
+async def cancel_image_decision(
+    session_id: str = Form(...),
+    turn_id: str | None = Form(None),
+    keep_text: bool = Form(False),
+):
+    _cancel_image_for_turn(session_id, turn_id, keep_text=keep_text)
+    record_id = _get_turn_record(session_id, turn_id)
+    if record_id is not None:
+        try:
+            if keep_text:
+                from sessions_store import mark_message_image_cancelled
+                mark_message_image_cancelled(session_id, record_id)
+            else:
+                from sessions_store import mark_message_cancelled
+                mark_message_cancelled(session_id, record_id)
+        except Exception:
+            pass
+    message = "已取消本轮回答" if not keep_text else "已取消配图，保留文字"
+    return {
+        "code": 200,
+        "messages": message,
+        "data": {
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "record_id": record_id,
+            "keep_text": keep_text,
+        },
+    }
 
 
 @router.post("/chat")
@@ -350,6 +599,9 @@ async def chat(
     if not message.strip() and image is None and not image_url:
         raise HTTPException(status_code=400, detail="请至少输入文字、上传图片或提供图片 URL")
 
+    # 取消标记只属于上一轮图片任务，不能跨轮污染新的对话。
+    _clear_stale_image_cancel_for_new_turn(session_id, turn_id)
+
     try:
         save_img_name, save_img_type, save_img_url = await _handle_image(image, image_url)
     except HTTPException:
@@ -359,6 +611,9 @@ async def chat(
     turn_intent = _classify_turn_intent(message)
     image_requested = _should_enable_image_pipeline(message, want_image)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
+    asset_prompt = _global_asset_prompt(message)
+    if asset_prompt:
+        effective_message = f"{asset_prompt}\n\n{effective_message}"
     human_message = build_human_message(
         _apply_mode_prompt(effective_message, mode),
         save_img_url,
@@ -374,8 +629,36 @@ async def chat(
     try:
         from sessions_store import append_message as _append, update_message_answer as _update_answer
         pending_rec_id = _append(session_id, message, _PENDING, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), save_img_name, save_img_type, save_img_url)
+        _remember_turn_record(session_id, turn_id, pending_rec_id)
     except Exception:
         pending_rec_id = None
+
+    if turn_intent == "home_service":
+        def home_service_generator():
+            answer = _home_service_redirect_text()
+            try:
+                if pending_rec_id is not None:
+                    _update_answer(
+                        session_id,
+                        pending_rec_id,
+                        answer,
+                        save_img_name,
+                        save_img_type,
+                        save_img_url,
+                    )
+            except Exception:
+                pass
+            try:
+                yield f"data: {json.dumps({'token': answer}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
+            finally:
+                _clear_image_cancel(session_id, turn_id)
+                _forget_turn_record(session_id, turn_id)
+
+        return StreamingResponse(
+            home_service_generator(),
+            media_type="text/event-stream",
+        )
 
     standalone_image_request = _is_standalone_image_request(message, want_image)
     if not standalone_image_request and _wants_image(message, want_image) and not _is_recipe_change_request(message):
@@ -387,6 +670,39 @@ async def chat(
                 standalone_image_request = True
         except Exception:
             pass
+
+    # 确认已有图片的上一轮方案时，复用原答案，不再重新跑 Agent/搜图/生图。
+    # 明确“换图/重新生成”等请求不会进入这里。
+    reused_confirmation = None
+    if (
+        turn_intent == "confirm_one"
+        and not _is_image_revision_request(message, want_image)
+        and not _is_recipe_change_request(message)
+    ):
+        reused_confirmation = _reusable_confirmation_answer(session_id, message)
+
+    def reused_confirmation_generator():
+        final_answer = ""
+        try:
+            answer_obj = reused_confirmation or {}
+            final_answer = json.dumps(answer_obj, ensure_ascii=False)
+            yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
+        finally:
+            try:
+                if pending_rec_id is not None:
+                    _update_answer(
+                        session_id,
+                        pending_rec_id,
+                        final_answer or "（本轮确认未能完成。）",
+                        save_img_name,
+                        save_img_type,
+                        save_img_url,
+                    )
+            except Exception:
+                pass
+            _clear_image_cancel(session_id, turn_id)
+            _forget_turn_record(session_id, turn_id)
+            yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     def standalone_image_generator():
         final_answer = ""
@@ -421,6 +737,11 @@ async def chat(
                     image_url, source = _find_recipe_image_cached(dish_hint, allow_ai_fallback=True)
                 except Exception:
                     image_url, source = None, "none"
+                if not image_url:
+                    asset = _find_global_dish_asset(dish_hint)
+                    if asset:
+                        image_url = asset.get("image_url") or (asset.get("recipe") or {}).get("image_url")
+                        source = "ai" if asset.get("image_ai_generated") else "real"
                 image_ai = source == "ai"
                 if image_url:
                     note = "AI 生成示意图（非真实成品照，仅供样式参考）" if image_ai else ""
@@ -432,6 +753,7 @@ async def chat(
                             _update_answer(session_id, pending_rec_id, final_answer, save_img_name, save_img_type, save_img_url)
                     except Exception:
                         pass
+                    _save_global_dish_assets(answer_obj, session_id)
                     return
                 note = "暂无成品图，文字做法完整可照做"
                 answer_obj = _standalone_image_answer(dish_hint, None, False, note)
@@ -491,7 +813,7 @@ async def chat(
                     image_ai,
                     note,
                 )
-                yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'turn_id': turn_id, 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai}}, ensure_ascii=False)}\n\n"
                 answer_obj = _standalone_image_answer(dish_name, image_url, image_ai, note, current_recipe)
                 final_answer = json.dumps(answer_obj, ensure_ascii=False)
                 yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
@@ -500,7 +822,7 @@ async def chat(
                 answer_obj = _standalone_image_answer(dish_name, None, False, note, current_recipe)
                 final_answer = json.dumps(answer_obj, ensure_ascii=False)
                 yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'image_failed': {'record_id': target['record_id'], 'indexes': [target['recipe_index']]}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'image_failed': {'record_id': target['record_id'], 'turn_id': turn_id, 'indexes': [target['recipe_index']]}}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return
@@ -510,6 +832,8 @@ async def chat(
                     _update_answer(session_id, pending_rec_id, final_answer or "（本轮配图请求未能完成。）", save_img_name, save_img_type, save_img_url)
             except Exception:
                 pass
+            _clear_image_cancel(session_id, turn_id)
+            _forget_turn_record(session_id, turn_id)
             yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     def event_generator():
@@ -540,7 +864,17 @@ async def chat(
             if not (answer and answer.strip()):
                 answer = "（本轮回答未能完成：上游模型超时或连接中断，请重问一次。）"
             if _is_image_cancelled(session_id, turn_id):
-                answer = _strip_answer_images_for_cancel(answer)
+                if pending_rec_id is not None:
+                    try:
+                        if _should_keep_text_on_cancel(session_id, turn_id):
+                            from sessions_store import mark_message_image_cancelled
+                            mark_message_image_cancelled(session_id, pending_rec_id, answer)
+                        else:
+                            from sessions_store import mark_message_cancelled
+                            mark_message_cancelled(session_id, pending_rec_id)
+                    except Exception:
+                        pass
+                return
             if pending_rec_id is not None:
                 try:
                     _update_answer(session_id, pending_rec_id, answer, save_img_name, save_img_type, save_img_url)
@@ -558,9 +892,11 @@ async def chat(
         image_failed_sent = False  # image_failed 去重：补图线程早到 / done 分支补发只发一次
 
         def _fill_images():
-            """后台补图：推荐阶段只搜现成图；确定/换一道才允许 AI 生图。"""
-            allow_ai_fallback = turn_intent in {"confirm_one", "change_one"}
-            deadline = time.time() + (60 if allow_ai_fallback else 25)
+            """后台补图：先复用资产/搜现成图，找不到时统一允许 AI 兜底。"""
+            # 默认推荐也必须保持“有菜就尽量有图”的原有体验；
+            # 全局资产命中时不会走到生图，只有没有可用资产和现成图时才消耗 AI 兜底。
+            allow_ai_fallback = True
+            deadline = time.time() + 60
             for index, recipe in enumerate(list(answer_dict.get("recipes") or [])):
                 if _is_image_cancelled(session_id, turn_id):
                     return
@@ -602,9 +938,20 @@ async def chat(
                             _update_answer(session_id, pending_rec_id, json.dumps(answer_dict, ensure_ascii=False), save_img_name, save_img_type, save_img_url)
                         except Exception:
                             pass
+                    try:
+                        from dish_assets_store import update_dish_asset_image
+                        update_dish_asset_image(name, image_url, ai_flag, note)
+                    except Exception:
+                        pass
                 if _is_image_cancelled(session_id, turn_id):
                     return
-                events.put(("item", ("image", {"index": index, "url": image_url, "ai_generated": ai_flag})))
+                events.put(("item", ("image", {
+                    "record_id": pending_rec_id,
+                    "turn_id": turn_id,
+                    "index": index,
+                    "url": image_url,
+                    "ai_generated": ai_flag,
+                })))
             # 第5问：补图结束给失败终态——收集最终仍无图的菜品推 image_failed 事件，
             # 前端据此把含糊的「暂无可靠成品图」占位升级为明确的失败说明（数据诚实原则）。
             if _is_image_cancelled(session_id, turn_id):
@@ -614,7 +961,11 @@ async def chat(
                 if not r.get("image_url")
             ]
             if failed_indexes:
-                events.put(("item", ("image_failed", {"indexes": failed_indexes})))
+                events.put(("item", ("image_failed", {
+                    "record_id": pending_rec_id,
+                    "turn_id": turn_id,
+                    "indexes": failed_indexes,
+                })))
 
         def run_agent():
             try:
@@ -679,7 +1030,13 @@ async def chat(
                                 failed_indexes = []
                                 for i, r in enumerate(answer_dict.get("recipes") or []):
                                     if r.get("image_url"):
-                                        img_event = {"index": i, "url": r["image_url"], "ai_generated": bool(r.get("image_ai_generated"))}
+                                        img_event = {
+                                            "record_id": pending_rec_id,
+                                            "turn_id": turn_id,
+                                            "index": i,
+                                            "url": r["image_url"],
+                                            "ai_generated": bool(r.get("image_ai_generated")),
+                                        }
                                         yield f"data: {json.dumps({'image': img_event}, ensure_ascii=False)}\n\n"
                                     elif not img_thread.is_alive():
                                         # 真正走完补图流程仍无图，才落明确失败态。
@@ -689,7 +1046,7 @@ async def chat(
                                         failed_indexes.append(i)
                                 final_answer = json.dumps(answer_dict, ensure_ascii=False)
                                 if failed_indexes and not image_failed_sent and not img_thread.is_alive() and not _is_image_cancelled(session_id, turn_id):
-                                    yield f"data: {json.dumps({'image_failed': {'indexes': failed_indexes}}, ensure_ascii=False)}\n\n"
+                                    yield f"data: {json.dumps({'image_failed': {'record_id': pending_rec_id, 'turn_id': turn_id, 'indexes': failed_indexes}}, ensure_ascii=False)}\n\n"
                     break
 
                 kind, payload = event
@@ -708,10 +1065,43 @@ async def chat(
                         print(f"[flow] answer json-parse failed: {_pe}")
                         raise
                     if isinstance(answer_dict, dict):
-                        answer_dict["image_requested"] = bool(image_requested)
+                        # 只有模型确实产出具体菜品时，推荐阶段才进入图片展示；
+                        # 普通健康问答即使命中饮食关键词，也不生成空图片槽。
+                        has_recipes = any(
+                            isinstance(recipe, dict) and str(recipe.get("name") or "").strip()
+                            for recipe in (answer_dict.get("recipes") or [])
+                        )
+                        answer_dict["image_requested"] = bool(image_requested and has_recipes)
+                        if answer_dict["image_requested"]:
+                            # 跨会话资产只复用基础菜品和图片；健康结论仍来自本轮 Agent。
+                            for recipe in answer_dict.get("recipes") or []:
+                                if not isinstance(recipe, dict) or recipe.get("image_url"):
+                                    continue
+                                asset = _find_global_dish_asset(recipe.get("name"))
+                                if not asset:
+                                    continue
+                                asset_recipe = asset.get("recipe") or {}
+                                cached_url = asset.get("image_url") or asset_recipe.get("image_url")
+                                if cached_url:
+                                    recipe["image_url"] = cached_url
+                                    recipe["image_ai_generated"] = bool(
+                                        asset.get("image_ai_generated")
+                                        or asset_recipe.get("image_ai_generated")
+                                    )
+                                    recipe["image_note"] = (
+                                        asset.get("image_note")
+                                        or asset_recipe.get("image_note")
+                                        or ""
+                                    )
+                            if answer_dict.get("recipes"):
+                                first = answer_dict["recipes"][0]
+                                answer_dict["image_url"] = first.get("image_url")
+                                answer_dict["image_ai_generated"] = bool(first.get("image_ai_generated"))
+                                answer_dict["image_note"] = first.get("image_note") or ""
+                        _save_global_dish_assets(answer_dict, session_id)
                     # 卡片先出、图片后补：无图菜名交给后台线程（25s 预算），
                     # 搜到即推 image 事件让前端动态填图，不再阻塞 answer 120s。
-                    if image_requested and not _is_image_cancelled(session_id, turn_id) and any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
+                    if answer_dict.get("image_requested") and not _is_image_cancelled(session_id, turn_id) and any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
                         img_thread = threading.Thread(target=_fill_images, daemon=True)
                         img_thread.start()
                     # 先通知前端"正文说完了，正在整理卡片"，再推整包 JSON
@@ -735,11 +1125,17 @@ async def chat(
         finally:
             # 无论正常完成、后端异常还是客户端断开（GeneratorExit），都兜底落库一次
             _persist_once()
+            # 当前流已经结束，取消状态不能泄漏到下一轮。
+            _clear_image_cancel_after_thread(session_id, turn_id, img_thread)
 
         # 整轮正常结束（持久化已由 finally 完成，此处幂等）
         yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
-        standalone_image_generator() if standalone_image_request else event_generator(),
+        reused_confirmation_generator()
+        if reused_confirmation is not None
+        else standalone_image_generator()
+        if standalone_image_request
+        else event_generator(),
         media_type="text/event-stream",
     )

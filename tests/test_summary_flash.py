@@ -1,11 +1,10 @@
-"""摘要模型分层回归：deepseek 时 summary_llm 强制 flash，其他 provider 不覆盖。"""
+"""摘要模型分层回归：deepseek 可配置专用模型，其他 provider 不覆盖。"""
 
 import os
 import unittest
 from unittest.mock import patch
 
 import agent_graph
-from model_name import get_langchain_llm
 
 
 class SummaryFlashTest(unittest.TestCase):

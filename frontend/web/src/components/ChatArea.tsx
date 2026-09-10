@@ -21,7 +21,7 @@ interface Props {
     wantImage: boolean,
     locationContext?: string | null,
   ) => void
-  onCancelImageDecision: () => Promise<boolean>
+  onCancelDecision: () => Promise<'cancelled' | 'kept_text' | null>
   onRenameTitle: (title: string) => void
   onClear: () => void
   onDeleteTurn: (messageId: number) => void
@@ -53,13 +53,21 @@ const STATUS_TAGS = ['昨晚没睡好', '今天肌肉酸痛', '肠胃不太舒�
 
 type VoiceState = 'idle' | 'recording' | 'transcribing'
 
+type SessionDraft = {
+  text: string
+  mode: DecisionMode
+  wantImage: boolean
+  image: File | null
+  preview: string | null
+}
+
 export function ChatArea({
   activeTitle,
   activeSessionId,
   messages,
   sending,
   onSend,
-  onCancelImageDecision,
+  onCancelDecision,
   onRenameTitle,
   onClear,
   onDeleteTurn,
@@ -83,6 +91,40 @@ export function ChatArea({
   const [locationInfo, setLocationInfo] = useState<ResolvedLocation | null>(null)
   const [locating, setLocating] = useState(false)
   const [locationPressed, setLocationPressed] = useState(false)
+  const draftsRef = useRef<Record<string, SessionDraft>>({})
+  const draftSessionRef = useRef<string | null>(activeSessionId)
+  const draftValuesRef = useRef<SessionDraft>({
+    text: '',
+    mode: 'home',
+    wantImage: false,
+    image: null,
+    preview: null,
+  })
+
+  draftValuesRef.current = { text, mode, wantImage, image, preview }
+
+  useEffect(() => {
+    const previousSessionId = draftSessionRef.current
+    if (previousSessionId) {
+      draftsRef.current[previousSessionId] = draftValuesRef.current
+    }
+
+    const nextDraft = activeSessionId ? draftsRef.current[activeSessionId] : undefined
+    const restoredDraft = nextDraft ?? {
+      text: '',
+      mode: 'home' as DecisionMode,
+      wantImage: false,
+      image: null,
+      preview: null,
+    }
+    setText(restoredDraft.text)
+    setMode(restoredDraft.mode)
+    setWantImage(restoredDraft.wantImage)
+    setImage(restoredDraft.image)
+    setPreview(restoredDraft.preview)
+    draftValuesRef.current = restoredDraft
+    draftSessionRef.current = activeSessionId
+  }, [activeSessionId])
 
   const starMessage = async (recordId: number, currentStarred?: boolean) => {
     if (!activeSessionId) return
@@ -225,9 +267,12 @@ export function ChatArea({
   const [liveElapsed, setLiveElapsed] = useState(0)
 
   const canSend = !sending && voiceState !== 'transcribing' && (text.trim().length > 0 || image)
-  const canCancelImageDecision = messages.some(
+  const canCancelDecision = messages.some(
     (message) =>
       message.role === 'assistant' && (message.streaming || message.imagePending),
+  )
+  const hasImagePending = messages.some(
+    (message) => message.role === 'assistant' && message.imagePending,
   )
 
   useEffect(() => {
@@ -307,14 +352,29 @@ export function ChatArea({
     setStatusTags([])
     setImage(null)
     setPreview(null)
-      setWantImage(false)
-      setNotice('')
-      if (fileRef.current) fileRef.current.value = ''
+    setWantImage(false)
+    draftsRef.current[activeSessionId ?? ''] = {
+      text: '',
+      mode,
+      wantImage: false,
+      image: null,
+      preview: null,
     }
+    draftValuesRef.current = {
+      text: '',
+      mode,
+      wantImage: false,
+      image: null,
+      preview: null,
+    }
+    setNotice('')
+    if (fileRef.current) fileRef.current.value = ''
+  }
 
-  const cancelImageDecision = async () => {
-    const cancelled = await onCancelImageDecision()
-    if (cancelled) setNotice('已取消当前决策')
+  const cancelDecision = async () => {
+    const result = await onCancelDecision()
+    if (result === 'kept_text') setNotice('已取消配图，已保留文字说明')
+    if (result === 'cancelled') setNotice('已取消本次回答')
   }
 
   const choosePrompt = (prompt: (typeof QUICK_PROMPTS)[number]) => {
@@ -706,9 +766,9 @@ export function ChatArea({
                           <button
                             type="button"
                             className="cancel-decision-inline"
-                            onClick={() => void cancelImageDecision()}
+                            onClick={() => void cancelDecision()}
                           >
-                            取消决策
+                            {message.imagePending ? '取消配图' : '取消回答'}
                           </button>
                         )}
                       </div>
@@ -1047,9 +1107,9 @@ export function ChatArea({
 
             <div className="send-zone">
               <span>Enter 发送 · Shift + Enter 换行</span>
-              {sending && canCancelImageDecision && (
-                <button type="button" className="cancel-decision-btn" onClick={() => void cancelImageDecision()}>
-                  取消决策
+              {sending && canCancelDecision && (
+                <button type="button" className="cancel-decision-btn" onClick={() => void cancelDecision()}>
+                  {hasImagePending ? '取消配图' : '取消回答'}
                 </button>
               )}
               <button type="button" className="send-btn" disabled={!canSend} onClick={submit}>

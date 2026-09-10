@@ -106,3 +106,13 @@ data/profile.json
 
 # 配图分流判断门测试（AI 临时验证测试，按用户要求不入库）
 tests/test_image_gating.py
+
+# 前端构建缓存（之前误提交，应忽略，可重建）
+frontend/web/.vite-cache/
+
+# 运行态用户数据（反馈/口味/周报/菜品资源/PDF目录映射，含隐私或可重建，不入库）
+data/answer_feedback.json
+data/taste_signals.json
+data/weekly_summary.json
+data/dish_assets.json
+data/toc_map.json

@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,12 +44,14 @@ class AgentDataToolsTest(unittest.TestCase):
 
     def test_weekly_tool_briefs_dishes_trends_and_tips(self):
         path = Path(__file__).with_name(".agent-meals-test.json")
+        now = datetime.now()
+        ts = lambda days_ago: (now - timedelta(days=days_ago)).isoformat(timespec="seconds")
         records = [
-            {"ts": "2026-08-25T12:00:00", "session": "s1", "dish": "番茄炒蛋",
+            {"ts": ts(2), "session": "s1", "dish": "番茄炒蛋",
              "lights": ["钠:green"], "guardrails": 0},
-            {"ts": "2026-08-26T12:00:00", "session": "s1", "dish": "番茄炒蛋",
+            {"ts": ts(1), "session": "s1", "dish": "番茄炒蛋",
              "lights": ["钠:yellow"], "guardrails": 1},
-            {"ts": "2026-08-27T12:00:00", "session": "s1", "dish": "青椒肉丝",
+            {"ts": ts(0), "session": "s1", "dish": "青椒肉丝",
              "lights": ["糖:green"], "guardrails": 0},
         ]
         path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")

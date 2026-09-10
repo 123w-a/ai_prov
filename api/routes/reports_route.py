@@ -291,8 +291,8 @@ def weekly_summary(refresh: bool = False):
         except Exception:
             pass
     try:
-        from model_name import get_langchain_llm, resolve_provider
-        llm = get_langchain_llm(resolve_provider(), temperature=0.3, max_tokens=500)
+        from model_name import extract_message_text, get_summary_llm
+        llm = get_summary_llm(temperature=0.3, max_tokens=500)
         lines = [
             f"餐数：{evidence['meals']}",
             f"常吃：{('、'.join(d for d, _ in evidence['top_dishes'])) or '无'}",
@@ -303,7 +303,7 @@ def weekly_summary(refresh: bool = False):
             f"健康条件标签：{('、'.join(evidence['conditions'])) or '无'}",
         ]
         response = llm.invoke(_SUMMARY_PROMPT.format(evidence=chr(10).join(lines)))
-        summary = str(response.content).strip()
+        summary = extract_message_text(response, allow_reasoning_fallback=True)
     except Exception as exc:
         return {"ai_summary": None, "reason": f"llm_failed: {exc}"[:160]}
     if not summary:

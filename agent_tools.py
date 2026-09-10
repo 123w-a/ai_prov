@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage  # 发送图片给视觉模型做内容校验
 from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
-from model_name import get_langchain_llm  # 获取用于图片审核的视觉模型
+from model_name import get_vision_llm  # 获取用于图片审核的视觉模型
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
 
@@ -63,8 +63,7 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
     global _IMAGE_CHECK_LLM#用外部定义的语言模型
     try:
         if _IMAGE_CHECK_LLM is None:
-            _IMAGE_CHECK_LLM = get_langchain_llm(
-                "gpt",
+            _IMAGE_CHECK_LLM = get_vision_llm(
                 temperature=0,
                 max_tokens=30,
                 timeout=15,  # 审核是短任务；75s 全局超时会让坏候选拖垮整个补图预算

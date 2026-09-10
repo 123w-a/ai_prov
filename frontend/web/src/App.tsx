@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  cancelImageDecision,
+  cancelDecision,
   clearSession,
   createSession,
   deleteMessage,
@@ -42,6 +42,10 @@ function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
   return null
 }
 
+function answerTextOnly(answer?: ChefAnswer | null): string {
+  return (answer?.opening || answer?.chef_tip || '').trim()
+}
+
 function sessionToMessages(session: Session): ChatMessage[] {
   const history: ChatMessage[] = []
   for (const record of session.messages ?? []) {
@@ -51,19 +55,28 @@ function sessionToMessages(session: Session): ChatMessage[] {
       recordId: record.id,
       role: 'user',
       text: record.user_text || (record.image_url ? '上传了一张食材图片' : '（图片）'),
-      imageUrl: record.image_url,
+      imageUrl: record.user_image_url !== undefined ? record.user_image_url : record.image_url,
       imageRequested: answer?.image_requested ?? false,
       time: record.time,
     })
+    if (record.cancelled || record.answer === '__cancelled__') continue
+    const imageCancelled = Boolean(record.image_cancelled)
+    const textOnly = imageCancelled
+      ? answerTextOnly(answer) ||
+        (record.answer && !record.answer.startsWith('{') && record.answer !== '__pending__' ? record.answer : '')
+      : ''
     history.push({
       id: `assistant-${session.session_id}-${record.id}`,
       recordId: record.id,
       role: 'assistant',
-      text: answer?.opening || (record.answer === '__pending__' ? '（回答生成中，请稍后刷新查看…）' : record.answer || ''),
-      answer,
+      text: imageCancelled
+        ? textOnly || '已取消配图，本轮没有可保留的文字内容。'
+        : answer?.opening || (record.answer === '__pending__' ? '（回答生成中，请稍后刷新查看…）' : record.answer || ''),
+      answer: imageCancelled ? null : answer,
       starred: record.starred ?? false,
       feedback: record.feedback ?? null,
       time: record.time,
+      imageCancelled,
     })
   }
   return history
@@ -205,6 +218,18 @@ function mergeSyncedAnswer(localAnswer: ChefAnswer | null | undefined, serverAns
 
 function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessage): ChatMessage {
   if (localMessage.role !== 'assistant') return serverMessage
+  if (localMessage.imageCancelled) {
+    return {
+      ...serverMessage,
+      text: localMessage.text || serverMessage.text,
+      answer: null,
+      imageRequested: false,
+      imagePending: false,
+      streaming: false,
+      stage: undefined,
+      imageCancelled: true,
+    }
+  }
   const serverHasImage = answerHasImage(serverMessage.answer)
   if ((localMessage.streaming || localMessage.imagePending) && !serverHasImage) {
     return localMessage
@@ -229,13 +254,6 @@ function mergeSyncedMessages(localMessages: ChatMessage[], serverMessages: ChatM
   })
 }
 
-function patchActiveAssistant(
-  messages: ChatMessage[],
-  assistantId: string,
-  updater: (message: ChatMessage) => ChatMessage,
-): ChatMessage[] {
-  return messages.map((message) => (message.id === assistantId ? updater(message) : message))
-}
 
 function hasPendingRecipeImages(answer: ChefAnswer, patch?: PendingImagePatch | null): boolean {
   if (!answer.image_requested) return false
@@ -341,11 +359,10 @@ export default function App() {
               : serverMessages,
           }
         })
-        selectSession(current)
       }
       return list
     },
-    [refreshSessions, selectSession],
+    [refreshSessions],
   )
 
   const handleNew = useCallback(async () => {
@@ -574,25 +591,21 @@ export default function App() {
             })),
           onImage: (img) => {
             if (cancelledImageTurnsRef.current[assistantId]) return
-            if (img.record_id != null) {
-              setMessagesBySession((current) => ({
-                ...current,
-                [sessionId!]: (current[sessionId!] ?? []).map((message) => {
-                  if (message.recordId !== img.record_id || !message.answer) return message
-                  const updated = patchAnswerImage(message.answer, img)
-                  return { ...message, answer: updated, imagePending: false, stage: undefined }
-                }),
-              }))
-              setMessagesBySession((current) => ({
-                ...current,
-                [sessionId!]: patchActiveAssistant(current[sessionId!] ?? [], assistantId, (message) => {
-                  if (!message.answer) return message
-                  const updated = patchAnswerImage(message.answer, img)
-                  return { ...message, answer: updated, imagePending: false, stage: undefined }
-                }),
-              }))
-              return
-            }
+            if (img.turn_id && img.turn_id !== assistantId) return
+            const targetRecordId = imageTarget?.recordId
+            if (targetRecordId != null && img.record_id !== targetRecordId) return
+            setMessagesBySession((current) => ({
+              ...current,
+              [sessionId!]: (current[sessionId!] ?? []).map((message) => {
+                const isTarget = targetRecordId != null
+                  ? message.recordId === targetRecordId
+                  : message.id === assistantId
+                if (!isTarget || !message.answer) return message
+                const updated = patchAnswerImage(message.answer, img)
+                return { ...message, answer: updated, imagePending: false, stage: undefined }
+              }),
+            }))
+            if (targetRecordId != null) return
             const existingPatch = pendingImagePatchRef.current[assistantId] ?? { images: [], failedIndexes: [] }
             existingPatch.images = [
               ...existingPatch.images.filter((item) => item.index !== img.index),
@@ -615,25 +628,21 @@ export default function App() {
           },
           onImageFailed: (payload) => {
             if (cancelledImageTurnsRef.current[assistantId]) return
-            if (payload.record_id != null) {
-              setMessagesBySession((current) => ({
-                ...current,
-                [sessionId!]: (current[sessionId!] ?? []).map((message) => {
-                  if (message.recordId !== payload.record_id || !message.answer) return message
-                  const updated = patchAnswerImageFailed(message.answer, payload.indexes)
-                  return { ...message, answer: updated, imagePending: false, stage: undefined }
-                }),
-              }))
-              setMessagesBySession((current) => ({
-                ...current,
-                [sessionId!]: patchActiveAssistant(current[sessionId!] ?? [], assistantId, (message) => {
-                  if (!message.answer) return message
-                  const updated = patchAnswerImageFailed(message.answer, payload.indexes)
-                  return { ...message, answer: updated, imagePending: false, stage: undefined }
-                }),
-              }))
-              return
-            }
+            if (payload.turn_id && payload.turn_id !== assistantId) return
+            const targetRecordId = imageTarget?.recordId
+            if (targetRecordId != null && payload.record_id !== targetRecordId) return
+            setMessagesBySession((current) => ({
+              ...current,
+              [sessionId!]: (current[sessionId!] ?? []).map((message) => {
+                const isTarget = targetRecordId != null
+                  ? message.recordId === targetRecordId
+                  : message.id === assistantId
+                if (!isTarget || !message.answer) return message
+                const updated = patchAnswerImageFailed(message.answer, payload.indexes)
+                return { ...message, answer: updated, imagePending: false, stage: undefined }
+              }),
+            }))
+            if (targetRecordId != null) return
             const existingPatch = pendingImagePatchRef.current[assistantId] ?? { images: [], failedIndexes: [] }
             existingPatch.failedIndexes = Array.from(new Set([...existingPatch.failedIndexes, ...payload.indexes]))
             pendingImagePatchRef.current[assistantId] = existingPatch
@@ -721,36 +730,46 @@ export default function App() {
     [activeId, syncActiveSession],
   )
 
-  const handleCancelImageDecision = useCallback(async (): Promise<boolean> => {
-    if (!activeId) return false
-    const currentAssistant = [...(messagesBySession[activeId] ?? [])].reverse().find(
+  const handleCancelDecision = useCallback(async (): Promise<'cancelled' | 'kept_text' | null> => {
+    if (!activeId) return null
+    const sessionId = activeId
+    const currentAssistant = [...(messagesBySession[sessionId] ?? [])].reverse().find(
       (message) =>
         message.role === 'assistant' && (message.streaming || message.imagePending),
     )
-    if (!currentAssistant) return false
-    if (!window.confirm('确定要取消当前决策吗？')) return false
+    if (!currentAssistant) return null
+    const keepText = Boolean(currentAssistant.imagePending)
+    const confirmText = keepText
+      ? '确定取消图片和菜谱卡片，只保留文字吗？'
+      : '确定取消本次回答吗？'
+    if (!window.confirm(confirmText)) return null
 
     cancelledImageTurnsRef.current[currentAssistant.id] = true
     abortControllersRef.current[currentAssistant.id]?.abort()
-    await cancelImageDecision(activeId, currentAssistant.id).catch(() => {})
+    delete pendingImagePatchRef.current[currentAssistant.id]
     setMessagesBySession((current) => ({
       ...current,
-      [activeId]: (current[activeId] ?? []).map((message) => {
-        if (message.id !== currentAssistant.id) return message
-        const strippedAnswer = message.answer ? stripAnswerImages(message.answer) : message.answer
-        return {
-          ...message,
-          answer: strippedAnswer,
-          imageRequested: false,
-          imagePending: false,
-          streaming: false,
-          stage: undefined,
-          text: message.text || strippedAnswer?.opening || '已取消当前决策',
-          imageCancelled: true,
-        }
-      }),
+      [sessionId]: keepText
+        ? (current[sessionId] ?? []).map((message) => {
+            if (message.id !== currentAssistant.id) return message
+            return {
+              ...message,
+              answer: null,
+              imageRequested: false,
+              imagePending: false,
+              streaming: false,
+              stage: undefined,
+              text:
+                answerTextOnly(message.answer) ||
+                message.text ||
+                '已取消配图，本轮没有可保留的文字内容。',
+              imageCancelled: true,
+            }
+          })
+        : (current[sessionId] ?? []).filter((message) => message.id !== currentAssistant.id),
     }))
-    return true
+    await cancelDecision(sessionId, currentAssistant.id, keepText).catch(() => {})
+    return keepText ? 'kept_text' : 'cancelled'
   }, [activeId, messagesBySession])
 
   useEffect(() => {
@@ -875,7 +894,7 @@ export default function App() {
               onSend={(text, image, mode, preview, wantImage, locationContext) =>
                 void handleSend(text, image, mode, preview, wantImage, locationContext)
               }
-              onCancelImageDecision={handleCancelImageDecision}
+              onCancelDecision={handleCancelDecision}
               onClear={() => void handleClearSession()}
               onDeleteTurn={(messageId) => void handleDeleteTurn(messageId)}
               onTranscribe={transcribeAudio}

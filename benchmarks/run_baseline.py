@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from configs import KB_CONFIG
 from indexing.parser_router import route, SimplePDFParser
 from nutrition_rules import audit, detect_conditions
 from benchmarks.historical_cases import CASES
@@ -32,7 +33,10 @@ def main() -> int:
     if not args.offline:
         parser.error("--offline is required for the reproducible baseline")
 
-    pdfs = sorted((ROOT / "kb_corpus").rglob("*.pdf"))
+    corpus_root = Path(KB_CONFIG["corpus_dir"])
+    if not corpus_root.is_absolute():
+        corpus_root = ROOT / corpus_root
+    pdfs = sorted(corpus_root.rglob("*.pdf"))
     documents = []
     failures = []
     started = time.perf_counter()
@@ -77,7 +81,7 @@ def main() -> int:
     report = {
         "schema": "ai-prov.offline-baseline.v1",
         "corpus": {
-            "root": "kb_corpus",
+            "root": str(corpus_root),
             "pdf_count": len(pdfs),
             "parsed_count": len(documents),
             "failure_count": len(failures),

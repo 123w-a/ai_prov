@@ -14,7 +14,8 @@
 #     "created_at": "10:37",
 #     "messages": [
 #       { "id": 1, "user_text": "...", "answer": "...", "time": "...",
-#         "image_name": "...", "image_type": "...", "image_url": "..."|null }
+#         "image_name": "...", "image_type": "...", "image_url": "..."|null,
+#         "user_image_url": "..."|null }
 #     ]
 #   }
 # 用户上传的图片只存 OSS 可访问 URL，不再存 base64/image_data；前端从对象存储直接拉取。
@@ -97,6 +98,57 @@ def _first_recipe_name(answer) -> str | None:
         return str(recipes[0].get("name") or "").strip() or None
     except Exception:
         return None
+
+
+def extract_answer_text(answer) -> str:
+    """从结构化或纯文本答案中提取可独立展示的自然语言内容。"""
+    if not answer:
+        return ""
+    if isinstance(answer, str):
+        raw = answer.strip()
+        if not raw or raw in {"__pending__", "__cancelled__"}:
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return raw
+    else:
+        parsed = answer
+    if not isinstance(parsed, dict):
+        return str(parsed or "").strip()
+    for key in ("opening", "chef_tip"):
+        text = str(parsed.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _user_image_url_for_cancel(record: dict):
+    """取得用户原始上传图；兼容旧记录中 image_url 被生成图覆盖的情况。"""
+    if "user_image_url" in record:
+        return record.get("user_image_url")
+    current_url = record.get("image_url")
+    if not current_url:
+        return None
+    try:
+        answer = json.loads(record.get("answer") or "")
+    except Exception:
+        return current_url
+    if not isinstance(answer, dict):
+        return current_url
+    generated_urls = {
+        str(url)
+        for url in [
+            answer.get("image_url"),
+            *[
+                recipe.get("image_url")
+                for recipe in (answer.get("recipes") or [])
+                if isinstance(recipe, dict)
+            ],
+        ]
+        if url
+    }
+    return None if str(current_url) in generated_urls else current_url
 
 
 def init_db():
@@ -244,6 +296,7 @@ def append_message(
                 "image_name": image_name,
                 "image_type": image_type,
                 "image_url": image_url,  # 只存 OSS URL，不存 base64
+                "user_image_url": image_url,
             }
         )
         # 只有第一条消息时，用问题前 22 字做侧栏标题
@@ -262,6 +315,8 @@ def update_message_answer(sid, record_id, answer, image_name=None, image_type=No
             return False
         for m in data["messages"]:
             if m.get("id") == record_id:
+                if m.get("cancelled") or m.get("image_cancelled") or m.get("answer") == "__cancelled__":
+                    return False
                 m["answer"] = answer
                 if image_name is not None:
                     m["image_name"] = image_name
@@ -269,12 +324,57 @@ def update_message_answer(sid, record_id, answer, image_name=None, image_type=No
                     m["image_type"] = image_type
                 if image_url is not None:
                     m["image_url"] = image_url
+                    m["user_image_url"] = image_url
                 if len(data["messages"]) == 1:
                     dish = _first_recipe_name(answer)
                     if dish:
                         data["title"] = dish[:22]
                 _write_session(data)
                 return True
+    return False
+
+
+def mark_message_cancelled(sid, record_id):
+    """将一轮助手回答标记为不可恢复的取消态，并清除其图片。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            uploaded_image_url = _user_image_url_for_cancel(m)
+            m["answer"] = "__cancelled__"
+            m["cancelled"] = True
+            m.pop("image_cancelled", None)
+            m["image_url"] = uploaded_image_url
+            _write_session(data)
+            return True
+    return False
+
+
+def mark_message_image_cancelled(sid, record_id, answer=None):
+    """保留自然语言正文，移除本轮结构化卡片与配图，并阻止后台晚到回写。"""
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            if m.get("cancelled") or m.get("answer") == "__cancelled__":
+                return False
+            uploaded_image_url = _user_image_url_for_cancel(m)
+            text = extract_answer_text(answer) or extract_answer_text(m.get("answer"))
+            m["image_cancelled"] = True
+            # 仅取消配图时不能保留任何结构化卡片，否则旧客户端或历史回放
+            # 仍可能把它重新渲染成菜谱卡。没有可提取正文时落空文本即可。
+            m["answer"] = text
+            # 生成图可能已覆盖记录级 image_url；恢复用户原图，确保刷新后
+            # 不会在用户气泡里重新露出已取消的成品图。
+            m["image_url"] = uploaded_image_url
+            _write_session(data)
+            return True
     return False
 
 
@@ -290,6 +390,8 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
         for m in data["messages"]:
             if m.get("id") != record_id:
                 continue
+            if m.get("cancelled") or m.get("image_cancelled") or m.get("answer") == "__cancelled__":
+                return False
             try:
                 ans = json.loads(m.get("answer") or "")
             except Exception:
@@ -395,6 +497,8 @@ def update_answer_image_at_index(sid, record_id, recipe_index, image_url, image_
         for m in data["messages"]:
             if m.get("id") != record_id:
                 continue
+            if m.get("cancelled") or m.get("image_cancelled") or m.get("answer") == "__cancelled__":
+                return False
             try:
                 ans = json.loads(m.get("answer") or "")
             except Exception:

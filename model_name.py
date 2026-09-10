@@ -1,9 +1,41 @@
 import os  # 读取 CHEF_PROVIDER 环境变量（主脑模型选择）
+import logging
 import threading
 import time
 
-from configs import MODEL_CONFIGS  # 传入模型参数（已从 .env 加载）
+from configs import MODEL_CONFIGS, VISION_CONFIGS  # 传入模型参数（已从 .env 加载）
+from langchain_core.language_models import LanguageModelInput
+from langchain_deepseek import ChatDeepSeek  # DeepSeek 原生适配：保留 thinking/reasoning_content
 from langchain_openai import ChatOpenAI  # 创建 LangChain 的 OpenAI 兼容对象
+
+
+logger = logging.getLogger(__name__)
+
+
+class PatchedChatDeepSeek(ChatDeepSeek):
+    """DeepSeek thinking 多轮补丁：把上一轮 assistant 的 reasoning_content 原样回传。"""
+
+    def _get_request_payload(
+        self,
+        input_: LanguageModelInput,
+        *,
+        stop: list[str] | None = None,
+        **kwargs,
+    ) -> dict:
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        source_messages = self._convert_input(input_).to_messages()
+
+        for index, message in enumerate(payload.get("messages") or []):
+            if message.get("role") != "assistant":
+                continue
+            source = source_messages[index] if index < len(source_messages) else None
+            reasoning = getattr(source, "additional_kwargs", {}).get("reasoning_content")
+            # DeepSeek thinking 模式要求：带 tool_calls 的 assistant 历史必须
+            # 携带 reasoning_content，哪怕没有思维链也要回传空字符串。
+            if message.get("tool_calls"):
+                message["reasoning_content"] = reasoning or ""
+
+        return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -60,8 +92,10 @@ def resolve_provider(preferred=None):#在graph中找到用哪个模型中
     )
 
 
-def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
-    provider=None,
+def _build_llm(
+    chosen,
+    cfg,
+    *,
     temperature=0.7,
     max_tokens=1024,
     api_key=None,
@@ -69,10 +103,7 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
     model_name=None,
     timeout=None,
 ):
-
-    chosen = resolve_provider(provider)#可能是用户传的可能是环境变量的
-    cfg = MODEL_CONFIGS[chosen]#获取模型参数
-
+    """从已解析的 provider 配置构造模型，供文本和视觉链路共用。"""
     # 双兜底：函数参数 > .env 配置
     final_api_key = api_key if api_key is not None else cfg["api_key"]
     final_base_url = base_url if base_url is not None else cfg["base_url"]
@@ -96,8 +127,110 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
     if max_tokens is not None:#如果传了参就传进去，没传参就是大模型去默认别写个null在这里
         kwargs["max_tokens"] = max_tokens
 
-    llm = ChatOpenAI(**kwargs)
+    # DeepSeek thinking 模型在工具调用后必须把 reasoning_content 原样回传。
+    # 通用 ChatOpenAI 会丢弃该字段，第二轮请求直接 400；官方适配类会保留它。
+    llm_class = PatchedChatDeepSeek if chosen == "deepseek" else ChatOpenAI
+    llm = llm_class(**kwargs)
     return llm
+
+
+def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
+    provider=None,
+    temperature=0.7,
+    max_tokens=1024,
+    api_key=None,
+    base_url=None,
+    model_name=None,
+    timeout=None,
+):
+    chosen = resolve_provider(provider)#可能是用户传的可能是环境变量的
+    cfg = MODEL_CONFIGS[chosen]#获取模型参数
+    return _build_llm(
+        chosen,
+        cfg,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        base_url=base_url,
+        model_name=model_name,
+        timeout=timeout,
+    )
+
+
+def get_summary_model_name(provider: str) -> str | None:
+    """返回摘要任务专用模型名；DeepSeek 默认用稳定返回正文的 chat 模型。"""
+    if provider != "deepseek":
+        return None
+    return os.getenv("SUMMARY_MODE_NAME") or "deepseek-chat"
+
+
+def get_summary_llm(
+    provider=None,
+    temperature=0.3,
+    max_tokens=1024,
+    timeout=None,
+):
+    """创建摘要/历史压缩专用模型，避免 reasoning 模型把正文只写在思维链里。"""
+    chosen = resolve_provider(provider)
+    return get_langchain_llm(
+        chosen,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        model_name=get_summary_model_name(chosen),
+        timeout=timeout,
+    )
+
+
+def extract_message_text(response, *, allow_reasoning_fallback: bool = False) -> str:
+    """从 LangChain 消息提取正文；仅在摘要类降级场景允许读取 reasoning_content。"""
+    content = getattr(response, "content", "")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(str(item))
+        content = "".join(parts)
+    text = str(content or "").strip()
+    if text:
+        return text
+    if not allow_reasoning_fallback:
+        return ""
+
+    reasoning = (getattr(response, "additional_kwargs", {}) or {}).get("reasoning_content")
+    text = str(reasoning or "").strip()
+    if text:
+        logger.warning(
+            "模型返回空 content，摘要任务降级使用 reasoning_content；"
+            "请检查 SUMMARY_MODE_NAME 是否指向稳定的正文模型"
+        )
+    return text
+
+
+def get_vision_llm(
+    temperature=0,
+    max_tokens=1024,
+    timeout=45,
+    model_name=None,
+):
+    """创建专用视觉模型，绝不回退到纯文本主脑或中转 Provider。"""
+    provider = os.getenv("VISION_PROVIDER", "qwen")
+    cfg = VISION_CONFIGS.get(provider)
+    if not cfg or not cfg.get("api_key"):
+        raise ValueError(
+            f"视觉 provider={provider!r} 未配置 API key；"
+            "请配置 QWEN_API_KEY 或 DASHSCOPE_API_KEY"
+        )
+    final_model = model_name or os.getenv("VISION_MODEL_NAME") or None
+    return _build_llm(
+        provider,
+        cfg,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        model_name=final_model,
+    )
 
 
 # ---- provider 健康与 failover（A 方案：主模型黑洞时整轮切备用重跑）----

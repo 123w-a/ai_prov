@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,12 +26,14 @@ class FeedbackStoreTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_recent_down_dishes_window_and_rank(self):
+        now = datetime.now()
+        ts = lambda days_ago: (now - timedelta(days=days_ago)).isoformat(timespec="seconds")
         feedback_store.write_events([
-            _event("2026-08-28T10:00:00", "down", "酸辣土豆丝"),
-            _event("2026-08-28T11:00:00", "down", "酸辣土豆丝"),
-            _event("2026-08-28T12:00:00", "down", "糖醋排骨"),
-            _event("2026-08-28T13:00:00", "up", "红烧带鱼"),
-            _event("2026-01-01T00:00:00", "down", "陈年旧菜"),
+            _event(ts(1), "down", "酸辣土豆丝"),
+            _event(ts(1), "down", "酸辣土豆丝"),
+            _event(ts(1), "down", "糖醋排骨"),
+            _event(ts(1), "up", "红烧带鱼"),
+            _event(ts(400), "down", "陈年旧菜"),
         ])
         self.assertEqual(recent_down_dishes(days=7), ["酸辣土豆丝", "糖醋排骨"])
         self.assertEqual(recent_down_dishes(limit=1), ["酸辣土豆丝"])
@@ -53,8 +56,9 @@ class InjectTest(unittest.TestCase):
         self.addCleanup(prefs_patcher.stop)
 
     def test_down_dishes_injected_into_message(self):
+        now = datetime.now()
         feedback_store.write_events([
-            _event("2026-08-28T10:00:00", "down", "糖醋排骨"),
+            _event((now - timedelta(days=1)).isoformat(timespec="seconds"), "down", "糖醋排骨"),
         ])
         msg = build_human_message("想吃点开胃的")
         content = msg.content

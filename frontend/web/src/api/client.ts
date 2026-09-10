@@ -111,8 +111,8 @@ export interface ChatHandlers {
   onAnswer: (answer: ChefAnswer) => void
   onStage?: (stage: string) => void
   onHeartbeat?: (elapsedSeconds: number) => void
-  onImage?: (img: { record_id?: number; index: number; url: string; ai_generated: boolean }) => void
-  onImageFailed?: (payload: { record_id?: number; indexes: number[] }) => void
+  onImage?: (img: { record_id?: number; turn_id?: string; index: number; url: string; ai_generated: boolean }) => void
+  onImageFailed?: (payload: { record_id?: number; turn_id?: string; indexes: number[] }) => void
   onFinish?: (payload: { session_id?: string; record_id?: number }) => void
 }
 
@@ -122,10 +122,15 @@ export interface ChatImageTarget {
   dishName?: string
 }
 
-export async function cancelImageDecision(sessionId: string, turnId?: string): Promise<void> {
+export async function cancelDecision(
+  sessionId: string,
+  turnId?: string,
+  keepText = false,
+): Promise<void> {
   const body = new FormData()
   body.append('session_id', sessionId)
   if (turnId) body.append('turn_id', turnId)
+  body.append('keep_text', keepText ? '1' : '0')
   await jsonRequest('/api/chat/cancel-image', { method: 'POST', body })
 }
 
@@ -182,8 +187,8 @@ export async function sendChat(
 
       if (event.working || event.status === 'working') handlers.onWorking?.()
       else if (event.heartbeat) handlers.onHeartbeat?.(Number((event.heartbeat as { elapsed?: number })?.elapsed ?? 0))
-      else if (event.image) handlers.onImage?.(event.image as { record_id?: number; index: number; url: string; ai_generated: boolean })
-      else if (event.image_failed) handlers.onImageFailed?.(event.image_failed as { record_id?: number; indexes: number[] })
+      else if (event.image) handlers.onImage?.(event.image as { record_id?: number; turn_id?: string; index: number; url: string; ai_generated: boolean })
+      else if (event.image_failed) handlers.onImageFailed?.(event.image_failed as { record_id?: number; turn_id?: string; indexes: number[] })
       else if (event.token != null && typeof event.token === 'string') {
         const token = event.token.trim()
         if (
@@ -392,7 +397,11 @@ export async function starMessage(
 ): Promise<{ starred: boolean }> {
   const result = await jsonRequest<ApiEnvelope<{ starred: boolean }>>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(recordId)}/star`,
-    { method: 'POST', body: JSON.stringify({ starred }) },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starred }),
+    },
   )
   return result.data
 }
@@ -405,6 +414,7 @@ export async function fetchFavorites(): Promise<FavoriteItem[]> {
 export async function addDislike(item: string): Promise<void> {
   await jsonRequest('/api/profile/dislikes/add', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ item }),
   })
 }

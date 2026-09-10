@@ -25,12 +25,14 @@ _cooldown_lock = threading.Lock()
 _cooldown = {}  # dish -> 上次尝试时间戳
 
 
-def scan_missing_images(max_items: int = MAX_ITEMS_PER_ROUND):
-    """扫描会话库，返回 [(sid, record_id, dish)]：明确请求过配图但仍缺图的记录。"""
+def _scan_retry_batch(max_items: int = MAX_ITEMS_PER_ROUND):
+    """扫描并返回本轮统计与实际待处理目标。"""
     now = time.time()
     targets = []
+    total_images = 0
+    existing_images = 0
     if not SESSIONS_DIR.exists():
-        return targets
+        return targets, total_images, existing_images
     files = sorted(SESSIONS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for fp in files:
         try:
@@ -56,21 +58,30 @@ def scan_missing_images(max_items: int = MAX_ITEMS_PER_ROUND):
                 continue  # 只补明确开过配图的轮次，避免普通问答被后台悄悄补图
             for recipe in ans.get("recipes") or []:
                 dish = str(recipe.get("name") or "").strip()
-                if not dish or recipe.get("image_url"):
+                if not dish:
+                    continue
+                total_images += 1
+                if recipe.get("image_url"):
+                    existing_images += 1
                     continue
                 with _cooldown_lock:
-                    if now - _cooldown.get(dish, 0) < COOLDOWN_S:
-                        continue
-                targets.append((sid, rec.get("id"), dish))
-                if len(targets) >= max_items:
-                    return targets
+                    in_cooldown = now - _cooldown.get(dish, 0) < COOLDOWN_S
+                if not in_cooldown and len(targets) < max_items:
+                    targets.append((sid, rec.get("id"), dish))
+    return targets, total_images, existing_images
+
+
+def scan_missing_images(max_items: int = MAX_ITEMS_PER_ROUND):
+    """扫描会话库，返回 [(sid, record_id, dish)]：明确请求过配图但仍缺图的记录。"""
+    targets, _, _ = _scan_retry_batch(max_items)
     return targets
 
 
-def backfill_once(max_items: int = MAX_ITEMS_PER_ROUND) -> int:
-    """扫一轮并补图，返回成功张数。任何单菜失败不影响其余。"""
+def backfill_stats_once(max_items: int = MAX_ITEMS_PER_ROUND) -> dict:
+    """扫一轮并补图，返回扫描总量、已有图、待补图和本轮补到量。"""
+    targets, total_images, existing_images = _scan_retry_batch(max_items)
     filled = 0
-    for sid, record_id, dish in scan_missing_images(max_items):
+    for sid, record_id, dish in targets:
         try:
             url, source = find_recipe_image(dish)
         except Exception as exc:
@@ -92,15 +103,31 @@ def backfill_once(max_items: int = MAX_ITEMS_PER_ROUND) -> int:
         if update_answer_image_by_dish(sid, record_id, dish, url, ai, note):
             filled += 1
             print(f"[image_retry] 已补图：{dish}（{'AI' if ai else '联网'}）", flush=True)
-    return filled
+    return {
+        "total_images": total_images,
+        "existing_images": existing_images,
+        "missing_images": total_images - existing_images,
+        "filled_images": filled,
+    }
+
+
+def backfill_once(max_items: int = MAX_ITEMS_PER_ROUND) -> int:
+    """扫一轮并补图，返回成功张数。任何单菜失败不影响其余。"""
+    return backfill_stats_once(max_items)["filled_images"]
 
 
 def _loop():
     time.sleep(FIRST_ROUND_DELAY_S)
     while True:
         try:
-            filled = backfill_once()
-            print(f"[image_retry] 本轮补图 {filled} 张", flush=True)
+            stats = backfill_stats_once()
+            print(
+                "[image_retry] 本轮扫描图片 "
+                f"{stats['total_images']} 张，成功出现 {stats['existing_images']} 张，"
+                f"未出现 {stats['missing_images']} 张，失败中补到 "
+                f"{stats['filled_images']} 张",
+                flush=True,
+            )
         except Exception as exc:
             print(f"[image_retry] 轮次异常：{exc}", flush=True)
         time.sleep(RETRY_INTERVAL_S)

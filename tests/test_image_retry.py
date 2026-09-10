@@ -39,13 +39,19 @@ class ImageRetryQueueTest(unittest.TestCase):
             {"id": 1, "user_text": "a", "answer": json.dumps({"recipes": [
                 {"name": "番茄炒蛋", "image_url": None},
                 {"name": "凉拌黄瓜", "image_url": "https://x/y.jpg"},
-            ]}, ensure_ascii=False)},
+            ], "image_requested": True}, ensure_ascii=False)},
             {"id": 2, "user_text": "b", "answer": "__pending__"},
         ])
         with patch.object(q, "find_recipe_image", lambda dish: ("https://oss/ai.png", "ai")):
             targets = q.scan_missing_images()
             self.assertEqual([(t[0], t[2]) for t in targets], [("s1", "番茄炒蛋")])
-            self.assertEqual(q.backfill_once(), 1)
+            stats = q.backfill_stats_once()
+            self.assertEqual(stats, {
+                "total_images": 2,
+                "existing_images": 1,
+                "missing_images": 1,
+                "filled_images": 1,
+            })
         data = json.loads((self.dir / "s1.json").read_text(encoding="utf-8"))
         rec = data["messages"][0]
         ans = json.loads(rec["answer"])
@@ -59,7 +65,7 @@ class ImageRetryQueueTest(unittest.TestCase):
         self._write("s2", [
             {"id": 1, "user_text": "a", "answer": json.dumps({"recipes": [
                 {"name": "白灼菜心", "image_url": None},
-            ]}, ensure_ascii=False)},
+            ], "image_requested": True}, ensure_ascii=False)},
         ])
         with patch.object(q, "find_recipe_image", lambda dish: (None, "none")):
             self.assertEqual(q.backfill_once(), 0)
@@ -70,9 +76,30 @@ class ImageRetryQueueTest(unittest.TestCase):
         fp.write_text(json.dumps(_session("s3", [
             {"id": 1, "user_text": "a", "answer": json.dumps({"recipes": [
                 {"name": "热汤面", "image_url": None},
-            ]}, ensure_ascii=False)},
+            ], "image_requested": True}, ensure_ascii=False)},
         ]), ensure_ascii=False), encoding="utf-8")
         self.assertEqual(q.scan_missing_images(), [])  # mtime 刚写入 → 视为生成中
+
+    def test_stats_scan_all_recipes_but_limits_processing_targets(self):
+        self._write("s4", [
+            {"id": 1, "user_text": "a", "answer": json.dumps({
+                "image_requested": True,
+                "recipes": [
+                    {"name": "菜一", "image_url": None},
+                    {"name": "菜二", "image_url": None},
+                    {"name": "菜三", "image_url": None},
+                    {"name": "菜四", "image_url": None},
+                ],
+            }, ensure_ascii=False)},
+        ])
+        with patch.object(q, "find_recipe_image", lambda dish: ("https://oss/x.png", "web")):
+            stats = q.backfill_stats_once(max_items=3)
+        self.assertEqual(stats, {
+            "total_images": 4,
+            "existing_images": 0,
+            "missing_images": 4,
+            "filled_images": 3,
+        })
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -74,14 +75,15 @@ class AnswerFeedbackTest(unittest.TestCase):
         self.assertEqual(self.events_file.read_text(encoding="utf-8").strip(), "[]")
 
     def test_weekly_summary_counts(self):
+        now = datetime.now()
         self.events_file.write_text(json.dumps([
-            {"ts": "2026-08-28T10:00:00", "sid": "a", "rec_id": 1,
+            {"ts": (now - timedelta(days=1)).isoformat(timespec="seconds"), "sid": "a", "rec_id": 1,
              "rating": "up", "dish": None},
-            {"ts": "2026-08-28T11:00:00", "sid": "b", "rec_id": 1,
+            {"ts": (now - timedelta(days=1, hours=1)).isoformat(timespec="seconds"), "sid": "b", "rec_id": 1,
              "rating": "down", "dish": "蒜香西兰花鸡蛋面"},
-            {"ts": "2026-08-28T12:00:00", "sid": "c", "rec_id": 1,
+            {"ts": (now - timedelta(days=1, hours=2)).isoformat(timespec="seconds"), "sid": "c", "rec_id": 1,
              "rating": "down", "dish": "蒜香西兰花鸡蛋面"},
-            {"ts": "2026-01-01T00:00:00", "sid": "old", "rec_id": 1,
+            {"ts": (now - timedelta(days=400)).isoformat(timespec="seconds"), "sid": "old", "rec_id": 1,
              "rating": "down", "dish": "陈年旧菜"},
         ], ensure_ascii=False), encoding="utf-8")
         data = self.client.get("/feedback/weekly").json()["data"]

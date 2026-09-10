@@ -18,6 +18,17 @@ MODEL_CONFIGS = {#模型配置
     },
 }
 
+VISION_CONFIGS = {
+    "qwen": {
+        # 视觉链路固定在国产模型上；复用已有 DashScope Key，避免中转站波动。
+        "api_key": os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY"),
+        "base_url": os.getenv("QWEN_BASE_URL")
+        or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model_name": os.getenv("QWEN_MODE_NAME")
+        or "qwen3-vl-235b-a22b-instruct",
+    },
+}
+
 # RAG 知识库配置（rag/ingest.py 与 rag/retriever.py 均从 configs.KB_CONFIG 读取，
 # 未定义时它们各自使用默认值；这里按 配置key.md 统一收口）
 KB_CONFIG = {

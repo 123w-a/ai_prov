@@ -56,6 +56,9 @@ export interface SessionMessage {
   image_name?: string | null
   image_type?: string | null
   image_url?: string | null
+  user_image_url?: string | null
+  cancelled?: boolean
+  image_cancelled?: boolean
   starred?: boolean
   feedback?: 'up' | 'down' | null
 }
