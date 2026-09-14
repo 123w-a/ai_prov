@@ -13,6 +13,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from allergen_rules import audit_allergens
 from rag.query_transform import hyde_transform, multi_query_transform
 from rag.retriever import search as search_knowledge_base
 
@@ -144,14 +145,57 @@ def healthy_remix(recipe_text: str) -> str:
             "advice": advice,
             "evidence": evidence,
         })
-    return json.dumps(
-        {
-            "found": bool(swaps),
-            "swaps": swaps,
-            "note": "以上为食养参考，不替代执业医师或营养师；无出处的条目为通用烹饪原则。",
-        },
-        ensure_ascii=False,
-    )
+    allergens = _legacy._tool_allergens()
+    allergen_filter = None
+    if allergens:
+        recipe_hits = audit_allergens(
+            recipe_text,
+            allergens,
+            use_optional=True,
+        )
+        if recipe_hits:
+            return json.dumps(
+                {
+                    "found": False,
+                    "blocked": True,
+                    "swaps": [],
+                    "allergen_filter": {
+                        "applied": True,
+                        "message": _legacy._allergen_filter_note(recipe_hits),
+                    },
+                    "note": "该食谱包含当前档案中的过敏原，已停止给出健康化改造建议。",
+                },
+                ensure_ascii=False,
+            )
+
+        kept = []
+        filtered_hits = []
+        for swap in swaps:
+            hits = audit_allergens(
+                f"{swap.get('match', '')} {swap.get('advice', '')}",
+                allergens,
+                use_optional=True,
+            )
+            if hits:
+                filtered_hits.extend(hits)
+            else:
+                kept.append(swap)
+        swaps = kept
+        if filtered_hits:
+            allergen_filter = {
+                "applied": True,
+                "removed": len(filtered_hits),
+                "message": _legacy._allergen_filter_note(filtered_hits),
+            }
+
+    payload = {
+        "found": bool(swaps),
+        "swaps": swaps,
+        "note": "以上为食养参考，不替代执业医师或营养师；无出处的条目为通用烹饪原则。",
+    }
+    if allergen_filter:
+        payload["allergen_filter"] = allergen_filter
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool
@@ -164,6 +208,27 @@ def fridge_gap(recipe_name: str, inventory_text: str) -> str:
     required = list(HOME_CHEF_RECIPES.get(key, []))
     owned = _split_inventory_text(inventory_text)
     missing = [item for item in required if not _has_ingredient(owned, item)]
+    allergens = _legacy._tool_allergens()
+    if allergens:
+        ingredient_hits = audit_allergens(
+            f"{key or recipe_name} {' '.join(required)}",
+            allergens,
+            use_optional=True,
+        )
+        if ingredient_hits:
+            return json.dumps({
+                "recipe_name": key or recipe_name,
+                "recipe_matched": key is not None,
+                "required_ingredients": [],
+                "owned": owned,
+                "missing": [],
+                "blocked": True,
+                "allergen_filter": {
+                    "applied": True,
+                    "message": _legacy._allergen_filter_note(ingredient_hits),
+                },
+                "note": "目标菜谱包含当前档案中的过敏原，已停止生成购物清单。",
+            }, ensure_ascii=False)
     return json.dumps({
         "recipe_name": key or recipe_name,
         "recipe_matched": key is not None,

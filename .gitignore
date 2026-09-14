@@ -66,6 +66,7 @@ kb/chroma/
 kb_corpus_chroma/
 resources/cleaned_preview/
 *.sqlite3
+*.bak
 *.bak_*
 
 # 本地模型缓存（HuggingFace 下载，体积大，可重建，不入库）

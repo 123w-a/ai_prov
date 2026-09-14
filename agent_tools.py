@@ -15,8 +15,63 @@ from langchain_tavily import TavilySearch#进行联网搜索
 from model_name import get_vision_llm  # 获取用于图片审核的视觉模型
 from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
+from allergen_rules import audit_allergens
 
 load_dotenv()
+
+
+def _tool_allergens() -> list:
+    """读取当前家庭过敏原用于旁路工具过滤；延迟导入避免工具与图模块循环依赖。"""
+    try:
+        from agent_graph import _allergens_for_audit
+
+        return list(_allergens_for_audit() or [])
+    except Exception:
+        # 档案缺失或运行环境未初始化时按无过敏原处理，工具本身不能因此报错。
+        return []
+
+
+def _allergen_filter_note(hits: list) -> str:
+    """把确定性命中转成用户可读的过滤说明。"""
+    labels = list(dict.fromkeys(
+        str(item.get("condition", "")).split(":", 1)[-1]
+        for item in (hits or [])
+        if str(item.get("condition", "")).startswith("过敏原:")
+    ))
+    if not labels:
+        return "（已按当前过敏原过滤相关选项）"
+    return f"（已为你过滤含{'、'.join(labels)}的选项）"
+
+
+def _filter_restaurants_by_allergens(candidates: list, allergens: list | None = None):
+    """按当前过敏原过滤餐厅，并返回命中的确定性依据。
+
+    调用方为 None 时读取家庭档案；显式传入空列表时表示本次不启用过滤。
+    """
+    source = list(candidates or [])
+    if allergens is None:
+        allergens = _tool_allergens()
+    if not allergens:
+        return source, []
+
+    kept = []
+    hits = []
+    for candidate in source:
+        audit_text = " ".join(
+            str(candidate.get(field) or "")
+            for field in ("name", "cuisine", "address", "guardrail")
+        )
+        candidate_hits = audit_allergens(
+            audit_text,
+            allergens,
+            use_optional=True,
+        )
+        if candidate_hits:
+            hits.extend(candidate_hits)
+        else:
+            kept.append(candidate)
+    return kept, hits
+
 
 # Tavily 搜索客户端（联网菜谱检索）。
 # 未配置 TAVILY_API_KEY 时优雅降级：tavily 置 None，web_search 返回友好提示、
@@ -616,31 +671,18 @@ def exercise_equiv(kcal: int, weight_kg: float = 60.0) -> str:
 #  而不是只靠联网搜索。rag.search 已含混合检索 + 重排，返回带 source 文件名。
 # --------------------------------------------------------------------------- #
 
-_TOC_MAP_CACHE = None
-
-
 def _resolve_section(source: str, anchor: str) -> str:
-    """T2-P2：把「文件_p页码」升级为「章节名（第N页）」。
-    查 data/toc_map.json（由 scripts/build_toc_map.py 从 PDF 内嵌书签构建）；
-    无书签或未命中时原样返回页码锚点。"""
-    global _TOC_MAP_CACHE
-    try:
-        if _TOC_MAP_CACHE is None:
-            p = Path(__file__).resolve().parent / "data" / "toc_map.json"
-            import json as _json
-            _TOC_MAP_CACHE = _json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-        import re as _re
-        m = _re.search(r"_p(\d+)\s*$", anchor or "")
-        if not m:
-            return anchor
-        page = int(m.group(1))
-        for entry in _TOC_MAP_CACHE.get(source, []):
-            if entry["s"] <= page <= entry["e"]:
-                title = entry["t"][:40]
-                return f"{title}（第{page}页）"
-    except Exception:
-        pass
-    return anchor
+    """把索引锚点转成可验证的来源说明。
+
+    PDF anchor 中的 `_pN` 现在只在 N 是解析层带回的真实页码时生成；
+    无可靠页码来源时使用 `_cN`，不会显示成页码。其他 anchor（如 Markdown
+    标题）原样返回。
+    """
+    text = str(anchor or "").strip()
+    m = re.search(r"_p(\d+)\s*$", text)
+    if not m:
+        return text
+    return text
 
 
 @tool
@@ -936,6 +978,10 @@ def nearby_food(city: str = "", district: str = "", budget: int = 50, query: str
     if not candidates:
         candidates = _MOCK_RESTAURANTS[:3]
 
+    # 旁路工具也走同一套确定性过敏原规则：餐厅名/菜系/地址命中即剔除。
+    before_filter = len(candidates)
+    candidates, allergen_hits = _filter_restaurants_by_allergens(candidates)
+
     lines = []
     for i, c in enumerate(candidates[:5], 1):
         dist = c.get("distance_km")
@@ -946,11 +992,23 @@ def nearby_food(city: str = "", district: str = "", budget: int = 50, query: str
             f"{i}. {c['name']}（{c['cuisine']}）｜人均约¥{c['avg_price'] or '?'}｜{dist_text}{addr_text}\n"
             f"   点单红线：{c['guardrail']}"
         )
-    return json.dumps(
-        {"city": city, "district": district, "budget": budget,
-         "count": len(lines), "source": source, "text": "\n\n".join(lines)},
-        ensure_ascii=False,
-    )
+    result = {
+        "city": city,
+        "district": district,
+        "budget": budget,
+        "count": len(lines),
+        "source": source,
+        "text": "\n\n".join(lines),
+    }
+    if allergen_hits:
+        note = _allergen_filter_note(allergen_hits)
+        result["text"] = (result["text"] + "\n\n" + note).strip()
+        result["allergen_filter"] = {
+            "applied": True,
+            "removed": before_filter - len(candidates),
+            "message": note,
+        }
+    return json.dumps(result, ensure_ascii=False)
 
 
 # --------------------------------------------------------------------------- #

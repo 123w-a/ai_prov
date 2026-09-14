@@ -3,6 +3,7 @@
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 import json  # 把 token / structuring / answer / finish 打包成 SSE 事件
+import os
 import queue
 import threading
 
@@ -14,6 +15,7 @@ from main import (
 from agent_graph import failover_llms
 from agent_tools import find_recipe_image
 from model_name import is_provider_failure
+from upload_guard import validate_image_upload
 from sessions_store import append_message
 import time
 from datetime import datetime
@@ -23,15 +25,108 @@ router = APIRouter()  # 分文件写接口的小路由
 
 # 图片 MIME 白名单：挡掉非图片和可能的恶意文件
 ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
-_CANCELLED_IMAGE_TURNS: set[str] = set()
-_CANCELLED_IMAGE_KEEP_TEXT: set[str] = set()
+_CANCELLED_IMAGE_TURNS: dict[str, float] = {}
+_CANCELLED_IMAGE_KEEP_TEXT: dict[str, float] = {}
 _CANCELLED_IMAGE_LOCK = threading.Lock()
 _RECIPE_IMAGE_CACHE: dict[tuple[str, bool], tuple[str | None, str, float]] = {}
 _RECIPE_IMAGE_CACHE_LOCK = threading.Lock()
+_CANCELLED_IMAGE_TTL_S = 6 * 60 * 60
+_MAX_CANCELLED_IMAGE_KEYS = 5000
 _SEARCH_IMAGE_CACHE_TTL = 60 * 60 * 6
 _AI_IMAGE_CACHE_TTL = 60 * 60 * 24 * 7
-_ACTIVE_TURN_RECORDS: dict[str, int] = {}
+_MAX_RECIPE_IMAGE_CACHE_ENTRIES = 500
+_ACTIVE_TURN_RECORDS: dict[str, tuple[int, float]] = {}
 _ACTIVE_TURN_RECORDS_LOCK = threading.Lock()
+_ACTIVE_TURN_RECORD_TTL_S = 6 * 60 * 60
+_MAX_ACTIVE_TURN_RECORDS = 5000
+
+# —— 并发护栏：同会话串行 + 全局 Agent 背压 ——
+# 同 session_id 同时跑两轮，会以同一个 thread_id 同时写 LangGraph checkpoint，
+# 状态会串写；前端按钮 disabled 只是 UI 约束，服务端必须自己兜住。
+_TURNS_IN_FLIGHT: dict[str, float] = {}
+_TURNS_IN_FLIGHT_LOCK = threading.Lock()
+# 僵尸占用兜底：客户端硬断线时生成器 finally 可能不执行，超时后允许新轮次接管。
+_TURN_IN_FLIGHT_TTL_S = 30 * 60
+# 全局 Agent 并发上限：无界起线程会把内存/上游配额打满，这里只做背压不做排队。
+_MAX_CONCURRENT_AGENT_TURNS = max(1, int(os.getenv("CHEF_MAX_CONCURRENT_TURNS", "4")))
+_AGENT_TURN_SEMAPHORE = threading.BoundedSemaphore(_MAX_CONCURRENT_AGENT_TURNS)
+
+
+def _try_begin_turn(session_id: str) -> str:
+    """占用同会话轮次槽；成功返回空串，失败返回可直接展示给用户的原因。"""
+    now = time.time()
+    with _TURNS_IN_FLIGHT_LOCK:
+        for key in [
+            key for key, started in _TURNS_IN_FLIGHT.items()
+            if now - started > _TURN_IN_FLIGHT_TTL_S
+        ]:
+            _TURNS_IN_FLIGHT.pop(key, None)
+        if session_id in _TURNS_IN_FLIGHT:
+            return "这个会话还有一轮没跑完，等它出结果再发下一句就好。"
+        _TURNS_IN_FLIGHT[session_id] = now
+    return ""
+
+
+def _end_turn(session_id: str) -> None:
+    with _TURNS_IN_FLIGHT_LOCK:
+        _TURNS_IN_FLIGHT.pop(session_id, None)
+
+
+def _acquire_agent_slot() -> bool:
+    """非阻塞占用全局 Agent 槽位；acquire 阻塞会在 async def 里卡住事件循环。"""
+    return _AGENT_TURN_SEMAPHORE.acquire(blocking=False)
+
+
+def _release_agent_slot() -> None:
+    try:
+        _AGENT_TURN_SEMAPHORE.release()
+    except ValueError:
+        pass
+
+
+def _notice_stream(text: str, session_id: str):
+    """用 SSE 回一条可直接读的提示，避免前端只能弹一个看不懂的报错。"""
+    def generator():
+        yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': None}, ensure_ascii=False)}\n\n"
+    return StreamingResponse(generator(), media_type="text/event-stream")
+
+
+def _prune_cancel_state_locked(now: float | None = None) -> None:
+    """清理过期取消标记，并给异常突发流量加上内存上限。"""
+    now = time.monotonic() if now is None else now
+    cutoff = now - _CANCELLED_IMAGE_TTL_S
+    for state in (_CANCELLED_IMAGE_TURNS, _CANCELLED_IMAGE_KEEP_TEXT):
+        for key, created_at in list(state.items()):
+            if created_at < cutoff:
+                state.pop(key, None)
+        if len(state) > _MAX_CANCELLED_IMAGE_KEYS:
+            oldest = sorted(state.items(), key=lambda item: item[1])
+            for key, _ in oldest[:len(state) - _MAX_CANCELLED_IMAGE_KEYS]:
+                state.pop(key, None)
+
+
+def _prune_turn_records_locked(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    cutoff = now - _ACTIVE_TURN_RECORD_TTL_S
+    for key, (_, created_at) in list(_ACTIVE_TURN_RECORDS.items()):
+        if created_at < cutoff:
+            _ACTIVE_TURN_RECORDS.pop(key, None)
+    if len(_ACTIVE_TURN_RECORDS) > _MAX_ACTIVE_TURN_RECORDS:
+        oldest = sorted(_ACTIVE_TURN_RECORDS.items(), key=lambda item: item[1][1])
+        for key, _ in oldest[:len(_ACTIVE_TURN_RECORDS) - _MAX_ACTIVE_TURN_RECORDS]:
+            _ACTIVE_TURN_RECORDS.pop(key, None)
+
+
+def _prune_recipe_image_cache_locked(now: float) -> None:
+    for key, (_, _, cached_at) in list(_RECIPE_IMAGE_CACHE.items()):
+        ttl = _AI_IMAGE_CACHE_TTL if key[1] else _SEARCH_IMAGE_CACHE_TTL
+        if now - cached_at >= ttl:
+            _RECIPE_IMAGE_CACHE.pop(key, None)
+    if len(_RECIPE_IMAGE_CACHE) > _MAX_RECIPE_IMAGE_CACHE_ENTRIES:
+        oldest = sorted(_RECIPE_IMAGE_CACHE.items(), key=lambda item: item[1][2])
+        for key, _ in oldest[:len(_RECIPE_IMAGE_CACHE) - _MAX_RECIPE_IMAGE_CACHE_ENTRIES]:
+            _RECIPE_IMAGE_CACHE.pop(key, None)
 
 
 def _find_global_dish_asset(name: str):
@@ -92,19 +187,21 @@ def _cancel_image_for_turn(
     keep_text: bool = False,
 ) -> None:
     key = _image_cancel_key(session_id, turn_id)
+    now = time.monotonic()
     with _CANCELLED_IMAGE_LOCK:
-        _CANCELLED_IMAGE_TURNS.add(key)
+        _CANCELLED_IMAGE_TURNS[key] = now
         if keep_text:
-            _CANCELLED_IMAGE_KEEP_TEXT.add(key)
+            _CANCELLED_IMAGE_KEEP_TEXT[key] = now
         else:
-            _CANCELLED_IMAGE_KEEP_TEXT.discard(key)
+            _CANCELLED_IMAGE_KEEP_TEXT.pop(key, None)
+        _prune_cancel_state_locked(now)
 
 
 def _clear_image_cancel(session_id: str, turn_id: str | None = None) -> None:
     key = _image_cancel_key(session_id, turn_id)
     with _CANCELLED_IMAGE_LOCK:
-        _CANCELLED_IMAGE_TURNS.discard(key)
-        _CANCELLED_IMAGE_KEEP_TEXT.discard(key)
+        _CANCELLED_IMAGE_TURNS.pop(key, None)
+        _CANCELLED_IMAGE_KEEP_TEXT.pop(key, None)
 
 
 def _clear_image_cancel_after_thread(session_id: str, turn_id: str | None, image_thread) -> None:
@@ -132,24 +229,22 @@ def _clear_stale_image_cancel_for_new_turn(session_id: str, turn_id: str | None 
     """
     prefix = f"{session_id}:"
     with _CANCELLED_IMAGE_LOCK:
-        _CANCELLED_IMAGE_TURNS.difference_update(
-            {
-                key
-                for key in _CANCELLED_IMAGE_TURNS
-                if key == session_id or key.startswith(prefix)
-            }
-        )
-        _CANCELLED_IMAGE_KEEP_TEXT.difference_update(
-            {
-                key
-                for key in _CANCELLED_IMAGE_KEEP_TEXT
-                if key == session_id or key.startswith(prefix)
-            }
-        )
+        for key in [
+            key for key in _CANCELLED_IMAGE_TURNS
+            if key == session_id or key.startswith(prefix)
+        ]:
+            _CANCELLED_IMAGE_TURNS.pop(key, None)
+        _prune_cancel_state_locked()
+        for key in [
+            key for key in _CANCELLED_IMAGE_KEEP_TEXT
+            if key == session_id or key.startswith(prefix)
+        ]:
+            _CANCELLED_IMAGE_KEEP_TEXT.pop(key, None)
 
 
 def _is_image_cancelled(session_id: str, turn_id: str | None = None) -> bool:
     with _CANCELLED_IMAGE_LOCK:
+        _prune_cancel_state_locked()
         return (
             _image_cancel_key(session_id, turn_id) in _CANCELLED_IMAGE_TURNS
             or session_id in _CANCELLED_IMAGE_TURNS
@@ -158,6 +253,7 @@ def _is_image_cancelled(session_id: str, turn_id: str | None = None) -> bool:
 
 def _should_keep_text_on_cancel(session_id: str, turn_id: str | None = None) -> bool:
     with _CANCELLED_IMAGE_LOCK:
+        _prune_cancel_state_locked()
         return (
             _image_cancel_key(session_id, turn_id) in _CANCELLED_IMAGE_KEEP_TEXT
             or session_id in _CANCELLED_IMAGE_KEEP_TEXT
@@ -171,8 +267,10 @@ def _active_turn_key(session_id: str, turn_id: str | None) -> str | None:
 def _remember_turn_record(session_id: str, turn_id: str | None, record_id: int | None) -> None:
     key = _active_turn_key(session_id, turn_id)
     if key and record_id is not None:
+        now = time.monotonic()
         with _ACTIVE_TURN_RECORDS_LOCK:
-            _ACTIVE_TURN_RECORDS[key] = record_id
+            _ACTIVE_TURN_RECORDS[key] = (record_id, now)
+            _prune_turn_records_locked(now)
 
 
 def _get_turn_record(session_id: str, turn_id: str | None) -> int | None:
@@ -180,7 +278,11 @@ def _get_turn_record(session_id: str, turn_id: str | None) -> int | None:
     if not key:
         return None
     with _ACTIVE_TURN_RECORDS_LOCK:
-        return _ACTIVE_TURN_RECORDS.get(key)
+        _prune_turn_records_locked()
+        record = _ACTIVE_TURN_RECORDS.get(key)
+        if isinstance(record, tuple):
+            return record[0]
+        return record
 
 
 def _forget_turn_record(session_id: str, turn_id: str | None) -> None:
@@ -207,7 +309,7 @@ def _wants_image(message: str, want_image: str | None) -> bool:
         "给我看图", "给我看看", "让我看看", "想看图片", "想看图", "图片欣赏",
         "成品图", "成品照", "实拍图", "示意图", "效果图", "样图", "参考图",
         "想看看", "长什么样", "什么样子", "啥样", "样式", "外观", "照片", "实拍",
-        "换张图", "换一张", "再来一张", "另一张", "重新生成",
+        "换张图", "换一张", "再来一张", "另一张",
     )
     return any(phrase in text for phrase in strong_phrases)
 
@@ -221,12 +323,14 @@ def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
     now = time.time()
     ttl = _AI_IMAGE_CACHE_TTL if allow_ai_fallback else _SEARCH_IMAGE_CACHE_TTL
     with _RECIPE_IMAGE_CACHE_LOCK:
+        _prune_recipe_image_cache_locked(now)
         cached = _RECIPE_IMAGE_CACHE.get(key)
         if cached and now - cached[2] < ttl:
             return cached[0], cached[1]
     image_url, source = find_recipe_image(name, allow_ai_fallback=allow_ai_fallback)
     with _RECIPE_IMAGE_CACHE_LOCK:
         _RECIPE_IMAGE_CACHE[key] = (image_url, source, now)
+        _prune_recipe_image_cache_locked(now)
     return image_url, source
 
 
@@ -363,9 +467,35 @@ def _is_restaurant_ordering_scene(text: str) -> bool:
     )
 
 
+# 只修高概率误判：以前裸匹配「上门」，于是「上门维修/上门取件」也会被当成私厨上门，
+# 整轮被罐头文案接管（实测：「上周上门维修的师傅说我家冰箱该换了」）。
+_HOME_SERVICE_STRONG = (
+    "到家服务", "厨师到家", "私厨到家", "上门私厨", "私厨上门",
+    "请厨师", "预约厨师", "请个厨师", "找个厨师", "上门做菜", "上门做饭",
+)
+# 「上门」只有和做饭语境同现才算私厨需求
+_HOME_SERVICE_COOKING = (
+    "做饭", "做菜", "烧菜", "下厨", "厨师", "私厨", "煮饭", "做顿饭", "做一桌", "上门服务",
+)
+# 这些语境里的「上门」是别的服务，明确排除
+_NON_CATERING_UPSTREAM = (
+    "维修", "安装", "取件", "送货", "快递", "拜访", "体检", "保修", "售后",
+    "保洁", "清洗", "家政", "搬家", "测量", "拍照",
+)
+
+
 def _looks_like_home_service_request(text: str) -> bool:
-    markers = ("上门", "到家服务", "私厨", "厨师到家", "请厨师", "预约厨师", "上门做")
-    return any(marker in str(text or "") for marker in markers)
+    raw = str(text or "")
+    if not raw:
+        return False
+    if any(marker in raw for marker in _HOME_SERVICE_STRONG):
+        return True
+    if "上门" not in raw:
+        return False
+    has_cooking = any(word in raw for word in _HOME_SERVICE_COOKING)
+    if any(word in raw for word in _NON_CATERING_UPSTREAM) and not has_cooking:
+        return False
+    return has_cooking
 
 
 def _classify_turn_intent(message: str) -> str:
@@ -437,10 +567,22 @@ def _extract_requested_dish(message: str) -> str | None:
     text = re.sub(r"【[^】]+】", "", raw)
     text = re.sub(r"\[[^\]]+\]", "", text)
     text = re.sub(r"(帮我|给我|我想|想要|想看看|可以|能不能|能否|麻烦|请|一下|看看|看下|看一看|展示|来展示|欣赏)", "", text)
-    text = re.sub(r"(配图|配张图|补图|换图|生成图片|生成一张图|来张图|发图|发张图|发图片|发个图|出图|出个图|图片欣赏|成品图|成品照|实拍图|示意图|效果图|样图|参考图|图片|照片|实拍|图)", "", text)
+    text = re.sub(
+        r"(重新生成一张图|重新生成|重新配|重画|换一张|换张图|再来一张|另一张|"
+        r"不满意|不好看|配图|配张图|补图|换图|生成图片|生成一张图|来张图|"
+        r"发图|发张图|发图片|发个图|出图|出个图|图片欣赏|成品图|成品照|"
+        r"实拍图|示意图|效果图|样图|参考图|图片|照片|实拍|图)",
+        "",
+        text,
+    )
     text = re.sub(r"(给我看图|给我看看|让我看看|看一下图|看一下图片|看个图|长什么样|什么样子|啥样|什么样|样式|外观)", "", text)
     text = re.sub(r"[，。！？、,.!?：:\s]+", "", text).strip()
     return text[:40] or None
+
+
+def _missing_recent_image_text() -> str:
+    """纯换图动作找不到历史菜谱时，如实说明，不能把动作词当菜名生图。"""
+    return "上一轮没有可换图的菜谱。你可以先让我推荐一道菜，或者直接说“来张红烧肉的图”。"
 
 
 def _looks_like_control_json(text: str) -> bool:
@@ -519,12 +661,11 @@ async def _handle_image(image: UploadFile | None, image_url: str | None):
     if image_url:
         pass  # 前端已提供 OSS URL，视觉模型直接读公网地址
     elif image is not None:
-        if image.content_type not in ALLOWED_MIME:
-            raise HTTPException(status_code=400, detail="只支持 JPG、PNG、WEBP 图片")
-        file_bytes = await image.read()
+        # 体积 + 真实格式双重校验：declared content_type 不可信，且 read() 会吃满内存。
+        file_bytes, real_mime = await validate_image_upload(image, ALLOWED_MIME)
         save_img_name = image.filename
-        save_img_type = image.content_type
-        save_img_url = image_bytes_to_oss_url(file_bytes, image.content_type)
+        save_img_type = real_mime
+        save_img_url = image_bytes_to_oss_url(file_bytes, real_mime)
     return save_img_name, save_img_type, save_img_url
 
 
@@ -608,6 +749,12 @@ async def chat(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"图片处理失败：{exc}") from exc
+
+    # 同会话串行：建 pending 记录之前就挡掉，避免并发轮次互相覆盖落库结果。
+    busy_reason = _try_begin_turn(session_id)
+    if busy_reason:
+        return _notice_stream(busy_reason, session_id)
+
     turn_intent = _classify_turn_intent(message)
     image_requested = _should_enable_image_pipeline(message, want_image)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
@@ -654,6 +801,7 @@ async def chat(
             finally:
                 _clear_image_cancel(session_id, turn_id)
                 _forget_turn_record(session_id, turn_id)
+                _end_turn(session_id)
 
         return StreamingResponse(
             home_service_generator(),
@@ -702,6 +850,7 @@ async def chat(
                 pass
             _clear_image_cancel(session_id, turn_id)
             _forget_turn_record(session_id, turn_id)
+            _end_turn(session_id)
             yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     def standalone_image_generator():
@@ -725,6 +874,11 @@ async def chat(
                 target = find_recent_recipe_for_image(session_id, None)
             if not target:
                 dish_hint = str(requested_dish or target_dish_name or "").strip()
+                if not dish_hint and target_record_id is None:
+                    text = _missing_recent_image_text()
+                    final_answer = text
+                    yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+                    return
                 if not dish_hint:
                     dish_hint = "这道菜"
                 if target_record_id is not None:
@@ -834,6 +988,7 @@ async def chat(
                 pass
             _clear_image_cancel(session_id, turn_id)
             _forget_turn_record(session_id, turn_id)
+            _end_turn(session_id)
             yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
 
     def event_generator():
@@ -1000,7 +1155,18 @@ async def chat(
                     _persist_once()
                 except Exception:
                     pass
+                # 生成器 finally 在客户端断开时可能不执行，轮次槽/并发槽必须在这里兜住；
+                # 两处都调用是幂等的（pop 带默认值、信号量释放有 ValueError 保护）。
+                _end_turn(session_id)
+                _release_agent_slot()
                 events.put(("done", finished))
+
+        # 全局 Agent 背压：槽位满就立刻如实拒绝，不排队——排队会一直占着 HTTP 连接和心跳。
+        if not _acquire_agent_slot():
+            yield f"data: {json.dumps({'token': '当前同时在处理的需求有点多，请等十几秒再发一次。'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"
+            _end_turn(session_id)
+            return
 
         # Agent 内部可能在联网搜索、图片下载或结构化模型调用中等待较久。
         # 放到后台线程后，主生成器可以每隔几秒发送心跳，避免前端误判为断线。
@@ -1127,6 +1293,7 @@ async def chat(
             _persist_once()
             # 当前流已经结束，取消状态不能泄漏到下一轮。
             _clear_image_cancel_after_thread(session_id, turn_id, img_thread)
+            _end_turn(session_id)
 
         # 整轮正常结束（持久化已由 finally 完成，此处幂等）
         yield f"data: {json.dumps({'finish': True, 'session_id': session_id, 'record_id': pending_rec_id}, ensure_ascii=False)}\n\n"

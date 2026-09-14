@@ -6,6 +6,13 @@ from fastapi import Request
 from sessions_store import init_db
 import os
 import threading
+import logging
+import time
+import uuid
+
+from runtime_logging import configure_logging
+
+configure_logging()
 
 app = FastAPI(title="小膳管家")#创键fastapi对象
 
@@ -57,8 +64,64 @@ start_retry_daemon()
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    """兜底把未处理异常转成 JSON，避免 nginx 的 HTML 500 直接暴露给前端。"""
-    return JSONResponse(status_code=500, content={"code": 500, "messages": "服务内部错误，请稍后重试", "data": None})
+    """兜底记录异常并返回统一 JSON；堆栈只进后端日志。"""
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
+    started = getattr(request.state, "started_at", time.perf_counter())
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logging.getLogger("api.unhandled").exception(
+        "request_id=%s path=%s method=%s elapsed_ms=%d",
+        request_id,
+        request.url.path,
+        request.method,
+        elapsed_ms,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "messages": "服务内部错误，请稍后重试",
+            "data": None,
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
+
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    """给每个请求分配可追踪 ID，供异常日志和前端排障关联。"""
+    request.state.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    request.state.started_at = time.perf_counter()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+# 请求体总量粗筛：按 Content-Length 先挡一层，别让超大 body 进到解析阶段。
+# 注意这只是粗筛——Content-Length 可以缺失或撒谎，所以各上传端点还会按真实字节再卡一次。
+_MAX_REQUEST_BYTES = int(os.getenv("CHEF_MAX_REQUEST_MB", "16")) * 1024 * 1024
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _MAX_REQUEST_BYTES:
+        request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
+        return JSONResponse(
+            status_code=413,
+            content={
+                "code": 413,
+                "messages": (
+                    f"请求体超过 {_MAX_REQUEST_BYTES // (1024 * 1024)}MB 上限，"
+                    "请压缩图片或减少上传内容"
+                ),
+                "data": None,
+                "request_id": request_id,
+            },
+            headers={"X-Request-ID": request_id},
+        )
+    return await call_next(request)
 
 
 
@@ -83,6 +146,10 @@ from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
 from api.routes.fridge_route import router as fridge_router
 app.include_router(fridge_router, prefix="/api")
+
+from api.routes.health_route import router as health_router
+
+app.include_router(health_router, prefix="/api")
 
 # 语音识别路由：POST /api/transcribe（不碰 Agent 主逻辑，只在前后端之间加“语音转文字”）
 from api.routes.speech_route import router as speech_router

@@ -31,9 +31,21 @@ from agent_trace import trace_node
 from agent_prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
-from agent_schemas import GuardrailItem  # 健康护栏审计结论（运行时注入 ChefAnswer.guardrails）
+from agent_schemas import DishMatrixItem, GuardrailItem  # 结构化输出的确定性注入字段
 #build_structured_answer标准链+parser检查出错误后再进行重试
 from nutrition_rules import detect_conditions, audit, describe, RULES, conditions_from_profile  # L3 硬护栏：确定性健康禁忌审计
+from allergen_rules import (  # 过敏原 L3 硬护栏：与慢病规则分开，避免改变既有慢病降级语义
+    allergen_label,
+    audit_allergen_advisories,
+    audit_allergens,
+    describe_allergens,
+    suggest_safe_dishes,
+)
+from constraint_rules import build_matrix, build_member_adjustments
+
+
+# 画像自主采集默认关闭：关闭时候选提取、确认提示和写入链路均不生效。
+PROFILE_MEMORY_ENABLED = False
 
 
 def _active_profile_conditions() -> list:
@@ -59,6 +71,165 @@ def _active_profile_conditions() -> list:
         return conditions_from_profile(profile)
     except Exception:
         return []
+
+
+def _active_profile_allergens() -> list:
+    """读取激活成员的过敏原自由文本；档案缺失或损坏时返回空列表。"""
+    try:
+        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return []
+        members = raw.get("members")
+        if isinstance(members, list) and members:
+            active_id = raw.get("active_id")
+            member = next((m for m in members if m.get("id") == active_id), members[0])
+            profile = member.get("profile") or {}
+        else:  # v1 平铺档案
+            profile = raw
+        values = profile.get("allergens")
+        if not isinstance(values, list):
+            return []
+        return [str(item).strip() for item in values if str(item or "").strip()]
+    except Exception:
+        return []
+
+
+def _family_allergens() -> list:
+    """读取全家成员过敏原并集；只用于过敏原护栏，不改变慢病条件口径。"""
+    try:
+        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return []
+        members = raw.get("members")
+        profiles = []
+        if isinstance(members, list) and members:
+            profiles = [
+                member.get("profile") or {}
+                for member in members
+                if isinstance(member, dict)
+            ]
+        else:  # v1 平铺档案
+            profiles = [raw]
+        merged = []
+        for profile in profiles:
+            values = profile.get("allergens") if isinstance(profile, dict) else None
+            if not isinstance(values, list):
+                continue
+            for item in values:
+                text = str(item or "").strip()
+                if text and text not in merged:
+                    merged.append(text)
+        return merged
+    except Exception:
+        return []
+
+
+def _allergens_for_audit() -> list:
+    """主菜生成只审计激活成员；其他成员由逐菜分餐矩阵单独处理。"""
+    return _active_profile_allergens()
+
+
+def _profile_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / "profile.json"
+
+
+def _profile_health() -> tuple[dict, str]:
+    """返回 (档案字典, 错误说明)。
+
+    错误说明非空 = 档案存在但不可用。这时护栏会降级，**必须在右栏如实告知**：
+    静默当成"没有约束"等于让护栏在用户不知情的情况下失效。
+    """
+    path = _profile_path()
+    if not path.exists():
+        return {}, ""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {}, f"档案文件解析失败（{type(exc).__name__}）"
+    if not isinstance(raw, dict):
+        return {}, "档案文件结构不是对象"
+    if not raw:
+        return {}, "档案文件内容为空"
+    members = raw.get("members")
+    if isinstance(members, list) and members:
+        usable = [
+            m for m in members
+            if isinstance(m, dict) and isinstance(m.get("profile"), dict)
+        ]
+        if not usable:
+            return {}, "档案里没有任何可用的成员画像"
+    return raw, ""
+
+
+def _load_profile() -> dict:
+    """读取 data/profile.json 原始字典；缺失/损坏返回 {}（不抛异常、不阻断主流程）。"""
+    return _profile_health()[0]
+
+
+def _active_member_name() -> str:
+    """当前激活成员的名字；取不到时返回空串，前端据此不显示「主菜面向谁」。"""
+    raw = _load_profile()
+    members = raw.get("members")
+    if isinstance(members, list) and members:
+        active_id = raw.get("active_id")
+        member = next(
+            (m for m in members if isinstance(m, dict) and m.get("id") == active_id),
+            None,
+        )
+        if member is None:
+            member = next((m for m in members if isinstance(m, dict)), {})
+        return str(member.get("name") or "").strip()
+    return str(raw.get("name") or "").strip()
+
+
+def _family_members() -> list[dict]:
+    """读取同餐成员及画像；只读、容错，档案缺失时不阻断主流程。"""
+    try:
+        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return []
+        members = raw.get("members")
+        if isinstance(members, list) and members:
+            result = []
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                name = str(member.get("name") or "").strip()
+                profile = member.get("profile")
+                if not name or not isinstance(profile, dict):
+                    continue
+                result.append({"name": name, "profile": profile})
+            return result
+        # v1 平铺档案兼容：整份画像视为一位成员。
+        return [{"name": "我", "profile": raw}]
+    except Exception:
+        return []
+
+
+def _apply_family_differentiation(answer, members=None):
+    """用确定性规则覆盖模型自填矩阵，并生成稳定的一人一句调整。"""
+    family_members = _family_members() if members is None else members
+    try:
+        rows = build_matrix(
+            [recipe.model_dump() for recipe in answer.recipes],
+            family_members or [],
+        )
+        answer.dish_matrix = [DishMatrixItem(**row) for row in rows]
+        answer.member_adjustments = build_member_adjustments(rows)
+    except Exception:
+        # 矩阵只是差异化展示层，任何异常都不能影响已经通过审计的主卡片。
+        answer.dish_matrix = []
+        answer.member_adjustments = []
+    return answer
 
 
 def _merged_conditions(user_text: str) -> list:
@@ -270,8 +441,22 @@ def _message_has_image(message):
     )
 
 
+_INTERNAL_REQUEST_MARKERS = (
+    "【配图开关：开启】",
+    "【本轮需要配图】",
+)
+
+
+def _strip_internal_request_markers(text):
+    """移除仅用于后端控制、不能回显给用户的内部标记。"""
+    cleaned = str(text or "")
+    for marker in _INTERNAL_REQUEST_MARKERS:
+        cleaned = cleaned.replace(marker, "")
+    return cleaned.strip()
+
+
 def _current_request_text(text):
-    """从用户消息中取出本次需求，排除每轮自动注入的长期偏好。"""
+    """从用户消息中取出本次需求，排除每轮自动注入的长期偏好和内部标记。"""
     markers = (
         "【以上为自动加载约束，以下是本次需求】",
         "【以上为偏好约束，以下是本次需求】",
@@ -280,7 +465,7 @@ def _current_request_text(text):
         if marker in text:
             text = text.split(marker, 1)[1]
             break
-    return text.strip()
+    return _strip_internal_request_markers(text)
 
 
 def _is_recipe_selection_request(text: str) -> bool:
@@ -298,11 +483,12 @@ def _wants_recipe_images(messages):
 
     配图跟随“决策阶段”：健康闲聊/追问/餐馆/上门服务不烧图；
     具体菜品推荐、确认或更换一道菜时进入配图链路，最终仍以 recipes 为准。"""
-    text = _latest_user_text(messages)
+    raw_text = _latest_user_text(messages, strip_internal=False)
+    if any(marker in raw_text for marker in _INTERNAL_REQUEST_MARKERS):
+        return True
+    text = _current_request_text(raw_text)
     if not text:
         return False
-    if "【配图开关：开启】" in text or "【本轮需要配图】" in text:
-        return True
     intent = _classify_turn_intent(messages)
     return intent in ("confirm_one", "change_one") or (
         intent == "recommend" and _is_recipe_selection_request(text)
@@ -739,11 +925,16 @@ def _is_restaurant_ordering_scene(text: str) -> bool:
     )
 
 
-def _latest_user_text(messages):
+def _latest_user_text(messages, *, strip_internal=True):
     """提取本轮用户的文字需求，图文消息只取文字部分。"""
     for m in reversed(messages):
-        if isinstance(m, HumanMessage) and not str(m.content).startswith("[历史对话摘要"):
-            return _current_request_text(_message_text(m))
+        if (
+            isinstance(m, HumanMessage)
+            and not str(m.content).startswith("[历史对话摘要")
+            and not str(m.content).startswith("[健康护栏审核")
+        ):
+            text = _message_text(m)
+            return _current_request_text(text) if strip_internal else text
     return ""
 
 
@@ -783,7 +974,45 @@ def _search_recipe_image(recipe_name):
         return None, False
 
 
-def _build_guardrails(user_text, verify_status, verify_violated):
+def _matrix_cell(row, key: str) -> str:
+    """从 DishMatrixItem（pydantic）或 dict 里取字段，便于单测直接喂 dict。"""
+    if isinstance(row, dict):
+        return str(row.get(key) or "")
+    return str(getattr(row, key, "") or "")
+
+
+def _family_conflict_guardrails(dish_matrix) -> list:
+    """把分餐矩阵的冲突抬进右栏护栏，保证「矩阵说什么、护栏就显示什么」。
+
+    这是安全表达问题而不只是 UI 问题：矩阵已判定某成员不可吃，
+    右栏却显示「未触发额外健康约束」，等于当着用户的面自相矛盾。
+    """
+    from allergen_rules import UNRESOLVED_ALLERGEN_ADVICE
+
+    items = []
+    for row in dish_matrix or []:
+        verdict = _matrix_cell(row, "verdict")
+        member = _matrix_cell(row, "member") or "成员"
+        dish = _matrix_cell(row, "dish") or "本轮主菜"
+        reason = _matrix_cell(row, "reason")
+        if verdict == "不可吃":
+            items.append(GuardrailItem(
+                condition=f"同餐冲突:{member}",
+                rule=f"{member}不可吃「{dish}」，必须单独替换并避免交叉接触",
+                status="member_conflict",
+                reason=reason or f"{member}的硬约束与本轮主菜冲突；需单独替换并避免交叉接触",
+            ))
+        elif verdict == "待确认":
+            items.append(GuardrailItem(
+                condition=f"过敏原待确认:{member}",
+                rule=f"{member}档案里的过敏原未纳入标准规则，仅按原文提醒",
+                status="warn",
+                reason=reason or UNRESOLVED_ALLERGEN_ADVICE,
+            ))
+    return items
+
+
+def _build_guardrails(user_text, verify_status, verify_violated, dish_matrix=None):
     """依据 verify 节点真实审计结论，为前端右栏拼出『本轮健康护栏』列表（健康链可见化的核心）。
 
     - 对每个检测到的健康标签，给出 pass / warn / adjusted 结论与一句理由；
@@ -792,13 +1021,28 @@ def _build_guardrails(user_text, verify_status, verify_violated):
     - 与 verify_answer_node 共用同一套 RULES，口径一致。
     """
     conditions = _merged_conditions(user_text)
-    if not conditions:
-        return []
+    for allergen in _allergens_for_audit():
+        condition = f"过敏原:{allergen_label(allergen)}"
+        if condition not in conditions:
+            conditions.append(condition)
+    # blocked 场景兜底：本轮实际命中的过敏原也并进来。
+    # 理由——档案可能在审计后变更，只靠 _allergens_for_audit() 会漏，
+    # 而"拦截了却不在右栏显示"等于把护栏证据弄丢。
+    for violation in verify_violated or []:
+        text = str(violation)
+        if text.startswith("过敏原:") and text not in conditions:
+            conditions.append(text)
     violated = set(verify_violated or [])
     items = []
     for cond in conditions:
         rule_msg = RULES.get(cond, {}).get("message", "")
-        if cond in violated and verify_status == "degraded":
+        if not rule_msg and str(cond).startswith("过敏原:"):
+            rule_msg = f"必须完全不含{str(cond).split(':', 1)[-1]}，包括调料与隐含来源"
+        # 分支顺序不可调换：blocked 必须先判，否则会落进 adjusted 分支，
+        # 把"拒绝推荐"说成"已自动调整至合规"——那是不实表述。
+        if cond in violated and verify_status == "blocked":
+            status, reason = "blocked", "已拦截，本轮未输出含该过敏原的菜品：" + rule_msg
+        elif cond in violated and verify_status == "degraded":
             status, reason = "warn", "经多次重生成仍有需注意项，请谨慎：" + rule_msg
         elif cond in violated:
             # 曾被硬护栏命中、但最终通过了审计（已重生成至合规）
@@ -806,6 +1050,17 @@ def _build_guardrails(user_text, verify_status, verify_violated):
         else:
             status, reason = "pass", "已符合" + cond + "膳食原则"
         items.append(GuardrailItem(condition=cond, rule=rule_msg, status=status, reason=reason))
+    # 同餐成员冲突必须以矩阵为准：没有健康标签不等于没有冲突。
+    items.extend(_family_conflict_guardrails(dish_matrix))
+    # 档案不可用时护栏必然降级：必须让用户看见，不能让"没有约束"冒充"全部通过"。
+    _, profile_error = _profile_health()
+    if profile_error:
+        items.append(GuardrailItem(
+            condition="健康档案不可用",
+            rule="本轮护栏已降级：档案里的健康约束与过敏原都没有生效",
+            status="warn",
+            reason=f"{profile_error}。请重新建档或在「家庭成员」中修正后再决策。",
+        ))
     return items
 
 
@@ -836,12 +1091,70 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
         answer = build_structured_answer(context)#会返回一个实例
         answer = rank_recipes(answer, allow_multiple=allow_multiple)
+        # 自然语言已通过一次审计，但结构化模型仍可能改写食材或调料。
+        # 卡片输出前再审一次，命中过敏原时直接放弃卡片，保留已通过审计的正文。
+        structured_text = "\n".join(
+            " ".join([
+                recipe.name,
+                recipe.intro,
+                " ".join(
+                    f"{seasoning.name} {seasoning.amount}"
+                    for seasoning in recipe.seasonings
+                ),
+                " ".join(recipe.steps),
+            ])
+            for recipe in answer.recipes
+        )
+        structured_allergen_violations = audit_allergens(
+            structured_text,
+            _allergens_for_audit(),
+            use_optional=True,
+        )
+        if structured_allergen_violations:
+            structured_conditions = sorted({
+                violation["condition"] for violation in structured_allergen_violations
+            })
+            merged_violations = sorted(
+                set(state.get("verify_violated") or []) | set(structured_conditions)
+            )
+            # 与 allergen_block_node 同口径：只回纯文本的话右栏健康链是空的，
+            # 用户只看到"菜没了"却看不到"为什么没了"。统一输出结构化 payload。
+            block_tip = (
+                "抱歉，这道菜在备料细节（调料或步骤）里含有需要避开的过敏原，"
+                "我不能推荐。请告诉我家里现有的食材，我按不含该过敏原重新配一道。"
+            )
+            return {
+                "messages": [AIMessage(content=json.dumps({
+                    "opening": block_tip,
+                    "recipes": [],
+                    "image_url": None,
+                    "image_ai_generated": False,
+                    "image_requested": False,
+                    "image_note": "",
+                    "chef_tip": "",
+                    "sources": [],
+                    "health_lights": [],
+                    "guardrails": [
+                        item.model_dump()
+                        for item in _build_guardrails(latest_text, "blocked", merged_violations)
+                    ],
+                    # UI 必须让用户看到「主菜当前面向谁」，否则家庭场景下无法判断该听谁的。
+                    "primary_member": _active_member_name(),
+                }, ensure_ascii=False))],
+                "verify_status": "blocked",
+                "verify_warning": "结构化卡片复核命中过敏原，已取消卡片输出。",
+                "verify_violated": merged_violations,
+            }
+        # 家庭差异化必须由 Python 规则确定性计算，模型自填矩阵只能作为候选，
+        # 最终卡片统一用 build_matrix 的结果覆盖，保证可审计、可复现。
+        answer = _apply_family_differentiation(answer)
         # 外出就餐场景：不清空 steps，改在 Prompt 里要求模型产出「取餐/怎么吃」而非烹饪步骤。#将实例中的菜谱进行排序
         # 健康护栏可见化：把 verify 的确定性审计结论注入卡片，供前端右栏渲染『健康链』
         answer.guardrails = _build_guardrails(
             latest_text,
             state.get("verify_status", ""),
             state.get("verify_violated", []),
+            dish_matrix=answer.dish_matrix,
         )
         # 健康护栏：若多次重生成仍不通过，把安全警示带进卡片（绝不静默放行）
         warning = state.get("verify_warning", "")
@@ -889,7 +1202,13 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
                 # 要图时先保持空注解，前端据此显示「AI 正在生成菜品图片...」占位；
                 # 真正失败由 chat_route 的 image_failed 事件统一落失败文案。
                 answer.image_note = answer.image_note or ""
-        payload = {"opening": opening, **answer.model_dump()}
+        # primary_member 刻意不进 ChefAnswer schema：不改模型格式指令，避免扰动结构化解析；
+        # 只在出卡时由代码注入，语义是「本轮主菜按谁的健康约束求解」。
+        payload = {
+            "opening": opening,
+            "primary_member": _active_member_name(),
+            **answer.model_dump(),
+        }
         return {
             "messages": [
                 AIMessage(content=json.dumps(payload, ensure_ascii=False))#ai结构化完的消息加进 messages
@@ -907,8 +1226,8 @@ MAX_VERIFY = 3  # 打回重生成的上限，防无限循环
 class ChefState(MessagesState):
     verify_attempts: int      # 已打回重生成次数
     verify_warning: str       # 超限仍不通过时带给前端的安全警示
-    verify_status: str        # ok / retry / degraded，供条件边路由
-    verify_violated: list = []  # 本轮被硬护栏命中的病种列表（供右栏『健康链』如实展示）
+    verify_status: str        # ok / retry / degraded / blocked，供条件边路由
+    verify_violated: list = []  # 本轮曾命中的病种列表（供右栏『健康链』如实展示）
     profile_ready: bool = True  # 充分性门控：健康画像是否足够进入检索/审计（AgentMental 范式）
     profile_missing: list = []  # 充分性门控：本轮尚未确认的高风险病种
     tool_calls_in_turn: int = 0  # 本轮已执行工具调用数，入口重置
@@ -916,8 +1235,9 @@ class ChefState(MessagesState):
 
 @trace_node("verify_answer")
 def verify_answer_node(state: ChefState):
-    """输出前硬审计：发现硬禁忌则带反馈打回 chef_think 重生成（最多 MAX_VERIFY 次）。"""
+    """输出前硬审计：慢病可降级，过敏原连续命中时必须阻断，不得放行。"""
     attempts = state.get("verify_attempts", 0)
+    previous_violations = list(state.get("verify_violated") or [])
     # 取最新一条 chef_think 的自然语言回答做审计
     answer_text = ""
     for m in reversed(state["messages"]):
@@ -926,38 +1246,168 @@ def verify_answer_node(state: ChefState):
             break
     user_text = _latest_user_text(state["messages"])
     conditions = _merged_conditions(user_text)
-    violations = audit(answer_text, conditions)
+    allergens = _allergens_for_audit()
+    allergen_violations = audit_allergens(
+        answer_text,
+        allergens,
+        use_optional=True,
+    )
+    violations = audit(answer_text, conditions) + allergen_violations
+    has_allergen_violation = any(
+        str(v.get("condition", "")).startswith("过敏原:")
+        for v in violations
+    )
     violated_conditions = sorted({v["condition"] for v in violations})
     if not violations:
+        notices = audit_allergen_advisories(
+            answer_text,
+            allergens,
+            use_optional=True,
+        )
+        notice_warning = ""
+        if notices:
+            notice_warning = "⚠️ 过敏原提示：" + "；".join(
+                f"{v['condition']}需确认「{v['keyword']}」是否含致敏成分"
+                for v in notices
+            )
         return {"verify_status": "ok", "verify_attempts": attempts + 1,
-                "verify_warning": "", "verify_violated": []}
+                "verify_warning": notice_warning,
+                "verify_violated": previous_violations}
+    # 工具预算已经耗尽时，过敏原不能再打回空转，直接阻断并给出确定性替代。
+    if has_allergen_violation and state.get("tool_budget_exhausted"):
+        return {"verify_status": "blocked", "verify_warning": "",
+                "verify_violated": sorted(
+                    set(previous_violations) | set(violated_conditions)
+                )}
+    # 过敏原达到重试上限后必须 blocked；慢病仍保持既有 degraded 语义。
+    if has_allergen_violation and attempts >= MAX_VERIFY:
+        return {"verify_status": "blocked", "verify_warning": "",
+                "verify_violated": sorted(
+                    set(previous_violations) | set(violated_conditions)
+                )}
     if state.get("tool_budget_exhausted"):
         warn = "健康护栏提示：工具预算已耗尽，本轮先按已有信息保守收口；仍需注意——" + "；".join(
             f"{v['condition']}忌{v['keyword']}" for v in violations
         )
         return {"verify_status": "degraded", "verify_warning": warn,
-                "verify_violated": violated_conditions}
+                "verify_violated": sorted(set(previous_violations) | set(violated_conditions))}
     if attempts < MAX_VERIFY:
+        feedback_text = describe(violations)
+        if has_allergen_violation:
+            feedback_text += (
+                "\n过敏原是绝对硬约束，必须完全避开，包括调料与隐含来源"
+                "（如酱油含小麦、蛋黄酱含蛋）；请换一道完全不含该成分的菜。"
+            )
         feedback = HumanMessage(content=(
             "[健康护栏审核] 你给出的方案违反了以下硬禁忌，必须重新生成一道合规的菜：\n"
-            + describe(violations)
+            + feedback_text
             + "\n请换用符合该人群膳食原则的食材与调料，保持菜谱可执行，只输出一道菜。"
         ))
         return {"verify_status": "retry", "verify_attempts": attempts + 1,
-                "verify_violated": violated_conditions, "messages": [feedback]}
+                "verify_violated": sorted(set(previous_violations) | set(violated_conditions)),
+                "messages": [feedback]}
     # 已达上限仍不通过：放行但附安全警示，绝不静默放行
     warn = "⚠️ 健康护栏提示：本方案经多次重生成仍含需注意项——" + "；".join(
         f"{v['condition']}忌{v['keyword']}" for v in violations
     )
     return {"verify_status": "degraded", "verify_warning": warn,
-            "verify_violated": violated_conditions}
+            "verify_violated": sorted(set(previous_violations) | set(violated_conditions))}
+
+
+@trace_node("allergen_block")
+def allergen_block_node(state: ChefState):
+    """过敏原连续命中：不调 LLM、不输出违规卡片，只给确定性安全替代方向。"""
+    labels = []
+    for condition in state.get("verify_violated") or []:
+        text = str(condition)
+        if text.startswith("过敏原:"):
+            label = text.split(":", 1)[1].strip()
+            if label and label not in labels:
+                labels.append(label)
+    safe = suggest_safe_dishes(
+        _allergens_for_audit(),
+        k=3,
+        use_optional=True,
+    )
+    subject = "、".join(labels) if labels else "相关过敏原"
+    tip = (
+        f"抱歉，在{subject}过敏的前提下，这道菜我不能推荐。"
+        "以下是不含该成分的替代方向："
+        + "、".join(safe)
+        + "。请挑一个，我再给完整做法。"
+    )
+    if len(safe) < 3:
+        tip += (
+            "当前成员的过敏原限制下，安全可共用的家常菜较少；"
+            "其他无该过敏原的成员仍可按原菜就餐，相关成员单独替换并避免交叉接触。"
+        )
+    violated = state.get("verify_violated") or []
+    guardrails = [
+        item.model_dump()
+        for item in _build_guardrails(
+            _latest_user_text(state.get("messages", [])), "blocked", violated
+        )
+    ]
+    # 仍然输出结构化 payload（recipes 为空数组）：
+    # 前端只在拿到 ChefAnswer 结构时才渲染右栏『健康链』，若这里只回纯文本，
+    # 就会变成"拦是拦住了，但没有任何可见证据"——答辩时拿不出来。
+    # recipes 给空数组：App.tsx 用 Array.isArray(recipes) 判定，空数组不会渲染卡片。
+    payload = {
+        "opening": tip,
+        "recipes": [],
+        "image_url": None,
+        "image_ai_generated": False,
+        "image_requested": False,
+        "image_note": "",
+        "chef_tip": "",
+        "sources": [],
+        "health_lights": [],
+        "guardrails": guardrails,
+    }
+    return {
+        "messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False))],
+        "verify_warning": tip,
+        "verify_status": "blocked",
+    }
+
+
+@trace_node("profile_memory")
+def profile_memory_node(state: ChefState):
+    """结构化回答后提取画像候选；默认关闭时不产生任何状态变化。"""
+    if not PROFILE_MEMORY_ENABLED:
+        return {}
+    text = _latest_user_text(state.get("messages", []))
+    if not text:
+        return {}
+    try:
+        from memory_candidates import extract_candidates, remember_candidates
+
+        family = {}
+        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        if path.exists():
+            family = json.loads(path.read_text(encoding="utf-8"))
+        candidates = extract_candidates(text, family.get("members") or [])
+        candidates = remember_candidates(candidates)
+    except Exception:
+        return {}
+    if not candidates:
+        return {}
+    candidate = candidates[0]
+    member = candidate.get("member") or "这位家人"
+    value = candidate.get("value") or "这条饮食限制"
+    message = (
+        f"我记下了：{member}{value}。要加入{member}的长期饮食画像吗？"
+        "你可以确认、仅本次记住或永久不记录。"
+    )
+    return {"messages": [AIMessage(content=message)]}
+
 
 def verify_route(state: ChefState) -> str:
     """根据审计状态路由：ok/degraded → 结构化收尾；retry → 回到思考节点。
     P3 性能二段：仅当用户明确是非菜品查询（闲聊/纯健康问答）时才直通 END，
     跳过 structure LLM —— 任何可能输出菜品卡片（含图片）的轮次都保留结构化流程。"""
     status = state.get("verify_status", "ok")
-    if state.get("tool_budget_exhausted"):
+    if state.get("tool_budget_exhausted") and status != "blocked":
         return "plain"
     if status == "ok":
         has_tool_result = any(
@@ -994,15 +1444,26 @@ def _is_followup_only(text: str) -> bool:
 #  4.5 充分性门控（AgentMental 范式）：高风险健康决策前先确定性判断画像是否足够
 # --------------------------------------------------------------------------- #
 def _parse_declared_conditions(user_text: str) -> set:
-    """从注入的健康画像前缀【健康画像：慢病约束=高血压、糖尿病】解析已声明病种。"""
+    """解析画像中的已声明病种，兼容旧字段和当前渲染格式。"""
     import re
-    m = re.search(r"慢病约束\s*=\s*([^】\n]*)", user_text)
-    if not m:
-        return set()
-    seg = m.group(1).strip()
-    if seg in ("无", "无特殊", ""):
-        return set()
-    return {i.strip() for i in re.split(r"[、,，;；\s]+", seg) if i.strip()}
+    segments = []
+    for pattern in (
+        r"慢病约束\s*=\s*([^】\n]*)",
+        r"慢病情况\s*[：:]\s*([^\n（(]*)",
+        r"当前目标\s*[：:]\s*([^\n（(]*)",
+    ):
+        segments.extend(match.group(1) for match in re.finditer(pattern, user_text))
+    declared = set()
+    for segment in segments:
+        segment = segment.strip()
+        if segment in ("无", "无特殊", ""):
+            continue
+        declared.update(
+            item.strip()
+            for item in re.split(r"[、,，;；\s]+", segment)
+            if item.strip()
+        )
+    return declared
 
 def _declared_covers(condition: str, declared: set) -> bool:
     """模糊匹配：declared 任一包含/被包含于 condition 即视为已声明该约束。"""
@@ -1034,7 +1495,7 @@ def _self_declared_conditions(user_text: str) -> set:
         ("高脂血症", ("高血脂", "高脂血症", "血脂高", "血脂偏高", "甘油三酯")),
         ("痛风", ("痛风", "尿酸高", "尿酸偏高", "高嘌呤")),
         ("慢性肾脏病", ("肾病", "肾脏不好", "肾功能", "肾炎", "肌酐高")),
-        ("肥胖", ("肥胖", "体重超标", "超重", "我想减肥")),
+        ("肥胖", ("肥胖", "体重超标", "超重", "减肥", "减重", "控制体重")),
         ("孕期", ("怀孕", "孕妇", "孕期", "妊娠", "孕")),
     ]
     for condition, phrases in pairs:
@@ -1070,7 +1531,11 @@ def profile_gate_node(state: ChefState):
     if not conditions:
         return {"profile_ready": True, "profile_missing": []}
 
-    declared = _parse_declared_conditions(user_text) | _self_declared_conditions(user_text)
+    declared = (
+        _parse_declared_conditions(user_text)
+        | _self_declared_conditions(user_text)
+        | set(_active_profile_conditions())
+    )
     missing = [c for c in conditions if not _declared_covers(c, declared)]
     if not missing:
         return {"profile_ready": True, "profile_missing": []}
@@ -1136,6 +1601,8 @@ workflow.add_node("run_tools", run_tools_node)#工具执行节点
 workflow.add_node("condense_history", maybe_condense)# 注册长对话压缩节点
 workflow.add_node("verify_answer", verify_answer_node)# 注册健康护栏审计节点
 workflow.add_node("structure_answer", structure_answer_node)# 注册结构化回答节点
+workflow.add_node("profile_memory", profile_memory_node)# 画像候选后置节点（默认关闭）
+workflow.add_node("allergen_block", allergen_block_node)# 过敏原硬拦截：确定性安全文案，不调用 LLM
 workflow.add_node("profile_gate", profile_gate_node)# 注册充分性门控节点（AgentMental 范式）
 workflow.add_node("ask_user", ask_user_node)# 注册健康画像追问节点
 workflow.add_node("tool_budget_finalize", tool_budget_finalize_node)# 工具预算耗尽后的优雅收尾节点
@@ -1176,9 +1643,13 @@ workflow.add_conditional_edges(#新增一个条件边分支
     path_map={"ok": "structure_answer", #下一步进入结构化输出
               "retry": "chef_think",#回去重新生成
               "degraded": "structure_answer",#能用就节构化输出
+              "blocked": "allergen_block",#过敏原不得降级放行
               "plain": END},#P3：无工具纯问答直接结束，跳过结构化 LLM
 )
-# 3. 结构化回答完毕，整轮才真正结束
-workflow.add_edge("structure_answer", END)
+# 3. 结构化回答完毕 → 可选画像候选提取；关闭时节点直接透传后结束
+workflow.add_edge("structure_answer", "profile_memory")
+workflow.add_edge("profile_memory", END)
+# 过敏原阻断文案输出后结束，不得再进入结构化节点生成违规卡片
+workflow.add_edge("allergen_block", END)
 # 编译可运行的图，挂载 Sqlite 断点持久化
 agent = workflow.compile(checkpointer=checkpointer)#创建可运行的图的实例对象

@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from api.schemas import TranscribeData, TranscribeResponse
 from speech_transcriber import transcribe_audio
+from upload_guard import read_spooled_limited
 
 router = APIRouter()
 
@@ -32,9 +33,8 @@ def transcribe(audio: UploadFile = File(...)):
     if content_type not in ALLOWED_AUDIO_MIME and ext not in ALLOWED_AUDIO_EXT:
         raise HTTPException(status_code=400, detail="不支持的音频格式")
 
-    audio_bytes = audio.file.read()
-    if len(audio_bytes) > MAX_BYTES:
-        raise HTTPException(status_code=413, detail="音频超过大小限制")
+    # 分块读 + 卡上限：先 read() 再判长度的话，超大文件已经进内存了。
+    audio_bytes = read_spooled_limited(audio.file, limit=MAX_BYTES, kind="音频")
 
     result = transcribe_audio(audio_bytes, audio.filename or "audio", content_type)
 

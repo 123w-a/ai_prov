@@ -9,6 +9,8 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from storage_utils import atomic_write_json
+
 _LOG = Path(__file__).resolve().parent / "data" / "taste_signals.json"
 
 # 口味词典：taste → 触发词（菜名/用户原话命中即算一票）
@@ -49,8 +51,7 @@ def record_signals(tastes: list[str], sid: str, rec_id: int) -> None:
     cutoff = (datetime.now() - timedelta(days=14)).date().isoformat()
     events = [e for e in events if str(e.get("ts", ""))[:10] >= cutoff]
     try:
-        _LOG.parent.mkdir(parents=True, exist_ok=True)
-        _LOG.write_text(json.dumps(events, ensure_ascii=False, indent=1), encoding="utf-8")
+        atomic_write_json(_LOG, events, indent=1)
     except Exception:
         pass
 
@@ -63,8 +64,7 @@ def clear_signals_for(sid: str, rec_id: int) -> None:
         return
     events = [e for e in events if not (e.get("sid") == sid and e.get("rec_id") == rec_id)]
     try:
-        _LOG.parent.mkdir(parents=True, exist_ok=True)
-        _LOG.write_text(json.dumps(events, ensure_ascii=False, indent=1), encoding="utf-8")
+        atomic_write_json(_LOG, events, indent=1)
     except Exception:
         pass
 

@@ -172,5 +172,19 @@ class SugarCapTest(unittest.TestCase):
         self.assertIn("30g", sugar[0]["keyword"])
 
 
+class TestObesityAlcoholRules(unittest.TestCase):
+    """肥胖规则拦截饮酒，但不误伤作为烹饪配料的料酒。"""
+
+    def test_cooking_wine_is_not_flagged(self):
+        violations = audit("白灼虾加料酒1平汤勺", ["肥胖"])
+        self.assertFalse(any(v["keyword"] == "酒" for v in violations))
+
+    def test_explicit_alcohol_is_still_flagged(self):
+        for text in ("配啤酒", "喝白酒", "饮酒", "酒精饮料"):
+            with self.subTest(text=text):
+                violations = audit(text, ["肥胖"])
+                self.assertTrue(violations, text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

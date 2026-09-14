@@ -20,6 +20,7 @@ from api.main_app import app
 HOST = "127.0.0.1"  # 只监听本机，避免暴露到局域网
 PORT = 8010  # 与前端 DEFAULT_API_URL 保持一致，别随便改
 RELOAD = os.getenv("API_RELOAD", "0") == "1"  # 改代码自动重启，开发时可 set API_RELOAD=1
+WORKERS = 1  # 会话/JSON 存储使用进程内锁，必须固定单 worker。
 
 
 def port_in_use(host=HOST, port=PORT):
@@ -125,12 +126,26 @@ def free_port(host=HOST, port=PORT):
     return False
 
 
+def enforce_single_worker():
+    """拒绝外部误设的多 worker，避免本地 JSON 并发写坏。"""
+    configured = os.getenv("WEB_CONCURRENCY") or os.getenv("UVICORN_WORKERS")
+    if configured and configured.strip() not in {"1", str(WORKERS)}:
+        print(
+            "[ERROR] 本项目使用进程内 JSON 锁，只支持单 worker；"
+            f"检测到 WORKERS={configured}。请取消 WEB_CONCURRENCY/UVICORN_WORKERS 后重试。"
+        )
+        return False
+    return True
+
+
 if __name__ == "__main__":
+    if not enforce_single_worker():
+        sys.exit(1)
     if not free_port():
         sys.exit(1)  # 清场失败就别硬启，避免刷一屏 10048 报错
 
     if RELOAD:
         # reload 模式必须传 "模块:变量" 字符串，uvicorn 才能在子进程里重新导入
-        uvicorn.run("api.main_app:app", host=HOST, port=PORT, reload=True)
+        uvicorn.run("api.main_app:app", host=HOST, port=PORT, reload=True, workers=WORKERS)
     else:
-        uvicorn.run(app, host=HOST, port=PORT)
+        uvicorn.run(app, host=HOST, port=PORT, workers=WORKERS)

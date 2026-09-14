@@ -261,6 +261,7 @@ export interface MemberInput {
     goal: string
     diet_style?: string
     dislikes: string[]
+    taste_notes?: string[]
     basic: {
       height_cm: number | null
       weight_kg: number | null

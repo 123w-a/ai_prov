@@ -1,0 +1,9 @@
+﻿record_type,key,baseline,route,delta,note
+summary,recall_at_3,0.75,0.75,0.0,"same cases, hybrid retrieval, rerank disabled"
+summary,slice_complete_rate,,0.6249,,atomic parent-child chunks whose full parent is retained
+summary,restricted_rate,,0.3751,,1 - slice_complete_rate for routed parent-child chunks
+summary,chunk_count,717,1435,718,indexed chunk count
+case,gout-old-soup,True,True,0,痛风能不能喝老火汤
+case,pregnancy-raw-fish,False,False,0,孕妇可以吃生鱼片吗
+case,hypertension-salt,True,True,0,高血压每天盐吃多少合适
+case,diabetes-staple,True,True,0,糖尿病人主食怎么选

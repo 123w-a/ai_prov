@@ -11,6 +11,8 @@ import base64
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from api.routes.service_route import _split_inventory_text
+from storage_utils import atomic_write_json
+from upload_guard import validate_image_upload
 
 router = APIRouter()
 _FILE = Path(__file__).resolve().parents[2] / "data" / "fridge.json"
@@ -70,11 +72,10 @@ def _vision_extract_items(image_bytes: bytes, content_type: str) -> list[dict]:
 @router.post("/fridge/vision")
 async def vision_fridge(image: UploadFile = File(...)):
     """拍照清点冰箱：返回 AI 识别的食材草稿，由用户确认后再写入库存。"""
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="图片内容为空")
+    # 此前这个端点既不校验体积也不校验真实格式，能直接把任意内容喂给视觉模型。
+    image_bytes, real_mime = await validate_image_upload(image)
     try:
-        items = _vision_extract_items(image_bytes, image.content_type or "image/jpeg")
+        items = _vision_extract_items(image_bytes, real_mime)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"视觉识别失败：{exc}")
     return {"items": items, "draft": True, "note": "AI 识别草稿，请确认或删改后写入"}
@@ -90,8 +91,7 @@ def _log_pantry_events(kind: str, items: list[str]) -> None:
             data = json.loads(_PANTRY_LOG.read_text(encoding="utf-8"))
         day = datetime.now().isoformat(timespec="seconds")[:10]
         data.extend({"date": day, "type": kind, "item": item} for item in items)
-        _PANTRY_LOG.parent.mkdir(parents=True, exist_ok=True)
-        _PANTRY_LOG.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(_PANTRY_LOG, data, indent=None)
     except Exception:
         pass
 
@@ -108,8 +108,7 @@ def get_fridge():
 
 def _write_items(items: list[str]) -> dict:
     unique = list(dict.fromkeys(items))
-    _FILE.parent.mkdir(parents=True, exist_ok=True)
-    _FILE.write_text(json.dumps({"items": unique}, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(_FILE, {"items": unique}, indent=None)
     return {"items": unique, "saved": True}
 
 

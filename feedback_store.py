@@ -8,6 +8,8 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from storage_utils import atomic_write_json
+
 _LOG = Path(__file__).resolve().parent / "data" / "answer_feedback.json"
 
 
@@ -24,8 +26,7 @@ def read_events() -> list[dict]:
 
 def write_events(events: list[dict]) -> None:
     """整表覆写反馈事件（调用方已在锁内完成去重）。"""
-    _LOG.parent.mkdir(parents=True, exist_ok=True)
-    _LOG.write_text(json.dumps(events, ensure_ascii=False, indent=1), encoding="utf-8")
+    atomic_write_json(_LOG, events, indent=1)
 
 
 def recent_down_dishes(days: int = 14, limit: int = 5) -> list[str]:

@@ -6,12 +6,17 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
 _FILE = Path(__file__).resolve().parent / "data" / "agent_trace.jsonl"
+_TRACE_LOCK = threading.Lock()
+_MAX_BYTES = 10 * 1024 * 1024
+_BACKUP_COUNT = 3
 
 
 def _messages_of(state) -> list:
@@ -33,12 +38,29 @@ def _chars_of(messages) -> int:
     return total
 
 
+def _rotate_if_needed() -> None:
+    """超过大小上限时轮转，最多保留 ``_BACKUP_COUNT`` 份历史。"""
+    try:
+        if not _FILE.exists() or _FILE.stat().st_size < _MAX_BYTES:
+            return
+        for index in range(_BACKUP_COUNT - 1, 0, -1):
+            source = _FILE.with_name(f"{_FILE.name}.{index}")
+            target = _FILE.with_name(f"{_FILE.name}.{index + 1}")
+            if source.exists():
+                os.replace(source, target)
+        os.replace(_FILE, _FILE.with_name(f"{_FILE.name}.1"))
+    except Exception:
+        pass
+
+
 def _append(record: dict) -> None:
     """追加一行 JSON 记录；任何 IO 异常静默吞掉。"""
     try:
-        _FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _FILE.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        with _TRACE_LOCK:
+            _FILE.parent.mkdir(parents=True, exist_ok=True)
+            _rotate_if_needed()
+            with _FILE.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
 

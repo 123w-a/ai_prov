@@ -24,6 +24,7 @@ interface Draft {
   allergens: string
   goal: string
   dislikes: string
+  taste_notes: string
   height_cm: string
   weight_kg: string
   age: string
@@ -36,6 +37,7 @@ const emptyDraft: Draft = {
   allergens: '',
   goal: '',
   dislikes: '',
+  taste_notes: '',
   height_cm: '',
   weight_kg: '',
   age: '',
@@ -63,6 +65,7 @@ function draftFrom(member: FamilyMember): Draft {
     allergens: profile.allergens.join('、'),
     goal: profile.goal ?? '',
     dislikes: profile.dislikes.join('、'),
+    taste_notes: (profile.taste_notes ?? []).join('、'),
     height_cm: basic.height_cm != null ? String(basic.height_cm) : '',
     weight_kg: basic.weight_kg != null ? String(basic.weight_kg) : '',
     age: basic.age != null ? String(basic.age) : '',
@@ -84,6 +87,7 @@ function inputFrom(draft: Draft): MemberInput {
       allergens: splitTags(draft.allergens),
       goal: draft.goal.trim(),
       dislikes: splitTags(draft.dislikes),
+      taste_notes: splitTags(draft.taste_notes).slice(0, 12),
       basic: {
         height_cm: numInRange(draft.height_cm, 80, 250),
         weight_kg: numInRange(draft.weight_kg, 20, 300),
@@ -100,6 +104,9 @@ function memberSummary(member: FamilyMember): string {
   const parts: string[] = []
   if (member.profile.conditions.length) parts.push(member.profile.conditions.join('、'))
   if (member.profile.allergens.length) parts.push(`忌 ${member.profile.allergens.join('、')}`)
+  if ((member.profile.taste_notes ?? []).length) {
+    parts.push((member.profile.taste_notes ?? []).join('、'))
+  }
   return parts.join(' · ') || '暂无健康约束'
 }
 
@@ -114,8 +121,12 @@ export function FamilyPanel({ onBack }: FamilyPanelProps) {
   const load = useCallback(async () => {
     try {
       setFamily(await fetchFamily())
-    } catch {
-      setNotice('家庭成员读取失败')
+      setNotice('')
+    } catch (error) {
+      // 档案损坏时必须把后端给的具体原因说清楚：静默显示成「空档案」
+      // 会让用户以为没有健康约束，护栏就此在不知情的情况下失效。
+      const detail = error instanceof Error && error.message ? error.message : ''
+      setNotice(detail ? `家庭成员读取失败：${detail}` : '家庭成员读取失败')
     }
   }, [])
 
@@ -372,6 +383,14 @@ export function FamilyPanel({ onBack }: FamilyPanelProps) {
               value={draft.dislikes}
               placeholder="如：香菜、肥肉"
               onChange={(e) => setDraft({ ...draft, dislikes: e.target.value })}
+            />
+          </label>
+          <label>
+            口感/口味偏好（顿号分隔）
+            <input
+              value={draft.taste_notes}
+              placeholder="如：软食、少盐、不吃辣"
+              onChange={(e) => setDraft({ ...draft, taste_notes: e.target.value })}
             />
           </label>
           <div className="family-editor-grid">

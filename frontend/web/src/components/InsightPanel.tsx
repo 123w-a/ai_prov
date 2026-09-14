@@ -7,24 +7,39 @@ const STATUS_COPY: Record<string, string> = {
   pass: '已符合',
   warn: '需注意',
   adjusted: '已调整',
+  blocked: '已拦截',
+  member_conflict: '成员不可吃',
 }
 
 export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
   const guards = answer?.guardrails ?? []
   const sources = answer?.sources ?? []
   const primaryGuard =
+    guards.find((guard) => guard.status === 'blocked') ??
+    guards.find((guard) => guard.status === 'member_conflict') ??
     guards.find((guard) => guard.status === 'warn') ??
     guards.find((guard) => guard.status === 'adjusted') ??
     guards[0] ??
     null
   const leadSource = sources[0] ?? null
 
-  // 一句话结论横幅：warn 优先 > adjusted > 全 pass
+  // 一句话结论横幅：blocked > member_conflict > warn > adjusted > 全 pass
+  // 成员冲突必须排在 warn 前面：它是「这个人不能吃这道菜」，不是「注意用量」。
+  const blockedCount = guards.filter((g) => g.status === 'blocked').length
+  const memberConflictCount = guards.filter((g) => g.status === 'member_conflict').length
   const warnCount = guards.filter((g) => g.status === 'warn').length
   const adjustedCount = guards.filter((g) => g.status === 'adjusted').length
   let banner: { cls: string; icon: 'check' | 'warning' | 'shield'; text: string } | null = null
   if (guards.length > 0) {
-    if (warnCount > 0) {
+    if (blockedCount > 0) {
+      banner = { cls: 'blocked', icon: 'shield', text: `已拦截 ${blockedCount} 项过敏原，本轮未输出该菜品` }
+    } else if (memberConflictCount > 0) {
+      banner = {
+        cls: 'member-conflict',
+        icon: 'warning',
+        text: `${memberConflictCount} 名成员不可吃本轮主菜——必须单独替换并避免交叉接触`,
+      }
+    } else if (warnCount > 0) {
       banner = { cls: 'warn', icon: 'warning', text: `${warnCount} 项需注意——请留意用量与搭配` }
     } else if (adjustedCount > 0) {
       banner = { cls: 'adjusted', icon: 'shield', text: `已自动调整 ${adjustedCount} 处硬禁忌，本轮方案合规` }
@@ -34,25 +49,41 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
   }
 
   const statusIcon = (status: string) =>
-    status === 'warn' ? 'warning' : status === 'adjusted' ? 'shield' : 'check'
+    status === 'blocked'
+      ? 'shield'
+      : status === 'member_conflict'
+        ? 'warning'
+        : status === 'warn'
+          ? 'warning'
+          : status === 'adjusted'
+            ? 'shield'
+            : 'check'
 
   const decisionHeadline =
-    warnCount > 0
-      ? '这次先处理风险，再决定吃什么'
-      : adjustedCount > 0
-        ? '这次能吃，但已经被护栏修正过'
-        : guards.length > 0
-          ? '这次推荐已通过健康审计'
-          : '这次没有触发额外健康约束'
+    blockedCount > 0
+      ? '这次已拦截，未输出违规菜品'
+      : memberConflictCount > 0
+        ? '这道主菜不是全家都能吃'
+        : warnCount > 0
+          ? '这次先处理风险，再决定吃什么'
+          : adjustedCount > 0
+            ? '这次能吃，但已经被护栏修正过'
+            : guards.length > 0
+              ? '这次推荐已通过健康审计'
+              : '这次没有触发额外健康约束'
 
   const decisionLead =
-    primaryGuard?.status === 'warn'
-      ? primaryGuard.rule || primaryGuard.reason || `${primaryGuard.condition} 需要优先关注`
-      : primaryGuard?.status === 'adjusted'
-        ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已自动调整到合规`
-        : primaryGuard
-          ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已通过审计`
-          : '护栏没有拦截，但这不代表可以忽略长期约束。'
+    primaryGuard?.status === 'blocked'
+      ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已被硬拦截`
+      : primaryGuard?.status === 'member_conflict'
+        ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 需要单独替换`
+        : primaryGuard?.status === 'warn'
+          ? primaryGuard.rule || primaryGuard.reason || `${primaryGuard.condition} 需要优先关注`
+          : primaryGuard?.status === 'adjusted'
+            ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已自动调整到合规`
+            : primaryGuard
+              ? primaryGuard.reason || primaryGuard.rule || `${primaryGuard.condition} 已通过审计`
+              : '护栏没有拦截，但这不代表可以忽略长期约束。'
 
   const evidenceLead = leadSource
     ? `${leadSource.source}${leadSource.section ? ` · ${formatSourceSection(leadSource.source, leadSource.section)}` : ''}`
@@ -98,7 +129,17 @@ export function InsightPanel({ answer }: { answer: ChefAnswer | null }) {
           <section className="decision-summary" aria-label="本轮决策摘要">
             <div className="decision-summary-head">
               <span>本轮为什么重要</span>
-              <strong>{warnCount > 0 ? '高优先级' : adjustedCount > 0 ? '已校正' : '已通过'}</strong>
+              <strong>
+                {blockedCount > 0
+                  ? '已拦截'
+                  : memberConflictCount > 0
+                    ? '成员冲突'
+                    : warnCount > 0
+                      ? '高优先级'
+                      : adjustedCount > 0
+                        ? '已校正'
+                        : '已通过'}
+              </strong>
             </div>
             <h3>{decisionHeadline}</h3>
             <p>{decisionLead}</p>

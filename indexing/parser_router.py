@@ -48,6 +48,9 @@ class ParsedDoc:
     """归一化解析输出——所有 Parser 必须返回此结构。"""
     text: str                           # 提取的纯文本
     metadata: dict = field(default_factory=dict)
+    # PDF 本地解析器逐页保留 (页码, 正文)，供切片阶段写入可核验引用。
+    # LlamaParse 等云端结果块无法稳定映射真实页时保持为空，绝不伪造页码。
+    pages: list[tuple[int, str]] = field(default_factory=list)
     # 可选字段（各 Parser 尽量填充）：
     #   page_count: int          总页数
     #   source_file: str         原始文件名
@@ -224,27 +227,29 @@ class SimplePDFParser(BaseParser):
         engine = self._get_engine()
 
         if self._engine == "pdfplumber":
-            text, meta = self._parse_pdfplumber(engine, file_path)
+            text, meta, pages = self._parse_pdfplumber(engine, file_path)
         else:
-            text, meta = self._parse_pymupdf(engine, file_path)
+            text, meta, pages = self._parse_pymupdf(engine, file_path)
 
         meta["source_file"] = os.path.basename(file_path)
         meta["parser_used"] = self.name
 
-        return ParsedDoc(text=text, metadata=meta)
+        return ParsedDoc(text=text, pages=pages, metadata=meta)
 
     def _parse_pdfplumber(self, pdfplumber, file_path: str):
         """用 pdfplumber 提取文本 + 元数据。"""
         all_text = []
+        pages = []
         page_count = 0
         table_count = 0
         chars_per_page = []
 
         with pdfplumber.open(file_path) as pdf:
             page_count = len(pdf.pages)
-            for page in pdf.pages:
+            for index, page in enumerate(pdf.pages, start=1):
                 page_text = page.extract_text() or ""
                 all_text.append(page_text)
+                pages.append((index, page_text))
                 chars_per_page.append(len(page_text.strip()))
                 tables = page.extract_tables() or []
                 table_count += len(tables)
@@ -259,18 +264,20 @@ class SimplePDFParser(BaseParser):
             "extraction_method": "text",
             "has_scanned_pages": avg_chars < DEFAULT_THRESHOLDS.SCAN_CHARS_PER_PAGE_MIN,
         }
-        return text, meta
+        return text, meta, pages
 
     def _parse_pymupdf(self, fitz, file_path: str):
         """用 PyMuPDF (fitz) 提取文本 + 元数据。"""
         doc = fitz.open(file_path)
         all_text = []
+        pages = []
         page_count = len(doc)
         chars_per_page = []
 
-        for page in doc:
+        for index, page in enumerate(doc, start=1):
             page_text = page.get_text()
             all_text.append(page_text)
+            pages.append((index, page_text))
             chars_per_page.append(len(page_text.strip()))
 
         doc.close()
@@ -284,7 +291,7 @@ class SimplePDFParser(BaseParser):
             "extraction_method": "text",
             "has_scanned_pages": avg_chars < DEFAULT_THRESHOLDS.SCAN_CHARS_PER_PAGE_MIN,
         }
-        return text, meta
+        return text, meta, pages
 
 
 # ============================================================

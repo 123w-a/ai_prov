@@ -62,9 +62,17 @@ class GuardrailItem(BaseModel):
         description="膳食约束",
     )
     status: str = Field(
-        description="pass/warn/adjusted"
+        description="pass/warn/adjusted/blocked/member_conflict"
     )
     reason: str = Field(default="", description="原因")
+
+
+class DishMatrixItem(BaseModel):
+    """同餐菜品与家庭成员的确定性可用性矩阵。"""
+    dish: str = Field(description="菜名")
+    member: str = Field(description="成员名")
+    verdict: str = Field(description="可吃 / 需调整 / 待确认 / 不可吃")
+    reason: str = Field(default="", description="判断理由")
 
 
 class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
@@ -104,4 +112,13 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
     guardrails: list[GuardrailItem] = Field(
         default_factory=list,
         description="护栏结论",
+    )
+    # 联合决策最小闭环：字段保持可选空默认，旧调用方和存量卡片无需迁移。
+    member_adjustments: list[str] = Field(
+        default_factory=list,
+        description="给每位同餐成员的一句话调整建议",
+    )
+    dish_matrix: list[DishMatrixItem] = Field(
+        default_factory=list,
+        description="菜品与成员的可用性矩阵",
     )

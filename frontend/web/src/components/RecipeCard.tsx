@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ChefAnswer, GuardrailItem, Recipe, SourceRef } from '../types'
+import type { ChefAnswer, DishMatrixItem, GuardrailItem, Recipe, SourceRef } from '../types'
 import { formatSourceSection } from '../utils/sourceFormat'
 import { renderRichText } from '../utils/richText'
 import { submitMealFeedback } from '../api/client'
@@ -9,6 +9,7 @@ const GUARD_LABEL: Record<string, string> = {
   pass: '已符合',
   warn: '需注意',
   adjusted: '已调整',
+  blocked: '已拦截',
 }
 
 function isKeySeasoning(name: string): boolean {
@@ -272,6 +273,81 @@ function InlineEvidence({
   )
 }
 
+function verdictClass(verdict: DishMatrixItem['verdict']): string {
+  if (verdict === '不可吃') return 'cannot-eat'
+  if (verdict === '待确认') return 'pending-confirm'
+  if (verdict === '需调整') return 'needs-adjustment'
+  return 'can-eat'
+}
+
+function FamilyDiningAdjustments({
+  matrix,
+  adjustments,
+  primaryMember,
+}: {
+  matrix: DishMatrixItem[]
+  adjustments: string[]
+  primaryMember?: string
+}) {
+  if (matrix.length === 0 && adjustments.length === 0) return null
+
+  const grouped: Array<{ dish: string; rows: DishMatrixItem[] }> = []
+  for (const row of matrix) {
+    const group = grouped.find((item) => item.dish === row.dish)
+    if (group) group.rows.push(row)
+    else grouped.push({ dish: row.dish, rows: [row] })
+  }
+
+  return (
+    <section className="family-dining-plan" aria-label="同餐分餐调整">
+      <header className="family-dining-head">
+        <span>
+          <Icon name="chef" size={20} />
+        </span>
+        <div>
+          <strong>同餐分餐调整</strong>
+          <p>
+            {primaryMember
+              ? `本轮主菜面向「${primaryMember}」的健康约束求解；其余成员按下表分餐调整。`
+              : '共同主菜不变，按成员调整口感、份量与替代项。'}
+          </p>
+        </div>
+      </header>
+
+      {adjustments.length > 0 && (
+        <ul className="family-member-notes">
+          {adjustments.map((line, index) => <li key={`${line}-${index}`}>{line}</li>)}
+        </ul>
+      )}
+
+      {grouped.length > 0 && (
+        <div className="family-dish-groups">
+          {grouped.map((group) => (
+            <article key={group.dish} className="family-dish-group">
+              <h4>{group.dish}</h4>
+              <div className="family-verdict-grid">
+                {group.rows.map((row, index) => (
+                  <div
+                    key={`${row.member}-${index}`}
+                    className={`family-verdict ${verdictClass(row.verdict)}`}
+                  >
+                    <span>
+                      <b>{row.member}</b>
+                      {primaryMember === row.member && <i className="family-primary-tag">主菜对象</i>}
+                      <em>{row.verdict}</em>
+                    </span>
+                    {row.reason && <small>{row.reason}</small>}
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function cleanExplainText(source?: string): string {
   return (source || '')
     .replace(/\*\*/g, '')
@@ -356,6 +432,12 @@ export function RecipeCard({ answer }: { answer: ChefAnswer }) {
               </div>
             </aside>
           )}
+
+          <FamilyDiningAdjustments
+            matrix={answer.dish_matrix ?? []}
+            adjustments={answer.member_adjustments ?? []}
+            primaryMember={answer.primary_member}
+          />
 
           <InlineEvidence guards={guards} sources={sources} />
         </>

@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from api.routes.fridge_route import _PANTRY_LOG, get_fridge
+from storage_utils import atomic_write_json
 
 router = APIRouter()
 _MEALS = Path(__file__).resolve().parents[2] / "data" / "meals.json"
@@ -36,8 +37,7 @@ def record_meal(session_id: str, answer: dict) -> None:
         if _MEALS.exists():
             data = json.loads(_MEALS.read_text(encoding="utf-8"))
         data.append(meal)
-        _MEALS.parent.mkdir(parents=True, exist_ok=True)
-        _MEALS.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        atomic_write_json(_MEALS, data, indent=1)
     except Exception:
         pass
 
@@ -189,8 +189,7 @@ def save_feedback(payload: dict):
     data = _read_feedback_log()
     data.append(entry)
     try:
-        _FEEDBACK_LOG.parent.mkdir(parents=True, exist_ok=True)
-        _FEEDBACK_LOG.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(_FEEDBACK_LOG, data, indent=None)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"反馈写入失败：{exc}")
     return {"saved": True, "count": len(data)}
@@ -309,13 +308,11 @@ def weekly_summary(refresh: bool = False):
     if not summary:
         return {"ai_summary": None, "reason": "empty"}
     try:
-        _SUMMARY_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        _SUMMARY_CACHE.write_text(
-            json.dumps(
-                {"fingerprint": fingerprint, "ai_summary": summary,
-                 "ts": datetime.now().isoformat(timespec="seconds")},
-                ensure_ascii=False, indent=1,
-            ), encoding="utf-8",
+        atomic_write_json(
+            _SUMMARY_CACHE,
+            {"fingerprint": fingerprint, "ai_summary": summary,
+             "ts": datetime.now().isoformat(timespec="seconds")},
+            indent=1,
         )
     except Exception:
         pass

@@ -83,15 +83,25 @@ def nearby(
 
     real = _amap_poi_search(city, district, query, budget, location, page=page, radius=radius)
     source, restaurants, warning = _filter_and_sort(real, query, budget, page=page)
+    before_filter = len(restaurants)
+    restaurants, allergen_hits = _legacy._filter_restaurants_by_allergens(restaurants)
+    data = {
+        "source": source,
+        "amap_configured": bool(AMAP_KEY),
+        "restaurants": restaurants,
+        "warning": warning,
+    }
+    if allergen_hits:
+        note = _legacy._allergen_filter_note(allergen_hits)
+        data["allergen_filter"] = {
+            "applied": True,
+            "removed": before_filter - len(restaurants),
+            "message": note,
+        }
     return {
         "code": 200,
         "messages": "附近餐厅建议已返回",
-        "data": {
-            "source": source,
-            "amap_configured": bool(AMAP_KEY),
-            "restaurants": restaurants,
-            "warning": warning,
-        },
+        "data": data,
     }
 
 

@@ -33,6 +33,36 @@ class NearbyRouteTest(unittest.TestCase):
         self.assertEqual(payload["data"]["source"], "amap")
         self.assertEqual(payload["data"]["restaurants"][0]["name"], "老街家常菜")
 
+    def test_nearby_filters_optional_allergen_and_reports_it(self):
+        sample = [
+            {
+                "name": "麻酱拌面馆",
+                "cuisine": "面食",
+                "avg_price": 28,
+                "distance_km": 0.8,
+                "address": "示例路 1 号",
+                "guardrail": "少油少盐",
+            },
+            {
+                "name": "清蒸鸡腿饭",
+                "cuisine": "家常菜",
+                "avg_price": 32,
+                "distance_km": 1.1,
+                "address": "示例路 2 号",
+                "guardrail": "点蒸煮炖",
+            },
+        ]
+        with patch.object(nearby_route, "_amap_poi_search", return_value=sample), \
+             patch.object(nearby_route._legacy, "_tool_allergens", return_value=["芝麻"]):
+            payload = nearby_route.nearby(city="益阳", district="赫山", budget=50, page=1)
+
+        self.assertEqual(
+            [item["name"] for item in payload["data"]["restaurants"]],
+            ["清蒸鸡腿饭"],
+        )
+        self.assertEqual(payload["data"]["allergen_filter"]["removed"], 1)
+        self.assertIn("芝麻及其制品", payload["data"]["allergen_filter"]["message"])
+
     def test_resolve_location_without_key_is_honest(self):
         with patch.object(nearby_route, "AMAP_KEY", ""):
             payload = nearby_route.resolve_location("113.0,28.0")

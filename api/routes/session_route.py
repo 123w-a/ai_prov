@@ -25,6 +25,7 @@ from sessions_store import (
     _read_session,
 )
 from main import image_bytes_to_oss_url
+from upload_guard import validate_image_upload
 
 router = APIRouter()
 
@@ -191,7 +192,7 @@ async def api_append_message(
     # 备用：前端手动补一条消息入库（常规流程由 chat_image 自动调用 append_message）
     image_url = None
     if image is not None:
-        file_bytes = await image.read()
-        image_url = image_bytes_to_oss_url(file_bytes, image.content_type)
+        file_bytes, real_mime = await validate_image_upload(image)
+        image_url = image_bytes_to_oss_url(file_bytes, real_mime)
     append_message(sid, user_text, answer, time, image_name, image_type, image_url)
     return {"ok": True, "msg": "消息入库成功"}

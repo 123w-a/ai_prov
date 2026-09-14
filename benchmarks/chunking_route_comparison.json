@@ -1,0 +1,96 @@
+{
+  "k": 3,
+  "fixed": {
+    "k": 3,
+    "recall": 0.75,
+    "cases": [
+      {
+        "id": "gout-old-soup",
+        "hit": true,
+        "found": [
+          "嘌呤",
+          "尿酸"
+        ],
+        "missing": []
+      },
+      {
+        "id": "pregnancy-raw-fish",
+        "hit": false,
+        "found": [],
+        "missing": [
+          "胎盘",
+          "酮体"
+        ]
+      },
+      {
+        "id": "hypertension-salt",
+        "hit": true,
+        "found": [
+          "盐",
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "diabetes-staple",
+        "hit": true,
+        "found": [
+          "血糖",
+          "全谷物"
+        ],
+        "missing": []
+      }
+    ]
+  },
+  "routed": {
+    "k": 3,
+    "recall": 0.75,
+    "cases": [
+      {
+        "id": "gout-old-soup",
+        "hit": true,
+        "found": [
+          "嘌呤",
+          "尿酸"
+        ],
+        "missing": []
+      },
+      {
+        "id": "pregnancy-raw-fish",
+        "hit": false,
+        "found": [],
+        "missing": [
+          "胎盘",
+          "酮体"
+        ]
+      },
+      {
+        "id": "hypertension-salt",
+        "hit": true,
+        "found": [
+          "盐",
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "diabetes-staple",
+        "hit": true,
+        "found": [
+          "血糖"
+        ],
+        "missing": [
+          "全谷物"
+        ]
+      }
+    ]
+  },
+  "recall_delta": 0.0,
+  "slice_complete_rate": 0.6249,
+  "restricted_rate": 0.3751,
+  "chunk_count": {
+    "fixed": 717,
+    "routed": 1435
+  },
+  "retrieval": "bge + hybrid RRF, rerank disabled"
+}

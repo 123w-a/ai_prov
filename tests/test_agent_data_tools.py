@@ -6,8 +6,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import agent_tools
 from api.routes import fridge_route, reports_route
-from agent_tools import query_fridge_inventory, query_weekly_report, tools
+from agent_tools import (
+    fridge_gap,
+    healthy_remix,
+    nearby_food,
+    query_fridge_inventory,
+    query_weekly_report,
+    tools,
+)
 
 
 class AgentDataToolsTest(unittest.TestCase):
@@ -66,6 +74,50 @@ class AgentDataToolsTest(unittest.TestCase):
         self.assertIn("番茄炒蛋", payload["top_dishes"])
         self.assertIn(payload["light_trends"]["钠"], {"在好转", "在抬头", "保持平稳", "样本不足"})
         self.assertIsInstance(payload["recommendations"], list)
+
+    def test_nearby_tool_filters_allergens(self):
+        sample = [
+            {
+                "name": "芝麻酱拌面",
+                "cuisine": "面食",
+                "avg_price": 25,
+                "distance_km": 0.5,
+                "address": "示例路",
+                "guardrail": "少油少盐",
+            },
+            {
+                "name": "清蒸鸡腿饭",
+                "cuisine": "家常菜",
+                "avg_price": 30,
+                "distance_km": 1.0,
+                "address": "示例路",
+                "guardrail": "点蒸煮炖",
+            },
+        ]
+        with patch.object(agent_tools._legacy, "_amap_poi_search", return_value=sample), \
+             patch.object(agent_tools._legacy, "_tool_allergens", return_value=["芝麻"]):
+            payload = json.loads(nearby_food.func(city="益阳", district="赫山"))
+
+        self.assertEqual(payload["count"], 1)
+        self.assertIn("清蒸鸡腿饭", payload["text"])
+        self.assertNotIn("芝麻酱拌面", payload["text"])
+        self.assertEqual(payload["allergen_filter"]["removed"], 1)
+
+    def test_healthy_remix_blocks_recipe_with_allergen(self):
+        with patch.object(agent_tools._legacy, "_tool_allergens", return_value=["花生"]):
+            payload = json.loads(healthy_remix.func("花生炖鸡：花生、鸡肉、盐"))
+
+        self.assertTrue(payload["blocked"])
+        self.assertEqual(payload["swaps"], [])
+        self.assertIn("花生及其制品", payload["allergen_filter"]["message"])
+
+    def test_fridge_gap_blocks_recipe_with_allergen(self):
+        with patch.object(agent_tools._legacy, "_tool_allergens", return_value=["花生"]):
+            payload = json.loads(fridge_gap.func("花生炖鸡", "鸡肉、盐"))
+
+        self.assertTrue(payload["blocked"])
+        self.assertEqual(payload["missing"], [])
+        self.assertIn("花生及其制品", payload["allergen_filter"]["message"])
 
 
 if __name__ == "__main__":

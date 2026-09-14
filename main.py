@@ -42,6 +42,7 @@ def _render_health_profile(profile: dict) -> str:
     alg = [a for a in (profile.get("allergens") or []) if a]
     if alg:
         lines.append(f"- 过敏原：{'、'.join(alg)}（绝对禁止出现在任何推荐与食谱中）")
+        lines.append(f"- 过敏原（硬约束，输出前会做确定性审计）：{'、'.join(alg)}")
     if profile.get("goal"):
         lines.append(f"- 当前目标：{profile['goal']}")
     if profile.get("diet_style"):
@@ -67,7 +68,7 @@ def load_preferences() -> str:
             if isinstance(profile, dict):
                 members = profile.get("members")
                 if isinstance(members, list) and members:
-                    # P1 家庭多成员：只渲染激活成员画像，标题带成员名
+                    # P1 家庭多成员：激活成员作为主约束，其他成员只作为同餐调整依据。
                     active_id = profile.get("active_id")
                     member = next(
                         (m for m in members if m.get("id") == active_id),
@@ -80,6 +81,47 @@ def load_preferences() -> str:
                             rendered = rendered.replace(
                                 "【结构化健康画像（", f"【健康画像·{name}（", 1
                             )
+                        other_lines = []
+                        for item in members:
+                            if not isinstance(item, dict) or item is member:
+                                continue
+                            other_name = str(item.get("name") or "").strip() or "其他成员"
+                            other_profile = item.get("profile") or {}
+                            bits = []
+                            for label, key in (
+                                ("慢病", "conditions"),
+                                ("过敏原", "allergens"),
+                                ("目标", "goal"),
+                                ("饮食", "diet_style"),
+                                ("忌口", "dislikes"),
+                                ("口感/口味", "taste_notes"),
+                            ):
+                                value = other_profile.get(key)
+                                if isinstance(value, list):
+                                    value = "、".join(
+                                        str(part).strip()
+                                        for part in value
+                                        if str(part or "").strip()
+                                    )
+                                value = str(value or "").strip()
+                                if value:
+                                    bits.append(f"{label}={value}")
+                            if bits:
+                                other_lines.append(f"- {other_name}：{'；'.join(bits)}")
+                        if other_lines:
+                            rendered += (
+                                "\n\n【同餐其他成员（用于同餐差异化，不是全家禁令）】\n"
+                                + "\n".join(other_lines)
+                                + "\n主菜按激活成员生成。其他成员的过敏原、慢病和偏好"
+                                "不要扩展成全家禁菜；在分餐矩阵中标出“需调整”或“不可吃”，"
+                                "并给出单独替换、份量或口感调整建议。"
+                            )
+                        try:
+                            from memory_candidates import render_pending_constraints
+
+                            rendered += render_pending_constraints()
+                        except Exception:
+                            pass
                         return rendered
                     return ""
                 rendered = _render_health_profile(profile)
@@ -263,6 +305,15 @@ def _stream_agent(message, session_id):
                     attempts = (update or {}).get("verify_attempts")
                     if status is not None:
                         print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
+                elif node == "allergen_block":
+                    msgs = (update or {}).get("messages") or []
+                    if msgs:
+                        content = _normalize_stream_content(msgs[-1].content).strip()
+                        if content:
+                            # 过敏原阻断节点不经过 structure_answer，必须在这里
+                            # 显式转发安全文案，否则前端会只看到空回答。
+                            yield ("token", content)
+                    continue
                 if node != "structure_answer":
                     continue
                 msgs = (update or {}).get("messages") or []

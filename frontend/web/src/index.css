@@ -1564,6 +1564,168 @@ img {
   line-height: 1.65;
 }
 
+.family-dining-plan {
+  display: grid;
+  gap: 12px;
+  padding: 15px 17px 16px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(143, 167, 124, 0.09), transparent 48%),
+    var(--paper);
+}
+
+.family-dining-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.family-dining-head > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--forest-700);
+  background: var(--forest-100);
+  border-radius: 10px;
+}
+
+.family-dining-head strong {
+  color: var(--forest-950);
+  font-size: 11px;
+}
+
+.family-dining-head p {
+  margin: 2px 0 0;
+  color: var(--ink-faint);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.family-member-notes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.family-member-notes li {
+  padding: 8px 10px;
+  color: var(--ink-soft);
+  border-left: 3px solid rgba(227, 108, 67, 0.56);
+  border-radius: 0 8px 8px 0;
+  background: var(--paper-muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.family-dish-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.family-dish-group {
+  display: grid;
+  gap: 8px;
+}
+
+.family-dish-group h4 {
+  margin: 0;
+  color: var(--forest-950);
+  font-size: 10px;
+}
+
+.family-verdict-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.family-verdict {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-muted);
+}
+
+.family-verdict > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.family-verdict b {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-verdict em {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.family-verdict small {
+  color: var(--ink-soft);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.family-verdict.can-eat em {
+  color: var(--forest-700);
+  background: var(--forest-100);
+}
+
+.family-verdict.needs-adjustment em {
+  color: #8c6426;
+  background: var(--saffron-soft);
+}
+
+.family-verdict.cannot-eat em {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* 待确认：规则查不到该过敏原，既不能说可吃、也不该假装拦住了 */
+.family-verdict.pending-confirm em {
+  color: #6b4a12;
+  background: #f2e6c8;
+}
+
+.family-verdict b {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.family-verdict em {
+  margin-left: auto;
+}
+
+/* 标出「本轮主菜按谁的健康约束求解」，否则家庭场景无法判断该听谁的 */
+.family-primary-tag {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--forest-700);
+  background: var(--forest-100);
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .inline-evidence {
   display: none;
   overflow: hidden;
@@ -2175,6 +2337,20 @@ img {
   border: 1px solid #ecdcb2;
 }
 
+/* 过敏原硬拦截：比 warn 更重的红色，语义是"已拒绝输出"而非"需注意" */
+.guardrail-banner.blocked {
+  color: #8f1d1d;
+  background: #fbe4e4;
+  border: 1px solid #f0bfbf;
+}
+
+/* 同餐成员冲突：主菜照出，但有成员不能吃——必须"单独替换+避免交叉接触"，不是"注意用量" */
+.guardrail-banner.member-conflict {
+  color: #7a2e12;
+  background: #fce8dc;
+  border: 1px solid #f0c3a8;
+}
+
 .guardrail-card strong {
   display: inline-flex;
   align-items: center;
@@ -2206,6 +2382,18 @@ img {
   background: #fbf6e9;
 }
 
+/* 过敏原硬拦截卡片：左描边用危险红，和"已调整"的琥珀色明确区分开 */
+.guardrail-card.blocked {
+  border-left-color: #b3261e;
+  background: #fbebeb;
+}
+
+/* 同餐成员冲突卡片：比 blocked 略暖的深橙，语义是"某位成员必须单独替换" */
+.guardrail-card.member_conflict {
+  border-left-color: #c2410c;
+  background: #fdf0e6;
+}
+
 .guardrail-card header {
   display: flex;
   align-items: center;
@@ -2234,6 +2422,18 @@ img {
 .guardrail-card.adjusted header span {
   color: #8a6325;
   background: var(--saffron-soft);
+}
+
+/* 补上 blocked/member_conflict 的徽标配色：缺失时徽标会回落成"已通过"的绿色，
+   与卡片本身的红色左描边自相矛盾。 */
+.guardrail-card.blocked header span {
+  color: #8f1d1d;
+  background: #f7d9d9;
+}
+
+.guardrail-card.member_conflict header span {
+  color: #7a2e12;
+  background: #f9dfcc;
 }
 
 .guardrail-card p {

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .chunking import chunk_by_heading, chunk_by_paragraph
+from .chunking import chunk_by_heading, chunk_by_paragraph, chunk_by_parent_child
+from .chunking_router import choose_chunker
 from .cleaning import clean_text, parse_source
 from .models import Chunk, SearchResult
 from .store import ChromaStore, DEFAULT_COLLECTION, resolve_project_path
@@ -55,6 +57,12 @@ def _load_markdown(
     contextual_llm: Optional[Callable[[str, str], str]] = None,
 ) -> list[Chunk]:
     cleaned = clean_text(path.read_text(encoding="utf-8"))
+    doc_meta = {
+        "content_type": "markdown",
+        "category": path.parent.name,
+        "source": path.name,
+    }
+    strategy, routing_reason = choose_chunker(cleaned, doc_meta)
     if preview_dir is not None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         (preview_dir / f"{path.stem}.clean.md").write_text(
@@ -66,9 +74,22 @@ def _load_markdown(
         f"文档：《{path.name}》，主题：面向慢病与健康人群的饮食营养与忌口原则。"
     )
     chunks: list[Chunk] = []
-    for index, (title, body) in enumerate(
-        chunk_by_heading(cleaned, max_chars=max_chars, overlap_chars=overlap_chars)
-    ):
+    if strategy == "heading_parent":
+        sections = chunk_by_heading(
+            cleaned,
+            max_chars=max_chars,
+            overlap_chars=overlap_chars,
+        )
+    else:
+        sections = [
+            ("文档内容", part)
+            for part in chunk_by_paragraph(
+                cleaned,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            )
+        ]
+    for index, (title, body) in enumerate(sections):
         text = f"【{title}】\n{body}".strip()
         if not text:
             continue
@@ -79,6 +100,14 @@ def _load_markdown(
             "chunk_index": index,
             "content_type": "markdown",
             "category": path.parent.name,
+            "chunk_strategy": strategy,
+            "routing_reason": routing_reason,
+            "parent_id": f"{path.name}::heading-{index}",
+            "section": title,
+            "chunk_size": max_chars,
+            "chunk_overlap": overlap_chars,
+            "page_start": None,
+            "page_end": None,
         }
         if contextual_llm is not None:
             prefix = _make_contextual_prefix(text, f"{doc_context}\n本片段标题：{title}", contextual_llm)
@@ -93,6 +122,106 @@ def _load_markdown(
             )
         )
     return chunks
+
+
+def _extract_page_numbers(text: str) -> list[int]:
+    return [int(value) for value in re.findall(r"<<<PAGE:(\d+)>>>", text or "")]
+
+
+def _strip_page_markers(text: str) -> str:
+    return re.sub(r"<<<PAGE:\d+>>>\n?", "", text or "").strip()
+
+
+def _paragraph_pdf_records(
+    strategy: str,
+    cleaned: str,
+    pages: list[tuple[int, str]],
+    max_chars: int,
+    overlap_chars: int,
+) -> list[tuple[str, str, bool, str, str]]:
+    """返回 (child, parent, atomic, section, parent_id)，逐页切片保证页码不丢。"""
+
+    records: list[tuple[str, str, bool, str, str]] = []
+    if pages:
+        for page_number, page_text in pages:
+            page_clean = clean_text(page_text)
+            if not page_clean:
+                continue
+            children = chunk_by_paragraph(
+                page_clean,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            )
+            for child_index, child in enumerate(children):
+                marked = f"<<<PAGE:{page_number}>>>\n{child}"
+                records.append(
+                    (
+                        marked,
+                        marked,
+                        False,
+                        "正文内容",
+                        f"paragraph-{page_number}-{child_index}",
+                    )
+                )
+        return records
+
+    for child_index, child in enumerate(
+        chunk_by_paragraph(
+            cleaned,
+            max_chars=max_chars,
+            overlap_chars=overlap_chars,
+        )
+    ):
+        records.append(
+            (child, child, False, "正文内容", f"paragraph-{child_index}")
+        )
+    return records
+
+
+def _pdf_chunk_records(
+    strategy: str,
+    cleaned: str,
+    pages: list[tuple[int, str]],
+    max_chars: int,
+    overlap_chars: int,
+) -> list[tuple[str, str, bool, str, str]]:
+    if strategy == "parent_child":
+        return [
+            (
+                item.child_text,
+                item.parent_text,
+                item.atomic_parent,
+                item.section,
+                item.parent_id,
+            )
+            for item in chunk_by_parent_child(
+                cleaned,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            )
+        ]
+
+    if strategy == "heading_parent":
+        records: list[tuple[str, str, bool, str, str]] = []
+        for index, (title, body) in enumerate(
+            chunk_by_heading(
+                cleaned,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            )
+        ):
+            child = f"【{title}】\n{body}"
+            records.append((child, child, True, title, f"heading-{index}"))
+        return records
+
+    # semantic / proposition 暂未启用；路由层不会返回，仍保留安全降级。
+    return _paragraph_pdf_records(
+        strategy,
+        cleaned,
+        pages,
+        max_chars,
+        overlap_chars,
+    )
 
 
 def _load_pdf(
@@ -117,6 +246,15 @@ def _load_pdf(
         print(f"[rag] {path.name} 解析失败，跳过: {exc}")
         return [], True
 
+    pages = getattr(parsed, "pages", None) or []
+    if pages:
+        marked_text = "\n\n".join(
+            f"<<<PAGE:{page_number}>>>\n{clean_text(page_text)}"
+            for page_number, page_text in pages
+        )
+    else:
+        # 无可靠页码来源时全程不插入标记，避免用切片序号冒充页码。
+        marked_text = clean_text(parsed.text)
     cleaned = clean_text(parsed.text)
     if preview_dir is not None:
         preview_dir.mkdir(parents=True, exist_ok=True)
@@ -126,15 +264,43 @@ def _load_pdf(
         )
 
     chunks: list[Chunk] = []
+    doc_meta = {
+        "content_type": "pdf",
+        "category": path.parent.name,
+        "source": path.name,
+        "page_count": parsed.metadata.get("page_count", 0),
+    }
+    strategy, routing_reason = choose_chunker(marked_text, doc_meta)
     doc_context = f"文档：《{path.name}》，主题：膳食/营养/慢病忌口相关内容。"
-    for index, raw_text in enumerate(
-        chunk_by_paragraph(
-            cleaned,
-            max_chars=max_chars,
-            overlap_chars=overlap_chars,
-        )
-    ):
-        text = raw_text
+    records = _pdf_chunk_records(
+        strategy,
+        marked_text,
+        pages,
+        max_chars,
+        overlap_chars,
+    )
+    chunk_index = 0
+    for (
+        child_text,
+        parent_text,
+        atomic_parent,
+        section,
+        parent_id,
+    ) in records:
+        # 页码只从 child 取；parent 仅作为完整知识单元附在检索文本后。
+        page_numbers = _extract_page_numbers(child_text)
+        if not page_numbers:
+            page_numbers = _extract_page_numbers(parent_text)
+        page_start = min(page_numbers) if page_numbers else None
+        page_end = max(page_numbers) if page_numbers else None
+        child_clean = _strip_page_markers(child_text)
+        parent_clean = _strip_page_markers(parent_text)
+        if not child_clean:
+            continue
+        if strategy == "parent_child" and atomic_parent and parent_clean != child_clean:
+            text = f"{child_clean}\n\n【完整知识单元】\n{parent_clean}"
+        else:
+            text = child_clean
         metadata: dict[str, Any] = dict(parsed.metadata or {})
         if contextual_llm is not None:
             prefix = _make_contextual_prefix(text, doc_context, contextual_llm)
@@ -144,24 +310,47 @@ def _load_pdf(
         metadata.update(
             {
                 "source": metadata.get("source") or path.name,
-                "anchor": f"{path.name}_p{index}",
+                # `_pN` 仅在 N 是解析层带回的真实页码时使用；拿不到页码时
+                # 使用 `_cN` 正文片段锚点，_resolve_section 不会把它显示成页码。
+                "anchor": (
+                    f"{path.name}_p{page_start}"
+                    if page_start is not None
+                    else f"{path.name}_c{chunk_index}"
+                ),
                 "doc": path.name,
-                "chunk_index": index,
+                "chunk_index": chunk_index,
                 "content_type": "pdf",
                 "category": path.parent.name,
+                "page_start": page_start,
+                "page_end": page_end,
+                "chunk_strategy": strategy,
+                "routing_reason": routing_reason,
+                "parent_id": f"{path.name}::{parent_id}",
+                "section": section,
+                "chunk_size": max_chars,
+                "chunk_overlap": overlap_chars,
+                "is_complete_parent": bool(
+                    strategy == "parent_child"
+                    and atomic_parent
+                    and (
+                        parent_clean == child_clean
+                        or "【完整知识单元】" in text
+                    )
+                ),
                 "parser_used": metadata.get(
                     "parser_used", decision.parser_type.value
                 ),
-                "routing_reason": decision.reason,
+                "parser_routing_reason": decision.reason,
             }
         )
         chunks.append(
             Chunk(
-                chunk_id=f"{path.name}::{index}",
+                chunk_id=f"{path.name}::{chunk_index}",
                 text=text,
                 metadata=metadata,
             )
         )
+        chunk_index += 1
     return chunks, False
 
 

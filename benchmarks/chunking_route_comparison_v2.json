@@ -1,0 +1,529 @@
+{
+  "k": 3,
+  "fixed": {
+    "k": 3,
+    "recall": 1.0,
+    "cases": [
+      {
+        "id": "htn-salt-limit",
+        "hit": true,
+        "found": [
+          "食盐",
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "htn-potassium",
+        "hit": true,
+        "found": [
+          "钾"
+        ],
+        "missing": []
+      },
+      {
+        "id": "htn-alcohol",
+        "hit": true,
+        "found": [
+          "饮酒",
+          "酒精"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dm-staple-choice",
+        "hit": true,
+        "found": [
+          "全谷物",
+          "血糖生成指数"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dm-sugar",
+        "hit": true,
+        "found": [
+          "含糖饮料"
+        ],
+        "missing": [
+          "碳水化合物"
+        ]
+      },
+      {
+        "id": "obesity-energy",
+        "hit": true,
+        "found": [
+          "能量"
+        ],
+        "missing": []
+      },
+      {
+        "id": "obesity-rate",
+        "hit": true,
+        "found": [
+          "减重"
+        ],
+        "missing": []
+      },
+      {
+        "id": "gout-purine",
+        "hit": true,
+        "found": [
+          "嘌呤"
+        ],
+        "missing": []
+      },
+      {
+        "id": "gout-water",
+        "hit": true,
+        "found": [
+          "饮水",
+          "水"
+        ],
+        "missing": []
+      },
+      {
+        "id": "lipid-oil",
+        "hit": true,
+        "found": [
+          "脂肪",
+          "植物油"
+        ],
+        "missing": []
+      },
+      {
+        "id": "ckd-protein",
+        "hit": true,
+        "found": [
+          "蛋白质"
+        ],
+        "missing": []
+      },
+      {
+        "id": "ckd-salt",
+        "hit": true,
+        "found": [
+          "钠"
+        ],
+        "missing": [
+          "食盐"
+        ]
+      },
+      {
+        "id": "dri-calcium",
+        "hit": true,
+        "found": [
+          "钙"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-iron",
+        "hit": true,
+        "found": [
+          "铁"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-vitc",
+        "hit": true,
+        "found": [
+          "维生素C"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-vitd",
+        "hit": true,
+        "found": [
+          "维生素D"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-nrv",
+        "hit": true,
+        "found": [
+          "营养素参考值",
+          "NRV"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-sodium-salt",
+        "hit": true,
+        "found": [
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-claim-lowfat",
+        "hit": true,
+        "found": [
+          "脂肪"
+        ],
+        "missing": []
+      },
+      {
+        "id": "canteen-guide",
+        "hit": true,
+        "found": [
+          "食堂"
+        ],
+        "missing": []
+      },
+      {
+        "id": "preg-folic",
+        "hit": true,
+        "found": [
+          "叶酸"
+        ],
+        "missing": []
+      },
+      {
+        "id": "preg-raw-food",
+        "hit": true,
+        "found": [
+          "生"
+        ],
+        "missing": []
+      },
+      {
+        "id": "lactation-eat",
+        "hit": true,
+        "found": [
+          "哺乳期"
+        ],
+        "missing": []
+      },
+      {
+        "id": "infant-solid-food",
+        "hit": true,
+        "found": [
+          "辅食"
+        ],
+        "missing": []
+      },
+      {
+        "id": "infant-milk",
+        "hit": true,
+        "found": [
+          "母乳"
+        ],
+        "missing": []
+      },
+      {
+        "id": "schoolchild-breakfast",
+        "hit": true,
+        "found": [
+          "早餐"
+        ],
+        "missing": []
+      },
+      {
+        "id": "elderly-diet",
+        "hit": true,
+        "found": [
+          "老年人",
+          "食物"
+        ],
+        "missing": []
+      },
+      {
+        "id": "student-meal",
+        "hit": true,
+        "found": [
+          "学生餐"
+        ],
+        "missing": []
+      },
+      {
+        "id": "guide-salt",
+        "hit": true,
+        "found": [
+          "盐"
+        ],
+        "missing": [
+          "食盐"
+        ]
+      },
+      {
+        "id": "guide-milk",
+        "hit": true,
+        "found": [
+          "奶"
+        ],
+        "missing": []
+      }
+    ]
+  },
+  "routed": {
+    "k": 3,
+    "recall": 1.0,
+    "cases": [
+      {
+        "id": "htn-salt-limit",
+        "hit": true,
+        "found": [
+          "食盐",
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "htn-potassium",
+        "hit": true,
+        "found": [
+          "钾"
+        ],
+        "missing": []
+      },
+      {
+        "id": "htn-alcohol",
+        "hit": true,
+        "found": [
+          "饮酒",
+          "酒精"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dm-staple-choice",
+        "hit": true,
+        "found": [
+          "血糖生成指数"
+        ],
+        "missing": [
+          "全谷物"
+        ]
+      },
+      {
+        "id": "dm-sugar",
+        "hit": true,
+        "found": [
+          "含糖饮料"
+        ],
+        "missing": [
+          "碳水化合物"
+        ]
+      },
+      {
+        "id": "obesity-energy",
+        "hit": true,
+        "found": [
+          "能量"
+        ],
+        "missing": []
+      },
+      {
+        "id": "obesity-rate",
+        "hit": true,
+        "found": [
+          "减重"
+        ],
+        "missing": []
+      },
+      {
+        "id": "gout-purine",
+        "hit": true,
+        "found": [
+          "嘌呤"
+        ],
+        "missing": []
+      },
+      {
+        "id": "gout-water",
+        "hit": true,
+        "found": [
+          "饮水",
+          "水"
+        ],
+        "missing": []
+      },
+      {
+        "id": "lipid-oil",
+        "hit": true,
+        "found": [
+          "脂肪",
+          "植物油"
+        ],
+        "missing": []
+      },
+      {
+        "id": "ckd-protein",
+        "hit": true,
+        "found": [
+          "蛋白质"
+        ],
+        "missing": []
+      },
+      {
+        "id": "ckd-salt",
+        "hit": true,
+        "found": [
+          "钠"
+        ],
+        "missing": [
+          "食盐"
+        ]
+      },
+      {
+        "id": "dri-calcium",
+        "hit": true,
+        "found": [
+          "钙"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-iron",
+        "hit": true,
+        "found": [
+          "铁"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-vitc",
+        "hit": true,
+        "found": [
+          "维生素C"
+        ],
+        "missing": []
+      },
+      {
+        "id": "dri-vitd",
+        "hit": true,
+        "found": [
+          "维生素D"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-nrv",
+        "hit": true,
+        "found": [
+          "营养素参考值",
+          "NRV"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-sodium-salt",
+        "hit": true,
+        "found": [
+          "钠"
+        ],
+        "missing": []
+      },
+      {
+        "id": "label-claim-lowfat",
+        "hit": true,
+        "found": [
+          "脂肪"
+        ],
+        "missing": []
+      },
+      {
+        "id": "canteen-guide",
+        "hit": true,
+        "found": [
+          "食堂"
+        ],
+        "missing": []
+      },
+      {
+        "id": "preg-folic",
+        "hit": true,
+        "found": [
+          "叶酸"
+        ],
+        "missing": []
+      },
+      {
+        "id": "preg-raw-food",
+        "hit": true,
+        "found": [
+          "生"
+        ],
+        "missing": []
+      },
+      {
+        "id": "lactation-eat",
+        "hit": true,
+        "found": [
+          "哺乳期"
+        ],
+        "missing": []
+      },
+      {
+        "id": "infant-solid-food",
+        "hit": true,
+        "found": [
+          "辅食"
+        ],
+        "missing": []
+      },
+      {
+        "id": "infant-milk",
+        "hit": true,
+        "found": [
+          "母乳"
+        ],
+        "missing": []
+      },
+      {
+        "id": "schoolchild-breakfast",
+        "hit": true,
+        "found": [
+          "早餐"
+        ],
+        "missing": []
+      },
+      {
+        "id": "elderly-diet",
+        "hit": true,
+        "found": [
+          "老年人",
+          "食物"
+        ],
+        "missing": []
+      },
+      {
+        "id": "student-meal",
+        "hit": true,
+        "found": [
+          "学生餐"
+        ],
+        "missing": []
+      },
+      {
+        "id": "guide-salt",
+        "hit": true,
+        "found": [
+          "食盐",
+          "盐"
+        ],
+        "missing": []
+      },
+      {
+        "id": "guide-milk",
+        "hit": true,
+        "found": [
+          "奶"
+        ],
+        "missing": []
+      }
+    ]
+  },
+  "recall_delta": 0.0,
+  "slice_complete_rate": 0.6249,
+  "restricted_rate": 0.3751,
+  "chunk_count": {
+    "fixed": 717,
+    "routed": 1435
+  },
+  "retrieval": "bge + hybrid RRF, rerank disabled"
+}

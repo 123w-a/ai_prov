@@ -35,6 +35,14 @@ export interface GuardrailItem {
   reason?: string
 }
 
+export interface DishMatrixItem {
+  dish: string
+  member: string
+  /** 待确认 = 档案里的过敏原未纳入标准规则，只按原文提醒，需人工确认 */
+  verdict: '可吃' | '需调整' | '待确认' | '不可吃'
+  reason?: string
+}
+
 export interface ChefAnswer {
   opening?: string
   recipes: Recipe[]
@@ -46,6 +54,10 @@ export interface ChefAnswer {
   sources?: SourceRef[]
   guardrails?: GuardrailItem[]
   health_lights?: HealthLight[]
+  member_adjustments?: string[]
+  dish_matrix?: DishMatrixItem[]
+  /** 本轮主菜按哪位成员的健康约束求解（由后端在出卡时注入） */
+  primary_member?: string
 }
 
 export interface SessionMessage {
@@ -209,6 +221,7 @@ export interface MemberProfile {
   goal: string
   diet_style: string
   dislikes: string[]
+  taste_notes?: string[]
 }
 
 export interface FamilyMember {

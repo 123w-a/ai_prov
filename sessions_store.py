@@ -23,6 +23,7 @@
 import ctypes
 import glob
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -31,6 +32,10 @@ import time
 import uuid
 from pathlib import Path
 from datetime import datetime
+
+from storage_utils import atomic_write_json
+
+_logger = logging.getLogger("sessions_store")
 
 # 会话 JSON 存放目录（与 checkpoint.db 分开，体现两层职责解耦）
 SESSIONS_DIR = Path(__file__).with_name("sessions")
@@ -63,18 +68,44 @@ def _safe_unlink(path):
         return
 
 
+def _backup_file(fp: Path) -> Path:
+    """atomic_write_json 每次覆盖都会轮转出的 .bak 副本。"""
+    return fp.with_name(fp.name + ".bak")
+
+
+def _load_session_file(fp: Path):
+    """读一个会话文件；主文件损坏时回退 .bak。返回 (data | None, 恢复说明)。
+
+    以前这里直接 json.loads，坏文件会让该会话所有读写抛错；list_sessions 又
+    悄悄 continue 把它藏掉——用户只会看到"会话少了一条"，查不到原因。
+    """
+    try:
+        return json.loads(fp.read_text(encoding="utf-8")), ""
+    except Exception as exc:
+        backup = _backup_file(fp)
+        if backup.exists():
+            try:
+                data = json.loads(backup.read_text(encoding="utf-8"))
+            except Exception:
+                data = None
+            if isinstance(data, dict):
+                _logger.warning("会话文件损坏，已回退 .bak：%s（%s）", fp.name, exc)
+                return data, f"会话文件损坏，已从备份恢复：{exc}"
+        _logger.error("会话文件损坏且无可用备份：%s（%s）", fp.name, exc)
+        return None, f"会话文件损坏且无可用备份：{exc}"
+
+
 def _read_session(sid):
     fp = _session_file(sid)
     if not fp.exists():
         return None
-    return json.loads(fp.read_text(encoding="utf-8"))
+    data, _ = _load_session_file(fp)
+    return data
 
 
 def _write_session(data):
     SESSIONS_DIR.mkdir(exist_ok=True)
-    _session_file(data["session_id"]).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_json(_session_file(data["session_id"]), data)
 
 
 def _strip_context_prefix(text: str) -> str:
@@ -218,10 +249,13 @@ def list_sessions():
         return []
     out = []
     for fp in SESSIONS_DIR.glob("*.json"):
-        try:
-            out.append(json.loads(fp.read_text(encoding="utf-8")))
-        except Exception:
+        # 坏文件先尝试 .bak 恢复；确实救不回来才跳过，且一定有日志留痕。
+        data, note = _load_session_file(fp)
+        if data is None:
             continue
+        if note:
+            _logger.warning("list_sessions 使用备份数据：%s", fp.name)
+        out.append(data)
     # 按创建时间倒序（与原来 SQLite 行为一致）
     out.sort(key=lambda s: s.get("created_at", ""), reverse=True)
     return out

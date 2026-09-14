@@ -23,6 +23,21 @@ COOLDOWN_S = 3600           # 失败菜名 1 小时内不重试
 
 _cooldown_lock = threading.Lock()
 _cooldown = {}  # dish -> 上次尝试时间戳
+_MAX_COOLDOWN_ENTRIES = 1000
+
+
+def _prune_cooldown_locked(now: float) -> None:
+    """清理已过期条目；异常膨胀时再按时间淘汰最老记录。"""
+    expired = [
+        dish for dish, attempted_at in _cooldown.items()
+        if now - attempted_at >= COOLDOWN_S
+    ]
+    for dish in expired:
+        _cooldown.pop(dish, None)
+    if len(_cooldown) > _MAX_COOLDOWN_ENTRIES:
+        oldest = sorted(_cooldown.items(), key=lambda item: item[1])
+        for dish, _ in oldest[:len(_cooldown) - _MAX_COOLDOWN_ENTRIES]:
+            _cooldown.pop(dish, None)
 
 
 def _scan_retry_batch(max_items: int = MAX_ITEMS_PER_ROUND):
@@ -65,6 +80,7 @@ def _scan_retry_batch(max_items: int = MAX_ITEMS_PER_ROUND):
                     existing_images += 1
                     continue
                 with _cooldown_lock:
+                    _prune_cooldown_locked(now)
                     in_cooldown = now - _cooldown.get(dish, 0) < COOLDOWN_S
                 if not in_cooldown and len(targets) < max_items:
                     targets.append((sid, rec.get("id"), dish))
@@ -90,10 +106,12 @@ def backfill_stats_once(max_items: int = MAX_ITEMS_PER_ROUND) -> dict:
         if not url:
             with _cooldown_lock:
                 _cooldown[dish] = time.time()  # 失败进冷却，1 小时内不打外部接口
+                _prune_cooldown_locked(time.time())
             print(f"[image_retry] {dish} 暂无可靠图源，1 小时后再试", flush=True)
             continue
         with _cooldown_lock:
             _cooldown.pop(dish, None)  # 成功即清除，下次扫描自然因有图跳过
+            _prune_cooldown_locked(time.time())
         ai = source == "ai"
         note = (
             "AI 生成示意图（后台自动补图）；如与实际成品有出入，以文字描述为准"

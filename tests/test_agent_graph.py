@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from agent_graph import (
     MAIN_AGENT_MAX_TOKENS,
     MAX_VERIFY,
+    _current_request_text,
     _current_turn_has_tool_result,
     _wants_multiple_recipes,
     _wants_recipe_images,
@@ -48,6 +49,28 @@ class TestWantsMultiple(unittest.TestCase):
         for w in ["多几道", "几道菜", "供我选择", "多推荐几道"]:
             msgs = [HumanMessage(content=f"帮我{w}")]
             self.assertTrue(_wants_multiple_recipes(msgs), f"关键词「{w}」应开启多菜")
+
+
+class TestLatestUserText(unittest.TestCase):
+    """内部健康护栏提示不能覆盖本轮真实用户需求。"""
+
+    def test_skips_internal_guardrail_message(self):
+        messages = [
+            HumanMessage(content="今晚做白灼虾作为大家的共同主菜"),
+            HumanMessage(content="[健康护栏审核] 肥胖：命中「酒」"),
+        ]
+        self.assertEqual(
+            _latest_user_text(messages),
+            "今晚做白灼虾作为大家的共同主菜",
+        )
+
+    def test_strips_internal_image_toggle(self):
+        text = "【配图开关：开启】\n番茄炒蛋"
+        self.assertEqual(_current_request_text(text), "番茄炒蛋")
+        self.assertEqual(
+            _latest_user_text([HumanMessage(content=text)]),
+            "番茄炒蛋",
+        )
 
 
 class TestWantsRecipeImages(unittest.TestCase):
@@ -318,6 +341,17 @@ class TestVerifyAnswerNode(unittest.TestCase):
         res = verify_answer_node(st)
         self.assertEqual(res["verify_status"], "retry")
 
+    def test_clean_retry_keeps_previous_violation_history(self):
+        st = {
+            "messages": [HumanMessage(content="我有痛风"), AIMessage(content="推荐清蒸冬瓜，清淡少油")],
+            "verify_attempts": 1,
+            "verify_violated": ["痛风"],
+        }
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "ok")
+        self.assertEqual(res["verify_violated"], ["痛风"],
+                         "重试后合规也不能抹掉本轮曾命中的护栏记录")
+
 
 class TestHistoryIsolation(unittest.TestCase):
     def test_new_image_excludes_old_recipe_and_tool_result(self):
@@ -403,6 +437,16 @@ class TestToolBudgetFinalize(unittest.TestCase):
         content = result["messages"][-1].content
         self.assertTrue(content.strip())
         self.assertIn("少油少盐", content)
+
+    def test_fallback_does_not_leak_internal_image_toggle(self):
+        state = {
+            "messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋")],
+            "tool_calls_in_turn": 4,
+        }
+        result = tool_budget_finalize_node(state)
+        content = result["messages"][-1].content
+        self.assertIn("番茄炒蛋", content)
+        self.assertNotIn("配图开关", content)
 
 
 if __name__ == "__main__":

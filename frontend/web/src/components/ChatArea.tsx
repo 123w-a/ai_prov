@@ -44,9 +44,28 @@ const STAGE_COPY = {
   switching_model: '主模型超时，已切换备用模型重试',
 }
 
-const STRONG_IMAGE_REQUESTS = ['配图', '配张图', '补图', '换图', '换张图', '生成图片', '生成一张图', '来张图', '发图', '发张图', '发图片', '发个图', '出图', '出个图', '看看图', '看看图片', '看图片', '看图', '看一下图', '看一下图片', '看个图', '给我看图', '给我看看', '让我看看', '想看图片', '想看图', '图片欣赏', '成品图', '成品照', '实拍图', '示意图', '效果图', '样图', '参考图', '想看看', '长什么样', '什么样子', '啥样', '样式', '外观', '照片', '实拍', '再来一张', '换一张', '另一张', '重新生成']
+const STRONG_IMAGE_REQUESTS = ['配图', '配张图', '补图', '换图', '换张图', '生成图片', '生成一张图', '来张图', '发图', '发张图', '发图片', '发个图', '出图', '出个图', '看看图', '看看图片', '看图片', '看图', '看一下图', '看一下图片', '看个图', '给我看图', '给我看看', '让我看看', '想看图片', '想看图', '图片欣赏', '成品图', '成品照', '实拍图', '示意图', '效果图', '样图', '参考图', '想看看', '长什么样', '什么样子', '啥样', '样式', '外观', '照片', '实拍', '再来一张', '换一张', '另一张']
 
 const hasStrongImageRequest = (value: string) => STRONG_IMAGE_REQUESTS.some((phrase) => value.includes(phrase))
+
+// 忌口沉淀的落点是「活跃成员」（见 POST /profile/dislikes/add，前端从不传 member_id），
+// 所以只在主语是「我 / 本机使用者」时才提示。「我妈不吃香菜」若照旧下发，会把家人的
+// 口味记到别人头上——这类信息应走「家庭成员」面板按人建档。
+// 宁可多抑制：漏判会把家人的口味写进活跃成员画像，多判只是少弹一次可选提示。
+const FAMILY_SUBJECTS = /(?:爸|妈|爷|姥|哥|姐|弟|妹|叔|婶|姑|舅|姨|嫂|媳|婿|侄|甥|孙|婆|娃|宝贝|宝宝|父亲|母亲|老公|老婆|丈夫|妻子|爱人|对象|全家|家人|家里|老人|长辈|孩子)/
+// 只认「明确的不吃/别放/讨厌 + 食材」，且短语后必须紧跟句读边界——否则会跨过逗号
+// 一路抓到下一句（见 submit 里的说明）。
+const DISLIKE_RE =
+  /(?:不吃|别吃|别放|不要放|讨厌)[\s，,]*([\u4e00-\u9fa5]{1,4})(?=[，,。！？；;、]|\s|$)/g
+const CLAUSE_BREAKS = ['，', '。', '！', '？', '；', '、', ',', '.', '!', '?', ';', '\n']
+
+/** 取忌口短语所在的那一小句，看其中是否点到了家庭成员。 */
+const clauseHasFamilySubject = (text: string, matchIndex: number) => {
+  const left = Math.max(0, ...CLAUSE_BREAKS.map((p) => text.lastIndexOf(p, matchIndex - 1) + 1))
+  const rights = CLAUSE_BREAKS.map((p) => text.indexOf(p, matchIndex)).filter((i) => i >= 0)
+  const right = rights.length > 0 ? Math.min(...rights) : text.length
+  return FAMILY_SUBJECTS.test(text.slice(left, right))
+}
 
 // T1 即时状态打卡：一次性生效，随下次发送注入消息前缀并自动清空
 const STATUS_TAGS = ['昨晚没睡好', '今天肌肉酸痛', '肠胃不太舒服', '很累没力气'] as const
@@ -326,8 +345,18 @@ export function ChatArea({
     const trimmedText = text.trim()
     const explicitImageRequested = hasStrongImageRequest(trimmedText)
     const turnWantsImage = wantImage || explicitImageRequested
-    // 忌口语义检测：随口说的「不吃/别放/过敏 X」提示一键沉淀进画像（用户确认式，防误检）
-    const dislikeMatch = trimmedText.match(/(?:不吃|别放|不要放|讨厌|过敏)[，, ]?([\u4e00-\u9fa5]{1,4})/)
+    // 忌口语义检测：只认「明确的不吃/别放/讨厌 + 食材」，且要求后面紧跟句读边界。
+    // 三处刻意不写回去：
+    //  1. 不匹配「过敏」——中文「对鱼过敏」是宾语在前（鱼 过敏），简单正则向右抓会抓到
+    //     下一句的主语：实测把「父亲对鱼过敏，弟弟在增肥」抓成了「弟弟在增」，
+    //     还被套进「不吃 X」模板，语义完全反了（增肥是要多吃，不是忌口）。
+    //     且过敏属健康硬约束，该走「家庭成员」建档，不能混进口味类 dislikes。
+    //  2. 必须带后边界断言，否则 `[，, ]?` 会跨过逗号一路抓到下一句。
+    //  3. 小句主语是家人时跳过该条（见 clauseHasFamilySubject）；扫全部命中取第一条是自己的，
+    //     这样「我爸不吃辣，我不吃香菜」仍能提示「香菜」。
+    const dislikeMatch = [...trimmedText.matchAll(DISLIKE_RE)].find(
+      (m) => !clauseHasFamilySubject(trimmedText, m.index ?? 0),
+    )
     if (dislikeMatch) setDislikeHint(dislikeMatch[1])
     // 即时状态打卡（一次性）；定位坐标走 API 入参，不再混进聊天文本
     const parts: string[] = []
@@ -1123,7 +1152,7 @@ export function ChatArea({
         {dislikeHint && (
           <div className="dislike-hint" role="status">
             <span>
-              检测到你提到不吃「<strong>{dislikeHint}</strong>」——要加入画像忌口吗？之后每次推荐都会自动避开。
+              检测到你不吃「<strong>{dislikeHint}</strong>」——要加入「不喜欢的食材」吗？之后推荐会尽量避开。
             </span>
             <span className="dislike-hint-actions">
               <button

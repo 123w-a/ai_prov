@@ -10,6 +10,8 @@ import threading
 import time
 from pathlib import Path
 
+from storage_utils import atomic_write_json
+
 
 ASSETS_PATH = Path(__file__).resolve().parent / "data" / "dish_assets.json"
 _LOCK = threading.Lock()
@@ -33,11 +35,7 @@ def _read_assets() -> dict:
 
 
 def _write_assets(data: dict) -> None:
-    ASSETS_PATH.parent.mkdir(exist_ok=True)
-    ASSETS_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(ASSETS_PATH, data)
 
 
 def _recipe_asset(name: str, recipe: dict, image_url: str | None = None,
