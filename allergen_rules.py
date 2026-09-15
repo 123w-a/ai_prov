@@ -300,13 +300,114 @@ def _in_spans(start: int, end: int, spans: List[tuple]) -> bool:
     return any(start < span_end and end > span_start for span_start, span_end in spans)
 
 
+_NEGATION_HEAD = (
+    r"(?:切勿|切莫|绝无|绝不|并不|不再|不要|不能|不应|不得|不可|"
+    r"严禁|禁止|没有|没|未|无|不|别|避免|禁用|拒绝)"
+)
+_NEGATION_MODIFIER = r"(?:额外|继续|实际|主动|也|仍|与|和|同|会|要|能|可|再){0,4}"
+_NEGATION_ACTION = (
+    r"(?:添加|加入|使用|采用|食用|饮用|保留|出现|含有|接触|共用|"
+    r"用煮过|用焯过|用泡过|煮过|焯过|泡过|碰|进入|进|加|放|含|吃|喝|用)?"
+)
+_NEGATION_QUANTITY = r"(?:任何|所有|各种|全部|一点|丝毫)*"
+_NEGATED_ITEM = r"[^。；;！？!?\n,，、加放用含吃喝]{1,16}"
+_NEGATED_SEPARATOR = r"(?:、|,|，|以及|和|及|与|或)"
+_NEGATION_PREFIX_RE = re.compile(
+    rf"{_NEGATION_HEAD}{_NEGATION_MODIFIER}{_NEGATION_QUANTITY}"
+    rf"{_NEGATION_ACTION}{_NEGATION_QUANTITY}$"
+)
+_NEGATED_LIST_RE = re.compile(
+    rf"{_NEGATION_HEAD}{_NEGATION_MODIFIER}{_NEGATION_QUANTITY}"
+    rf"{_NEGATION_ACTION}{_NEGATION_QUANTITY}"
+    rf"(?:{_NEGATED_ITEM}{_NEGATED_SEPARATOR}{_NEGATION_QUANTITY}){{1,8}}$"
+)
+_ALLERGEN_MENTION_SUFFIX_RE = re.compile(
+    r"^(?:过敏原|过敏史|过敏|不耐受|忌口|禁忌|"
+    r"(?:是|为|属于)[^。；;！？!?\n，,]{0,10}"
+    r"(?:过敏原|不耐受|忌口|禁忌|硬禁区|禁区))"
+)
+_ALLERGEN_ACTIVE_CONTEXT_RE = re.compile(
+    r"(?:含|含有|加入|添加|使用|采用|食用|吃|喝|推荐|做|煮|炒|蒸|炖|烤|拌)$"
+)
+_ALLERGEN_QUESTION_SUFFIX_RE = re.compile(r"^\s*(?:吗|么)?[？?]")
+_POSTFIX_NEGATION_ACTION = (
+    r"(?:不加(?:入)?|不放(?:入)?|不添加|不使用|不采用|不食用|不饮用|"
+    r"不保留|不含(?:有)?|不得(?:添加|加入|使用|采用|食用|饮用|含有|含)?|"
+    r"严禁|禁止|禁用|避免|拒绝|杜绝)"
+)
+_POSTFIX_NEGATION_MODIFIER = (
+    r"(?:一律|全部|全都|均|都|通通|统统|任何|所有|各种|这些|相关|此类)?"
+)
+_POSTFIX_PREFIX = r"^[\s。；;，,、！!？?：:\-—–·•*＿_\"'“”‘’\[\]()（）⚠️❗✅❌]*"
+_POSTFIX_NEGATION_RE = re.compile(
+    rf"{_POSTFIX_PREFIX}{_POSTFIX_NEGATION_MODIFIER}"
+    rf"{_POSTFIX_NEGATION_ACTION}"
+)
+_POSTFIX_LIST_ITEM = (
+    r"[^。；;！？!?\n，,、/&含加放用吃喝是为有无推荐做煮炒蒸炖烤拌]{1,12}"
+)
+_POSTFIX_LIST_NEGATION_RE = re.compile(
+    rf"{_POSTFIX_PREFIX}[、,，/|&]"
+    rf"(?:{_POSTFIX_LIST_ITEM}[、,，/|&]?){{1,4}}"
+    rf"{_POSTFIX_NEGATION_MODIFIER}{_POSTFIX_NEGATION_ACTION}"
+)
+
+
+def _is_negated_mention(text: str, start: int) -> bool:
+    """判断关键词是否处于“不加/不含/避免”等否定范围。"""
+    before = text[max(0, start - 32):start]
+    return bool(
+        _NEGATION_PREFIX_RE.search(before)
+        or _NEGATED_LIST_RE.search(before)
+    )
+
+
+def _is_postfix_negated_mention(text: str, end: int) -> bool:
+    """识别“虾、虾皮、虾米一律不加”这类清单后的统一否定。"""
+    tail = text[end:end + 48]
+    return bool(
+        _POSTFIX_NEGATION_RE.match(tail)
+        or _POSTFIX_LIST_NEGATION_RE.match(tail)
+    )
+
+
+def _is_informational_allergen_mention(text: str, start: int, end: int) -> bool:
+    """跳过“虾过敏”这类安全说明；若前文已明确在说含/加/推荐，则不跳过。"""
+    suffix = text[end:end + 8]
+    if not _ALLERGEN_MENTION_SUFFIX_RE.search(suffix):
+        return False
+    before = text[max(0, start - 8):start]
+    return not bool(_ALLERGEN_ACTIVE_CONTEXT_RE.search(before))
+
+
+def _is_rhetorical_allergen_question(
+    text: str,
+    end: int,
+    needle: str,
+) -> bool:
+    """识别“含虾？这一锅不放虾”这类先反问、后明确否定的安全说明。
+
+    只有同一句后文再次提到同一过敏原且处于否定范围时才跳过；
+    “含虾？是的，确实加了”不会命中该分支，仍按真实使用处理。
+    """
+    suffix = text[end:end + 48]
+    question = _ALLERGEN_QUESTION_SUFFIX_RE.match(suffix)
+    if not question:
+        return False
+    tail = suffix[question.end():]
+    for match in re.finditer(re.escape(needle), tail):
+        if _is_negated_mention(tail, match.start()):
+            return True
+    return False
+
+
 def _first_match(
     text: str,
     keywords: Iterable[str],
     exclusion_spans: List[tuple],
 ) -> str:
     """返回最早出现的可用关键词；同一位置优先更长词，降低“虾”覆盖“虾仁”的风险。"""
-    matches = []
+    raw_matches = []
     for word in keywords:
         needle = str(word or "")
         if not needle:
@@ -314,7 +415,27 @@ def _first_match(
         for match in re.finditer(re.escape(needle), text):
             if _in_spans(match.start(), match.end(), exclusion_spans):
                 continue
-            matches.append((match.start(), -len(needle), needle))
+            raw_matches.append((match.start(), match.end(), needle))
+    matches = []
+    for start, end, needle in raw_matches:
+        # “虾”会落在“虾皮/虾米/虾仁”内部。先让更长的过敏原词代表
+        # 这一段文本，避免短词绕过按完整词判断的否定语境。
+        if any(
+            other_start <= start
+            and other_end >= end
+            and other_end - other_start > len(needle)
+            for other_start, other_end, _ in raw_matches
+        ):
+            continue
+        if _is_negated_mention(text, start):
+            continue
+        if _is_postfix_negated_mention(text, end):
+            continue
+        if _is_informational_allergen_mention(text, start, end):
+            continue
+        if _is_rhetorical_allergen_question(text, end, needle):
+            continue
+        matches.append((start, -len(needle), needle))
     if not matches:
         return ""
     matches.sort()

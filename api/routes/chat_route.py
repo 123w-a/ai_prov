@@ -12,7 +12,7 @@ from main import (
     stream_agent,
     image_bytes_to_oss_url,
 )
-from agent_graph import failover_llms
+from agent_graph import failover_llms, is_specific_dish_request, parse_candidate_index
 from agent_tools import find_recipe_image
 from model_name import is_provider_failure
 from upload_guard import validate_image_upload
@@ -305,6 +305,7 @@ def _wants_image(message: str, want_image: str | None) -> bool:
         "配图", "配张图", "补图", "换图", "生成图片", "生成一张图", "来张图",
         "发图", "发张图", "发图片", "发个图", "出图", "出个图", "图给我",
         "带图", "带图片", "有图", "有图片",
+        "我要图片", "要图片", "要张图片", "要一张图片",
         "看看图", "看看图片", "看图片", "看图", "看一下图", "看一下图片", "看个图",
         "给我看图", "给我看看", "让我看看", "想看图片", "想看图", "图片欣赏",
         "成品图", "成品照", "实拍图", "示意图", "效果图", "样图", "参考图",
@@ -453,7 +454,8 @@ def _is_restaurant_ordering_scene(text: str) -> bool:
     if not text:
         return False
     restaurant_markers = (
-        "餐厅", "饭店", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
+        "餐厅", "饭店", "饭馆", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
+        "出去吃", "出去吃饭", "在外吃", "在外面吃", "下馆子", "聚餐",
         "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
     )
     restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
@@ -535,7 +537,7 @@ def _home_service_redirect_text() -> str:
 
 
 def _is_recipe_selection_request(message: str) -> bool:
-    """只把已经进入菜品选择的请求送入图片链路，健康泛问答不启动搜图。"""
+    """（历史判定，保留兼容）已不再作为配图门：配图只看「是否已选定一道菜」。"""
     text = str(message or "").strip()
     if any(marker in text for marker in ("帮我做", "做道", "做个", "做一份", "来道", "来个", "菜品", "菜谱", "食谱")):
         return True
@@ -544,13 +546,69 @@ def _is_recipe_selection_request(message: str) -> bool:
     return False
 
 
+def _resolve_picked_candidate(session_id: str, message: str) -> str | None:
+    """把「就第2个」解析成候选清单里的具体菜名（没有候选锚点/越界时返回 None）。
+
+    路由层只拿得到消息字符串，拿不到对话上下文，所以序号锚点从会话记录里的候选字段读；
+    Agent 层读的是 checkpoint 里的同一份候选 payload，两层指向同一个锚点。
+    """
+    index = parse_candidate_index(message)
+    if not index:
+        return None
+    try:
+        from sessions_store import find_recent_candidates
+
+        recent = find_recent_candidates(session_id)
+    except Exception:
+        return None
+    if not recent:
+        return None
+    names = recent.get("candidates") or []
+    if index > len(names):
+        return None
+    return names[index - 1]
+
+
+def _register_candidate_anchor(session_id: str, record_id, message: str, answer: str) -> bool:
+    """泛推荐正文落库后补登记候选锚点（结构事件偶发缺失时的确定性兜底）。
+
+    只认本轮确实是泛推荐，并复用 Agent 层同一套候选解析与过敏原过滤；
+    普通菜谱的编号步骤不会被登记成候选。任何异常都静默返回 False，
+    不能影响正常聊天落库。
+    """
+    if not session_id or not record_id or not str(answer or "").strip():
+        return False
+    try:
+        from langchain_core.messages import HumanMessage
+        from agent_graph import (
+            _extract_candidate_names,
+            _filter_candidate_names,
+            _is_candidate_turn,
+        )
+        from sessions_store import set_message_candidates
+
+        if not _is_candidate_turn([HumanMessage(content=str(message or ""))]):
+            return False
+        names = _filter_candidate_names(_extract_candidate_names(answer))
+        if len(names) < 2:
+            return False
+        return bool(set_message_candidates(session_id, record_id, names))
+    except Exception:
+        return False
+
+
 def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
-    """菜品推荐/确认流程允许配图；没有具体 recipes 时由 answer 阶段关闭展示。"""
+    """配图只在「已选定一道菜」时开启：确认一道菜 / 换一道菜 / 点名一道具体菜 / 用户明确要图。
+
+    泛推荐轮（只给食材、让我推荐几道）走候选清单，不出卡片也就没有图可配，
+    这里必须与 agent_graph 的 `_wants_recipe_images` 同源，否则会出现
+    「后端开了配图开关、前端却没有卡片」的空转。"""
     if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
-        return _looks_like_dining_request(message)
+        # “推荐几道菜，配张图”仍然属于候选阶段：先给编号清单，选定后再出卡片和图片。
+        return is_specific_dish_request(message) or _is_recipe_change_request(message)
     intent = _classify_turn_intent(message)
     return intent in {"confirm_one", "change_one"} or (
-        intent == "recommend" and _is_recipe_selection_request(message)
+        intent == "recommend" and is_specific_dish_request(message)
     )
 
 
@@ -567,6 +625,28 @@ def _extract_requested_dish(message: str) -> str | None:
     text = re.sub(r"【[^】]+】", "", raw)
     text = re.sub(r"\[[^\]]+\]", "", text)
     text = re.sub(r"(帮我|给我|我想|想要|想看看|可以|能不能|能否|麻烦|请|一下|看看|看下|看一看|展示|来展示|欣赏)", "", text)
+    action_phrases = (
+        "重新生成一张图片", "重新生成一张图", "重新生成图片", "重新生成",
+        "重新配张图片", "重新配张图", "重新配图", "重新配", "重画",
+        "换一张图片", "换一张图", "换一张", "换张图片", "换张图", "换图",
+        "再来一张图片", "再来一张图", "再来一张", "另一张图片", "另一张图", "另一张",
+        "配张图片", "配张图", "配图片", "配图", "补张图片", "补张图", "补图",
+        "生成一张图片", "生成一张图", "生成图片", "来张图片", "来张图", "来图片",
+        "发张图片", "发张图", "发图片", "发个图", "发图", "出个图", "出图",
+        "我要图片", "我要图", "要张图片", "要一张图片", "要图片", "要图",
+        "图片欣赏", "成品图片", "成品图", "成品照",
+        "实拍图片", "实拍图", "示意图片", "示意图", "效果图片", "效果图",
+        "样图", "参考图片", "参考图", "图片", "照片", "实拍",
+    )
+    text = re.sub(
+        "|".join(
+            re.escape(phrase)
+            for phrase in sorted(action_phrases, key=len, reverse=True)
+        ),
+        "",
+        text,
+    )
+    # 再清一次复合动作，覆盖“配张图片”被局部替换后可能残留的首字/尾字。
     text = re.sub(
         r"(重新生成一张图|重新生成|重新配|重画|换一张|换张图|再来一张|另一张|"
         r"不满意|不好看|配图|配张图|补图|换图|生成图片|生成一张图|来张图|"
@@ -577,6 +657,9 @@ def _extract_requested_dish(message: str) -> str | None:
     )
     text = re.sub(r"(给我看图|给我看看|让我看看|看一下图|看一下图片|看个图|长什么样|什么样子|啥样|什么样|样式|外观)", "", text)
     text = re.sub(r"[，。！？、,.!?：:\s]+", "", text).strip()
+    text = text.strip("的")
+    if not text or all(char in "片张图要" for char in text):
+        return None
     return text[:40] or None
 
 
@@ -599,6 +682,38 @@ def _looks_like_control_json(text: str) -> bool:
     if isinstance(data, dict):
         return any(key in data for key in ("recipes", "image_url", "image_requested", "health_lights", "guardrails", "token", "answer", "stage"))
     return isinstance(data, list)
+
+
+def _ask_which_dish_image_text() -> str:
+    """要图但没锁定菜品时的追问文案（不假装有图，也不凭空造一张卡片）。"""
+    return (
+        "你想看哪一道菜的图？\n\n"
+        "直接告诉我菜名就行，比如「看看红烧肉的图」；"
+        "也可以先让我按你手上的食材推荐几道，你选定后我再把成品图和完整做法一起给你。"
+    )
+
+
+_DISH_IMAGE_HINT_PATTERN = re.compile(
+    r"(?:看看|看一下|瞧瞧|来张|来一张|给我看|想看)\s*([^\s，。、！？；;：:]{2,14})"
+)
+_DISH_HINT_NOISE = (
+    "的图", "图片", "照片", "实拍", "成品图", "示意图", "长什么样", "什么样", "图",
+)
+_DISH_HINT_GENERIC = ("一道", "几道", "什么", "这个", "这道", "哪个", "一点", "一下")
+
+
+def _names_dish_for_image(message: str) -> bool:
+    """用户要图时是否点明了菜名（「看看红烧肉的图」算，只说「补张图」不算）。"""
+    if is_specific_dish_request(message):
+        return True
+    for match in _DISH_IMAGE_HINT_PATTERN.finditer(str(message or "")):
+        name = match.group(1)
+        for noise in _DISH_HINT_NOISE:
+            name = name.replace(noise, "")
+        name = name.strip("的了吧呢")
+        if len(name) >= 2 and not any(word in name for word in _DISH_HINT_GENERIC):
+            return True
+    return False
 
 
 def _standalone_image_answer(
@@ -672,7 +787,7 @@ async def _handle_image(image: UploadFile | None, image_url: str | None):
 def _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url):
     """每轮问答自动落库：前端刷新/重进都能从后端恢复历史。流式共用。"""
     now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    append_message(
+    return append_message(
         sid=session_id,
         user_text=message,
         answer=answer,
@@ -756,7 +871,12 @@ async def chat(
         return _notice_stream(busy_reason, session_id)
 
     turn_intent = _classify_turn_intent(message)
-    image_requested = _should_enable_image_pipeline(message, want_image)
+    # 两阶段点菜第二阶段：「就第2个」是明确的选定动作，必须按确认处理并开启配图
+    # （路由层拿不到上下文，只能靠会话记录里的候选锚点解析，见 _resolve_picked_candidate）。
+    picked_candidate = _resolve_picked_candidate(session_id, message)
+    if picked_candidate:
+        turn_intent = "confirm_one"
+    image_requested = _should_enable_image_pipeline(message, want_image) or bool(picked_candidate)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
     asset_prompt = _global_asset_prompt(message)
     if asset_prompt:
@@ -821,9 +941,12 @@ async def chat(
 
     # 确认已有图片的上一轮方案时，复用原答案，不再重新跑 Agent/搜图/生图。
     # 明确“换图/重新生成”等请求不会进入这里。
+    # 「就第2个」这类候选选定不走复用短路：复用是拿最近一张带图卡片，
+    # 而用户要的是刚列出的候选里第 N 道，复用会给出完全不相关的一道旧菜。
     reused_confirmation = None
     if (
         turn_intent == "confirm_one"
+        and not picked_candidate
         and not _is_image_revision_request(message, want_image)
         and not _is_recipe_change_request(message)
     ):
@@ -886,6 +1009,13 @@ async def chat(
                     final_answer = text
                     yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
                     return
+                # ① 没锁定菜品就先追问是哪一道：既不把「补张图」这类动作词当菜名去搜图，
+                # 也不凭空新造一张卡片（方案A：不新增消息）。
+                if not _names_dish_for_image(message):
+                    text = _ask_which_dish_image_text()
+                    final_answer = text
+                    yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+                    return
                 yield f"data: {json.dumps({'stage': 'generating_image'}, ensure_ascii=False)}\n\n"
                 try:
                     image_url, source = _find_recipe_image_cached(dish_hint, allow_ai_fallback=True)
@@ -924,25 +1054,10 @@ async def chat(
                 or (target.get("answer", {}).get("image_url") if recipe_index == 0 else None)
             )
             if existing_image_url:
-                image_ai = bool(
-                    current_recipe.get("image_ai_generated")
-                    or (target.get("answer", {}).get("image_ai_generated") if recipe_index == 0 else False)
-                )
-                note = str(
-                    current_recipe.get("image_note")
-                    or target.get("answer", {}).get("image_note")
-                    or ("AI 生成示意图（非真实成品照，仅供样式参考）" if image_ai else "")
-                )
-                answer_obj = _standalone_image_answer(
-                    dish_name,
-                    existing_image_url,
-                    image_ai,
-                    note,
-                    current_recipe,
-                    f"「{dish_name}」上一轮已经有配图，我直接给你贴出来。",
-                )
-                final_answer = json.dumps(answer_obj, ensure_ascii=False)
-                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
+                # 方案A·就地补图：这张卡片本来就有图，只回一句话，不再新增一张同菜卡片
+                # （否则同一道菜在会话里出现两次，用户无法判断以哪个为准）。
+                final_answer = f"「{dish_name}」上一轮已经有配图了，就在上面那张卡片里。"
+                yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
                 return
             if _is_image_cancelled(session_id, turn_id):
                 final_answer = "已取消配图决策"
@@ -968,14 +1083,15 @@ async def chat(
                     note,
                 )
                 yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'turn_id': turn_id, 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai}}, ensure_ascii=False)}\n\n"
-                answer_obj = _standalone_image_answer(dish_name, image_url, image_ai, note, current_recipe)
-                final_answer = json.dumps(answer_obj, ensure_ascii=False)
-                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
+                # 方案A·就地补图：图通过 image 事件贴回原来那张卡片，这里只回一句确认话。
+                # 以前同时再推一份 answer（新卡片）会把同一道菜变成两条，前端「补图 + 新卡片 + 回填上一轮」叠在一起。
+                final_answer = f"已为「{dish_name}」补上配图，就在上面那张卡片里。"
+                yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
             else:
-                note = "暂无成品图，文字做法完整可照做"
-                answer_obj = _standalone_image_answer(dish_name, None, False, note, current_recipe)
-                final_answer = json.dumps(answer_obj, ensure_ascii=False)
-                yield f"data: {json.dumps({'answer': answer_obj}, ensure_ascii=False)}\n\n"
+                # 没有可靠图时如实说，并推 image_failed 让原卡片进入明确失败态——
+                # 不新增卡片，避免用一张空新卡冒充「补好了」。
+                final_answer = f"暂时没能为「{dish_name}」生成可靠配图，原卡片的文字做法完整可照做。"
+                yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'image_failed': {'record_id': target['record_id'], 'turn_id': turn_id, 'indexes': [target['recipe_index']]}}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
@@ -1032,12 +1148,35 @@ async def chat(
                 return
             if pending_rec_id is not None:
                 try:
-                    _update_answer(session_id, pending_rec_id, answer, save_img_name, save_img_type, save_img_url)
-                    return
+                    updated = _update_answer(
+                        session_id,
+                        pending_rec_id,
+                        answer,
+                        save_img_name,
+                        save_img_type,
+                        save_img_url,
+                    )
+                    if updated:
+                        if not final_answer:
+                            _register_candidate_anchor(
+                                session_id, pending_rec_id, message, answer
+                            )
+                        return
                 except Exception:
                     pass  # 更新失败退回追加完整记录
             try:
-                _save_record(session_id, message, answer, save_img_name, save_img_type, save_img_url)
+                new_rec_id = _save_record(
+                    session_id,
+                    message,
+                    answer,
+                    save_img_name,
+                    save_img_type,
+                    save_img_url,
+                )
+                if not final_answer:
+                    _register_candidate_anchor(
+                        session_id, new_rec_id, message, answer
+                    )
             except Exception:
                 pass
 
@@ -1224,12 +1363,29 @@ async def chat(
                 elif kind == "stage":
                     yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":
-                    final_answer = payload
                     try:
                         answer_dict = json.loads(payload)
                     except Exception as _pe:
                         print(f"[flow] answer json-parse failed: {_pe}")
                         raise
+                    if isinstance(answer_dict, dict) and answer_dict.get("answer_kind") == "candidates":
+                        # 两阶段点菜第一阶段：正文就是用户看到的编号候选清单（已流式推完），
+                        # 这里绝不推 answer —— 前端收到 answer 会清空正文，而候选没有卡片可渲染。
+                        # 候选只登记进消息的独立字段，作为下一轮「就第2个」的确定性锚点。
+                        candidate_names = [
+                            str(name).strip()
+                            for name in (answer_dict.get("candidates") or [])
+                            if str(name).strip()
+                        ]
+                        if candidate_names and pending_rec_id is not None:
+                            try:
+                                from sessions_store import set_message_candidates
+                                set_message_candidates(session_id, pending_rec_id, candidate_names)
+                            except Exception:
+                                pass
+                        answer_dict = None
+                        continue
+                    final_answer = payload
                     if isinstance(answer_dict, dict):
                         # 只有模型确实产出具体菜品时，推荐阶段才进入图片展示；
                         # 普通健康问答即使命中饮食关键词，也不生成空图片槽。
@@ -1265,6 +1421,11 @@ async def chat(
                                 answer_dict["image_ai_generated"] = bool(first.get("image_ai_generated"))
                                 answer_dict["image_note"] = first.get("image_note") or ""
                         _save_global_dish_assets(answer_dict, session_id)
+                        # 复用缓存图片（上面那步）时不会启动补图线程，于是 done 分支
+                        # 不会有 img_thread 来把 answer_dict 回填进 final_answer。
+                        # 不在这里同步一次，落库的就是「富化图片之前」的原始包：
+                        # 用户先看到有图的卡片，前端 +1.8s/+6s 同步后图片又消失。
+                        final_answer = json.dumps(answer_dict, ensure_ascii=False)
                     # 卡片先出、图片后补：无图菜名交给后台线程（25s 预算），
                     # 搜到即推 image 事件让前端动态填图，不再阻塞 answer 120s。
                     if answer_dict.get("image_requested") and not _is_image_cancelled(session_id, turn_id) and any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):

@@ -89,6 +89,68 @@ class TestNoFalsePositive(unittest.TestCase):
             with self.subTest(text=text, allergens=allergens):
                 self.assertEqual(allergen_rules.audit_allergens(text, allergens), [])
 
+    def test_negated_allergen_mentions_are_not_treated_as_ingredients(self):
+        cases = [
+            ("本菜绝不加虾皮、虾米、海鲜酱", ["crustacean", "fish"]),
+            ("本菜不放虾米", ["crustacean"]),
+            ("本菜不含海鲜酱", ["fish"]),
+            ("全程避免虾皮", ["crustacean"]),
+            ("底料绝无虾皮", ["crustacean"]),
+            ("爷爷虾过敏，本菜不安排相关食材", ["crustacean"]),
+            (
+                "这道菜完全不进虾，也别用煮过虾的水或同一口未洗的锅。",
+                ["crustacean"],
+            ),
+            (
+                "虾是爷爷的硬禁区，他那份全程不碰虾，"
+                "也不与虾共用同一口锅、同一把铲，避免交叉污染。",
+                ["crustacean"],
+            ),
+            (
+                "西兰花豆腐羹（含虾？—— 这一锅绝对不放虾）",
+                ["crustacean"],
+            ),
+            (
+                "这道菜含虾吗？不放虾，也不含虾皮。",
+                ["crustacean"],
+            ),
+            (
+                "清水或自熬鸡汤 600ml；❗虾、虾皮、虾米一律不加",
+                ["crustacean"],
+            ),
+            (
+                "本菜及任何替代料均不得含虾、虾皮、虾米。",
+                ["crustacean"],
+            ),
+            (
+                "全部菜品必须不含虾及任何虾制品。",
+                ["crustacean"],
+            ),
+        ]
+        for text, allergens in cases:
+            with self.subTest(text=text):
+                self.assertEqual(allergen_rules.audit_allergens(text, allergens), [])
+
+    def test_positive_allergen_mentions_still_fire_after_negation(self):
+        cases = [
+            ("虾仁炒蛋", "虾仁"),
+            ("菜里加了虾皮", "虾皮"),
+            ("推荐虾米蒸蛋", "虾米"),
+            ("不加虾皮，改加虾米", "虾米"),
+            ("用煮过虾的水做汤", "虾"),
+            ("虾是主料", "虾"),
+            ("不与虾共用锅，但成品里有虾仁", "虾仁"),
+            ("含虾？是的，确实加了虾", "虾"),
+            ("含虾吗？确定有虾仁，正常使用", "虾"),
+            ("虾、虾皮、虾米一律加入", "虾"),
+            ("虾制品是主料", "虾"),
+        ]
+        for text, expected_keyword in cases:
+            with self.subTest(text=text):
+                result = allergen_rules.audit_allergens(text, ["crustacean"])
+                self.assertTrue(result)
+                self.assertEqual(result[0]["keyword"], expected_keyword)
+
 
 class TestMatchPriority(unittest.TestCase):
     def test_exclusions_prevent_substring_false_positives(self):
@@ -206,6 +268,36 @@ class TestVerifyGraph(unittest.TestCase):
             result = agent_graph.verify_answer_node(self._state("推荐油焖大虾"))
         self.assertEqual(result["verify_status"], "retry")
         self.assertIn("过敏原是绝对硬约束", result["messages"][0].content)
+
+    def test_single_recipe_safety_notes_do_not_trigger_retry(self):
+        text = (
+            "西兰花豆腐羹（含虾？—— 这一锅绝对不放虾）；"
+            "本菜绝不加虾皮、虾米、海鲜酱（爷爷虾过敏硬约束）；"
+            "蚝油、鸡精也一并省掉。"
+        )
+        with (
+            patch("agent_graph._allergens_for_audit", return_value=["虾"]),
+            patch("agent_graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
+
+    def test_real_cross_contamination_notes_do_not_trigger_retry(self):
+        text = (
+            "这道菜完全不进虾，也别用煮过虾的水或同一口未洗的锅。"
+            "虾是爷爷的硬禁区，他那份全程不碰虾，"
+            "也不与虾共用同一口锅、同一把铲，避免交叉污染。"
+        )
+        with (
+            patch("agent_graph._allergens_for_audit", return_value=["虾"]),
+            patch("agent_graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
 
     def test_allergen_exhaustion_blocks_instead_of_degrading(self):
         with patch("agent_graph._allergens_for_audit", return_value=["虾"]):

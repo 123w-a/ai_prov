@@ -270,11 +270,104 @@ def _looks_like_structured_payload(content: str) -> bool:
         return any(key in data for key in ("recipes", "health_lights", "guardrails", "image_url", "answer", "stage"))
     return isinstance(data, list)
 
+
+# 控制 JSON 的「键指纹」：必须是带引号的对象键，正常中文正文里几乎不会出现
+# `"recipes":` 这种形态，用它区分「模型吐了控制 JSON」和「正文里提到 recipes 这个词」。
+_STREAM_CONTROL_KEYS = (
+    '"recipes"', '"opening"', '"answer_kind"', '"candidates"',
+    '"guardrails"', '"health_lights"', '"primary_member"',
+)
+
+
+class _ControlJsonGate:
+    """流式正文的「控制 JSON 门闸」。
+
+    背景：模型偶尔不走「先说人话」的路子，直接把结构化控制 JSON（带 ```json 围栏
+    或裸 JSON）当成最终自然语言回复流式吐出来。`_looks_like_structured_payload`
+    是**逐 chunk** 判断、且要求整段以 `{`/`[` 开头，而流式 JSON 被切成很多小块，
+    没有任何一块单独构成合法 JSON —— 于是拦住不，用户在气泡里看到一坨 JSON。
+
+    做法：按「累计前缀」判断，只扣住开头一小段，不牺牲正常正文的流式体验：
+      - 累计正文不以 `{` / ``` 开头 → 立刻放行（正常回答零延迟）；
+      - 以 `{` / ``` 开头 → 先扣住，在探测窗口内找控制键指纹；
+      - 窗口内命中指纹 → 判定为控制 JSON，**本条消息后续全部丢弃**；
+      - 窗口内没命中 → 认为不是控制 JSON（如正文里贴了一段代码/JSON 示例），
+        把扣住的内容原样补发，之后恢复正常流式（**不吞正常正文**）。
+    """
+
+    _PROBE_CHARS = 400
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._suppressed = False
+        self._settled = False
+
+    def feed(self, chunk: str) -> str:
+        """喂一个 chunk，返回本次真正应外发的文本（可能为空串）。"""
+        if self._suppressed:
+            return ""
+        if self._settled:
+            return chunk
+        self._pending += chunk
+        head = self._pending.lstrip()
+        if not (head.startswith("{") or head.startswith("```")):
+            # 正常正文：立刻放行，不做任何延迟。
+            self._settled = True
+            out, self._pending = self._pending, ""
+            return out
+        if any(key in self._pending for key in _STREAM_CONTROL_KEYS):
+            # 确认是控制 JSON：整条丢弃，绝不让用户看到。
+            self._suppressed = True
+            self._pending = ""
+            return ""
+        if len(self._pending) >= self._PROBE_CHARS:
+            # 扣了够长还没露出 JSON 键指纹 → 判定不是控制 JSON，放行（不吞正文）。
+            self._settled = True
+            out, self._pending = self._pending, ""
+            return out
+        return ""
+
+    def flush(self) -> str:
+        """消息结束时收尾：仍被扣住且未判定为 JSON 的内容补发出去，避免吞掉正文。"""
+        if self._suppressed:
+            self._pending = ""
+            return ""
+        out, self._pending = self._pending, ""
+        return out
+
+
+def _guarded_token(gates: dict, node: str, chunk, text: str) -> str:
+    """把 chef_think / ask_user 的流式正文过一道控制 JSON 门闸，返回应外发的文本。
+
+    gates 由 `_stream_agent` 持有（每个节点一份）。用消息 id 识别「换了一条消息」：
+    一旦换条，先把上一条还扣着的内容收尾，再为这一条重建门闸。
+    """
+    state = gates.get(node)
+    mid = getattr(chunk, "id", None)
+    out = ""
+    if state is None or state["id"] != mid:
+        if state is not None:
+            out = state["gate"].flush()
+        state = {"id": mid, "gate": _ControlJsonGate()}
+        gates[node] = state
+    return out + state["gate"].feed(text)
+
+
+def _flush_gate(gates: dict, node: str) -> str:
+    """节点这一条消息结束：收尾门闸并释放状态，等下一条消息重建。"""
+    state = gates.get(node)
+    if state is None:
+        return ""
+    gates.pop(node, None)
+    return state["gate"].flush()
+
+
 def _stream_agent(message, session_id):
     """公共流式生成器：按"消息来自哪个节点"分流输出。"""
     config = {"configurable": {"thread_id": session_id}}
     last_stage = None
     gate_asked = False  # 充分性门控已追问时，抑制后续节点的重复正文
+    stream_gates: dict = {}  # 每个节点一份控制 JSON 门闸（见 _ControlJsonGate）
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
     # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
     # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
@@ -305,6 +398,12 @@ def _stream_agent(message, session_id):
                     attempts = (update or {}).get("verify_attempts")
                     if status is not None:
                         print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
+                elif node in ("chef_think", "ask_user"):
+                    # 这一条消息已结束：门闸收尾（控制 JSON 丢弃、正常正文补发），
+                    # 并释放状态，等下一条消息到来时重建。漏了这步会在换条时残留扣留。
+                    pending_out = _flush_gate(stream_gates, node)
+                    if pending_out:
+                        yield ("token", pending_out)
                 elif node == "allergen_block":
                     msgs = (update or {}).get("messages") or []
                     if msgs:
@@ -346,11 +445,15 @@ def _stream_agent(message, session_id):
         # 出现在 messages 流里，不过滤就会把同一句追问推给前端两遍。
         if node == "ask_user" and isinstance(message_chunk, AIMessageChunk):
             gate_asked = True
-            yield ("token", content)
+            guarded = _guarded_token(stream_gates, node, message_chunk, content)
+            if guarded:
+                yield ("token", guarded)
         elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
             if gate_asked:
                 continue
-            yield ("token", content)
+            guarded = _guarded_token(stream_gates, node, message_chunk, content)
+            if guarded:
+                yield ("token", guarded)
 
 
 def stream_agent(message, session_id):

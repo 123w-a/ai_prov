@@ -461,6 +461,10 @@ def find_recent_recipe_for_image(sid, requested_name=None):
     if data is None:
         return None
     needle = str(requested_name or "").strip()
+    # 上游动作短语偶发只传回“片/张/图/要”这类残片时，不能拿它当菜名做模糊匹配，
+    # 否则“配张图片”会误命中历史里的“炒羊肉片”。残片一律按“未指定菜名”处理。
+    if needle and all(char in "片张图要" for char in needle):
+        needle = ""
     for m in reversed(data.get("messages") or []):
         try:
             ans = json.loads(m.get("answer") or "")
@@ -557,6 +561,66 @@ def update_answer_image_at_index(sid, record_id, recipe_index, image_url, image_
             _write_session(data)
             return True
     return False
+
+
+def set_message_candidates(sid, record_id, candidates):
+    """登记一轮的候选菜名清单（两阶段点菜第一跳的锚点）。
+
+    刻意用独立字段而不是塞进 answer：候选轮要保留纯文本正文，
+    一旦把「recipes 为空」的结构化 payload 当 answer 落库，
+    前端会认为这轮有卡片（正文被隐藏、卡片又渲染不出来），聊天区直接空白。
+    """
+    names = [str(name).strip() for name in (candidates or []) if str(name).strip()]
+    if not names:
+        return False
+    with _lock:
+        data = _read_session(sid)
+        if data is None:
+            return False
+        for m in data["messages"]:
+            if m.get("id") != record_id:
+                continue
+            if m.get("cancelled") or m.get("answer") == "__cancelled__":
+                return False
+            m["candidates"] = names
+            _write_session(data)
+            return True
+    return False
+
+
+def find_recent_candidates(sid, limit=8):
+    """取会话「紧邻本轮之前那一轮」登记的候选菜名，供「就第2个」这类序号指代解析。
+
+    ⚠️ 只认最后一条记录，**故意不做倒序回溯**：候选清单之后只要又发生过别的对话轮次，
+    旧序号就不再被当作本轮选定。这条产品规则由 `tests/test_candidate_flow.py`
+    的 `test_stale_candidates_after_newer_turn_are_not_confirm` 冻结，且必须与
+    `agent_graph._recent_candidates` 同源——路由层若放宽到回溯，就会出现
+    「后端开了配图开关、前端却没有卡片」的空转（见 chat_route._should_enable_image_pipeline）。
+
+    返回 {'record_id', 'candidates', 'dish_name'}；没有候选时返回 None。
+    """
+    with _lock:
+        data = _read_session(sid)
+    if data is None:
+        return None
+    messages = data.get("messages") or []
+    if not messages:
+        return None
+    latest = messages[-1]
+    if not isinstance(latest, dict):
+        return None
+    names = [
+        str(name).strip()
+        for name in (latest.get("candidates") or [])
+        if str(name).strip()
+    ]
+    if not names:
+        return None
+    return {
+        "record_id": latest.get("id"),
+        "candidates": names[:limit],
+        "dish_name": names[0],
+    }
 
 
 def star_message(sid, record_id, starred: bool):

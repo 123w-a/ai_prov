@@ -691,6 +691,35 @@ export default function App() {
           void syncActiveSession(sessionId)
         }, 6000)
         await syncActiveSession(sessionId)
+        // 配图由后端线程生成：视觉审计不可用时会统一回落 AI 文生图，实测图片是在
+        // SSE 结束之后（约轮次开始后 50~120s）才回填落库的。只同步 1.8s/6s 两次必然
+        // 赶不上，imagePending 会一直挂着「正在生成图片」，卡片也因此不渲染。
+        // 这里按 10s 节奏补同步、最多 3 分钟；到点仍无图就放开 pending，让卡片照常
+        // 显示文字做法。只针对本轮这条消息，不会误伤后续轮次。
+        if (sessionId) {
+          const sid = sessionId
+          let imagePolls = 0
+          const imageWatchdog = window.setInterval(() => {
+            imagePolls += 1
+            void syncActiveSession(sid)
+            if (imagePolls >= 18) {
+              window.clearInterval(imageWatchdog)
+              setMessagesBySession((current) => {
+                const list = current[sid]
+                const target = list?.find((message) => message.id === assistantId)
+                if (!list || !target?.imagePending) return current
+                return {
+                  ...current,
+                  [sid]: list.map((message) =>
+                    message.id === assistantId
+                      ? { ...message, imagePending: false, stage: undefined }
+                      : message,
+                  ),
+                }
+              })
+            }
+          }, 10000)
+        }
       } catch (error) {
         const wasCancelled = cancelledImageTurnsRef.current[assistantId]
         const isAbortError = error instanceof DOMException && error.name === 'AbortError'
