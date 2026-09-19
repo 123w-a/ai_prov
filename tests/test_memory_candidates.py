@@ -76,6 +76,20 @@ class MemoryCandidateTest(unittest.TestCase):
         grandpa = next(item for item in saved["members"] if item["id"] == "grandpa")
         self.assertIn("花生", grandpa["profile"]["allergens"])
 
+    def test_multiple_allergens_in_one_statement_are_all_candidates(self):
+        candidates = memory_candidates.extract_candidates(
+            "我对花生和芝麻过敏",
+            [{"id": "me", "name": "我", "profile": {}}],
+            session_id="s-allergens",
+        )
+        self.assertCountEqual(
+            [(item["dimension"], item["value"], item["severity"]) for item in candidates],
+            [
+                ("allergen", "花生", "hard"),
+                ("allergen", "芝麻", "hard"),
+            ],
+        )
+
     def test_dismiss_is_permanent_and_clear_removes_member_rows(self):
         candidates = memory_candidates.extract_candidates(
             "爷爷不能吃辣",
@@ -84,6 +98,45 @@ class MemoryCandidateTest(unittest.TestCase):
         memory_candidates.remember_candidates(candidates)
         self.assertTrue(memory_candidates.dismiss(candidates[0]["id"]))
         self.assertEqual(memory_candidates.get_pending(), [])
+
+    def test_session_isolated_and_medical_restriction_is_hard(self):
+        candidates = memory_candidates.extract_candidates(
+            "医生要求爷爷不能吃辣",
+            self._members(),
+            session_id="s-grandpa",
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["dimension"], "restrict")
+        self.assertEqual(candidates[0]["severity"], "hard")
+        memory_candidates.remember_candidates(candidates)
+        self.assertEqual(len(memory_candidates.get_pending("s-grandpa")), 1)
+        self.assertEqual(memory_candidates.get_pending("other-session"), [])
+
+    def test_existing_profile_value_is_not_proposed_again(self):
+        members = [
+            {
+                "id": "grandpa",
+                "name": "爷爷",
+                "profile": {"taste_notes": ["不吃辣"]},
+            }
+        ]
+        self.assertEqual(
+            memory_candidates.extract_candidates("爷爷不能吃辣", members, session_id="s1"),
+            [],
+        )
+
+    def test_once_does_not_write_profile_and_stops_pending(self):
+        candidates = memory_candidates.extract_candidates(
+            "爷爷不能吃辣",
+            self._members(),
+            session_id="s1",
+        )
+        memory_candidates.remember_candidates(candidates)
+        once = memory_candidates.remember_once(candidates[0]["id"])
+        self.assertEqual(once["status"], "once")
+        self.assertEqual(memory_candidates.get_pending("s1"), [])
+        self.assertEqual(memory_candidates.render_pending_constraints("s1").count("爷爷"), 1)
+        self.assertFalse(self.profile_path.exists())
         self.assertEqual(
             memory_candidates.clear_member_candidates("grandpa", "爷爷"),
             1,

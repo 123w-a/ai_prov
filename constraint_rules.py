@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 
-CONSTRAINT_DIMENSIONS = ("allergen", "chronic", "texture", "energy")
+CONSTRAINT_DIMENSIONS = ("allergen", "chronic", "restrict", "texture", "energy")
 
 TEXTURE_RULES = {
     "软食": {
@@ -122,6 +122,7 @@ def entries_from_profile(profile: dict, member: str = "") -> list[dict]:
 
     add("allergen", profile.get("allergens"), "hard")
     add("chronic", profile.get("conditions"), "hard")
+    add("restrict", profile.get("restricts"), "hard")
     add("preference", profile.get("dislikes"), "soft")
     texture_values = []
     for value in profile.get("taste_notes") or []:
@@ -231,6 +232,29 @@ def _preference_adjustments(text: str, entries: list[dict]) -> list[dict]:
     return adjustments
 
 
+def _restrict_violations(text: str, entries: list[dict]) -> list[dict]:
+    """医嘱/长期硬限制：命中限制对象时按硬约束拦截，不降级成口味建议。"""
+    violations = []
+    for entry in entries:
+        if entry["dimension"] != "restrict":
+            continue
+        value = entry["value"]
+        target = value
+        for prefix in _PREFERENCE_PREFIXES:
+            if target.startswith(prefix):
+                target = target[len(prefix):].strip()
+                break
+        if target and target in text:
+            violations.append({
+                "condition": "医嘱硬限制",
+                "keyword": target,
+                "message": f"{entry.get('member') or '成员'}需避免{target}",
+                "dimension": "restrict",
+                "source": entry.get("source_text", ""),
+            })
+    return violations
+
+
 def audit_allergens_dimension(
     text: str,
     allergens: Iterable[Any],
@@ -271,6 +295,7 @@ def audit_constraint(
         item = dict(violation)
         item["dimension"] = "chronic"
         violations.append(item)
+    violations.extend(_restrict_violations(source_text, rows))
 
     adjustments = []
     adjustments.extend(_texture_adjustments(source_text, rows))

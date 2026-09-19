@@ -22,6 +22,7 @@ interface Draft {
   name: string
   conditions: string
   allergens: string
+  restricts: string
   goal: string
   dislikes: string
   taste_notes: string
@@ -35,6 +36,7 @@ const emptyDraft: Draft = {
   name: '',
   conditions: '',
   allergens: '',
+  restricts: '',
   goal: '',
   dislikes: '',
   taste_notes: '',
@@ -63,6 +65,7 @@ function draftFrom(member: FamilyMember): Draft {
     name: member.name,
     conditions: profile.conditions.join('、'),
     allergens: profile.allergens.join('、'),
+    restricts: (profile.restricts ?? []).join('、'),
     goal: profile.goal ?? '',
     dislikes: profile.dislikes.join('、'),
     taste_notes: (profile.taste_notes ?? []).join('、'),
@@ -85,6 +88,7 @@ function inputFrom(draft: Draft): MemberInput {
     profile: {
       conditions: splitTags(draft.conditions),
       allergens: splitTags(draft.allergens),
+      restricts: splitTags(draft.restricts),
       goal: draft.goal.trim(),
       dislikes: splitTags(draft.dislikes),
       taste_notes: splitTags(draft.taste_notes).slice(0, 12),
@@ -104,6 +108,7 @@ function memberSummary(member: FamilyMember): string {
   const parts: string[] = []
   if (member.profile.conditions.length) parts.push(member.profile.conditions.join('、'))
   if (member.profile.allergens.length) parts.push(`忌 ${member.profile.allergens.join('、')}`)
+  if ((member.profile.restricts ?? []).length) parts.push(`医嘱限制 ${(member.profile.restricts ?? []).join('、')}`)
   if ((member.profile.taste_notes ?? []).length) {
     parts.push((member.profile.taste_notes ?? []).join('、'))
   }
@@ -366,6 +371,14 @@ export function FamilyPanel({ onBack }: FamilyPanelProps) {
               value={draft.allergens}
               placeholder="如：虾、花生"
               onChange={(e) => setDraft({ ...draft, allergens: e.target.value })}
+            />
+          </label>
+          <label>
+            医嘱/长期硬限制（顿号分隔）
+            <input
+              value={draft.restricts}
+              placeholder="如：医生要求不能吃辣、严格限盐"
+              onChange={(e) => setDraft({ ...draft, restricts: e.target.value })}
             />
           </label>
           <label>

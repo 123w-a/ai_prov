@@ -99,6 +99,7 @@ export interface ChatMessage {
   time?: string
   streaming?: boolean
   imagePending?: boolean
+  serverPending?: boolean
   stage?: StreamStage
   elapsed?: number
   error?: boolean
@@ -218,6 +219,7 @@ export interface MemberProfile {
   basic: MemberBasic
   conditions: string[]
   allergens: string[]
+  restricts?: string[]
   goal: string
   diet_style: string
   dislikes: string[]

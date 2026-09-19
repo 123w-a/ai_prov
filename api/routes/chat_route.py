@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 import json  # 把 token / structuring / answer / finish 打包成 SSE 事件
 import os
 import queue
+import re
 import threading
 
 from main import (
@@ -12,7 +13,13 @@ from main import (
     stream_agent,
     image_bytes_to_oss_url,
 )
-from agent_graph import failover_llms, is_specific_dish_request, parse_candidate_index
+from agent_graph import (
+    failover_llms,
+    is_candidate_revision_request,
+    is_execute_plan_request,
+    is_specific_dish_request,
+    parse_candidate_index,
+)
 from agent_tools import find_recipe_image
 from model_name import is_provider_failure
 from upload_guard import validate_image_upload
@@ -39,6 +46,8 @@ _ACTIVE_TURN_RECORDS: dict[str, tuple[int, float]] = {}
 _ACTIVE_TURN_RECORDS_LOCK = threading.Lock()
 _ACTIVE_TURN_RECORD_TTL_S = 6 * 60 * 60
 _MAX_ACTIVE_TURN_RECORDS = 5000
+_IMAGE_THREAD_POLL_TIMEOUT_S = 5.0
+_IMAGE_THREAD_MAX_WAIT_S = float(os.getenv("CHEF_IMAGE_THREAD_MAX_WAIT_S", "180"))
 
 # —— 并发护栏：同会话串行 + 全局 Agent 背压 ——
 # 同 session_id 同时跑两轮，会以同一个 thread_id 同时写 LangGraph checkpoint，
@@ -335,12 +344,30 @@ def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
     return image_url, source
 
 
+def _is_pure_execute_plan_request(message: str) -> bool:
+    """严格确认句才可复用上一轮成品，附加审计/份量等新请求必须走 Agent。"""
+    text = str(message or "").strip()
+    if not is_execute_plan_request(text):
+        return False
+    for phrase in ("就按这个方案执行", "按照这个方案执行", "按这个方案执行"):
+        if phrase in text:
+            remainder = text.replace(phrase, "", 1)
+            break
+    else:
+        return False
+    remainder = re.sub(r"[\s，。！？、,.!?;；：:\"'“”‘’（）()]+", "", remainder)
+    return remainder in ("", "吧", "了", "吧了")
+
+
+
 def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
     """确认上一道已有配图的菜时，直接复用原答案，避免重新命名和换图。
 
     只有上一轮确实已经有图才走这个短路；没有图时仍交给原有确认流程补图，
     这样不会改变首次确认菜品的行为。
     """
+    if is_execute_plan_request(message) and not _is_pure_execute_plan_request(message):
+        return None
     try:
         from sessions_store import find_recent_recipe_for_image
 
@@ -510,13 +537,15 @@ def _classify_turn_intent(message: str) -> str:
         return "restaurant"
     if _is_recipe_change_request(text):
         return "change_one"
+    if is_execute_plan_request(text):
+        return "confirm_one"
     confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道", "第一道", "第二道", "第三道")
     if any(word in text for word in confirm_words):
         return "confirm_one"
     followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪")
     if any(word in text for word in followup_words) and not _looks_like_dining_request(text):
         return "followup"
-    if _looks_like_dining_request(text):
+    if _looks_like_dining_request(text) or is_specific_dish_request(text):
         return "recommend"
     return "other"
 
@@ -569,12 +598,62 @@ def _resolve_picked_candidate(session_id: str, message: str) -> str | None:
     return names[index - 1]
 
 
+def _count_reasoned_candidate_lines(text) -> int:
+    """数正文里有几行是「序号. 菜名 —— 理由」形态的候选行。
+
+    与 `agent_graph._extract_candidate_names` 同源、但更严，用来在**没有历史快照**
+    时区分「这轮是候选清单」和「这轮是卡片（正文是带编号步骤的菜谱）」。
+
+    判别依据（实测三组真实样本都成立）：
+      - 候选行：`2. 青椒炒鸡丝 —— 鸡胸肉低脂，青椒切细丝…`，菜名是**纯菜名**；
+      - 步骤行：`2. **上浆（决定嫩不嫩）**：鸡丝 + 半个蛋清 + 5ml料酒…`，
+        菜名位置是**加粗的做法动作短语**（`**切丝**` / `**番茄去皮**`）。
+
+    注意：不能靠「理由里含数字+单位」判步骤 —— 候选理由里也常写
+    `—— 高蛋白低脂，10分钟出锅`、`—— 清淡好消化，5分钟`。真正的分水岭是
+    **菜名位置是不是做法动作**（加粗包裹 + 动词开头），候选菜名永远是食材名词。
+    """
+    count = 0
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        match = re.match(r"^(?:[-*•]\s*)?(\d{1,2})\s*[.、)）．:：]\s*(.+)$", line)
+        if not match:
+            continue
+        body = match.group(2).strip()
+        parts = re.split(r"\s*(?:——|—|--|–|：|:|\||｜)\s*", body, maxsplit=1)
+        if len(parts) < 2:
+            continue
+        raw_head = parts[0].strip()
+        # 步骤行特征：菜名位置被 ** 包裹（加粗的步骤标题）
+        if raw_head.startswith("**") or raw_head.endswith("**"):
+            continue
+        head = raw_head.strip("*`「」『』\"'“”").strip()
+        if not (2 <= len(head) <= 14):
+            continue
+        # 菜名位置以做法动词开头 → 是步骤标题，不是菜名
+        if re.match(r"^(切|放|加|下|倒|淋|撒|盖|转|关|开|取|把|用|将|煮|炒|煎|蒸|炖|焖|腌|盛|打|调|备)", head):
+            continue
+        count += 1
+    return count
+
+
 def _register_candidate_anchor(session_id: str, record_id, message: str, answer: str) -> bool:
     """泛推荐正文落库后补登记候选锚点（结构事件偶发缺失时的确定性兜底）。
 
     只认本轮确实是泛推荐，并复用 Agent 层同一套候选解析与过敏原过滤；
     普通菜谱的编号步骤不会被登记成候选。任何异常都静默返回 False，
     不能影响正常聊天落库。
+
+    ⚠️ 只靠 `_is_candidate_turn([单条消息])` 不够 —— 它看不到历史，会误判（实测 T2 复现）：
+    用户说「选第 2 个，但不要放青椒，改成两人份」时，正文是一份带编号步骤的菜谱，
+    `_extract_candidate_names` 会把「切丝 / 上浆 / 番茄去皮 / 炒番茄」当成候选菜名登记；
+    而单消息快照判不出「选第 2 个」的序号意图（那需要 has_prior_candidates），
+    只靠「青椒」这个食材词就放行了 → 卡片轮的步骤名污染候选锚点。
+
+    两道额外闸门：
+      1. **正文形态**：候选行必须「序号. 短菜名 + 散文式理由」，菜谱步骤行不带这种形态；
+      2. **卡片轮排除**：上一轮已经出了卡片时，本轮是围绕卡片的确认/追问，
+         绝不能再登记候选（与 agent_graph 的 `_has_delivered_card` 同口径）。
     """
     if not session_id or not record_id or not str(answer or "").strip():
         return False
@@ -589,10 +668,45 @@ def _register_candidate_anchor(session_id: str, record_id, message: str, answer:
 
         if not _is_candidate_turn([HumanMessage(content=str(message or ""))]):
             return False
+        # 闸门 2：上一轮已经交付卡片 → 本轮不是候选轮（纯文本形态无法分辨的必须靠这里）。
+        if _prev_record_has_card(session_id, record_id):
+            return False
+        # 闸门 1：正文必须真的长成候选清单的样子。
+        if _count_reasoned_candidate_lines(answer) < 2:
+            return False
         names = _filter_candidate_names(_extract_candidate_names(answer))
         if len(names) < 2:
             return False
         return bool(set_message_candidates(session_id, record_id, names))
+    except Exception:
+        return False
+
+
+def _prev_record_has_card(session_id: str, record_id) -> bool:
+    """同一会话里，`record_id` 之前最近一条记录是否带图片/卡片（即已经交付了菜谱）。
+
+    只看「有没有图」这一个信号：候选轮一定不配图（产品形态决定），
+    卡片轮一定有图槽（即使补图失败，`image_url` 字段也被写过）。
+    这样能确定性区分「上一轮是候选清单」和「上一轮是卡片」。
+    """
+    try:
+        from sessions_store import _read_session
+        data = _read_session(session_id)
+        if not isinstance(data, dict):
+            return False
+        target = str(record_id)
+        prev = None
+        for item in data.get("messages") or []:
+            if str(item.get("id")) == target:
+                break
+            prev = item
+        if not prev:
+            return False
+        # 卡片轮的判据：正文里出现做法段落（食材/做法标题），或该轮挂过图。
+        text = str(prev.get("answer") or "")
+        if str(prev.get("image_url") or "") not in ("", "None", "null"):
+            return True
+        return ("**【做法】**" in text) or ("## " in text and "食材" in text)
     except Exception:
         return False
 
@@ -603,6 +717,8 @@ def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
     泛推荐轮（只给食材、让我推荐几道）走候选清单，不出卡片也就没有图可配，
     这里必须与 agent_graph 的 `_wants_recipe_images` 同源，否则会出现
     「后端开了配图开关、前端却没有卡片」的空转。"""
+    if is_candidate_revision_request(message):
+        return False
     if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
         # “推荐几道菜，配张图”仍然属于候选阶段：先给编号清单，选定后再出卡片和图片。
         return is_specific_dish_request(message) or _is_recipe_change_request(message)
@@ -622,9 +738,24 @@ def _extract_requested_dish(message: str) -> str | None:
     contextual_refs = ("上一道", "上一道菜", "刚才", "刚刚", "前面", "这道", "这道菜", "这个", "这种", "那种", "这份", "这个方案", "它", "上面", "上一份")
     if any(ref in raw for ref in contextual_refs):
         return None
+    # ① 书名号/引号内的菜名优先：用户把菜名括起来就是在显式「点名」，
+    #    这个信号比后面的动作词剥离更可靠。实测 E4
+    #    「给我一道「柠檬香茅烤鲈鱼」的成品图，配一道没听过的菜。」：
+    #    长句走完剥离后仍 >12 字 → 旧实现直接 return None → 路由层
+    #    `find_recent_recipe_for_image(sid, None)` 兜底抓到**上一道菜**，
+    #    于是回「「冬瓜豆腐汤」上一轮已经有配图了」，用户要的新菜图一张没出。
+    #    `_is_specific_dish_request` 的正则明确排除「」『』，也认不出这种写法。
+    quoted = re.search(r"[「『\"“]([^」』\"”]{2,14})[」』\"”]", raw)
+    if quoted:
+        name = _LEADING_QUANTIFIER_STRIP.sub("", quoted.group(1).strip())
+        if name and not any(word in name for word in _REQUEST_SENTENCE_WORDS):
+            return name[:40]
     text = re.sub(r"【[^】]+】", "", raw)
     text = re.sub(r"\[[^\]]+\]", "", text)
-    text = re.sub(r"(帮我|给我|我想|想要|想看看|可以|能不能|能否|麻烦|请|一下|看看|看下|看一看|展示|来展示|欣赏)", "", text)
+    # ② 括号里的补注也先摘掉（「番茄炒蛋（少油版）的图」→「番茄炒蛋的图」），
+    #    否则括号内容会被当成菜名的一部分。
+    text = re.sub(r"[（(][^）)]{0,12}[）)]", "", text)
+    text = re.sub(r"(帮我|给我|我想|想要|想看看|可以|能不能|能否|麻烦|请|一下|看看|看下|看一看|展示|来展示|欣赏|来张|来一张|来份|来个)", "", text)
     action_phrases = (
         "重新生成一张图片", "重新生成一张图", "重新生成图片", "重新生成",
         "重新配张图片", "重新配张图", "重新配图", "重新配", "重画",
@@ -658,7 +789,24 @@ def _extract_requested_dish(message: str) -> str | None:
     text = re.sub(r"(给我看图|给我看看|让我看看|看一下图|看一下图片|看个图|长什么样|什么样子|啥样|什么样|样式|外观)", "", text)
     text = re.sub(r"[，。！？、,.!?：:\s]+", "", text).strip()
     text = text.strip("的")
+    text = _LEADING_QUANTIFIER_STRIP.sub("", text)
     if not text or all(char in "片张图要" for char in text):
+        return None
+    # 需求句防护：只有「点一道菜 + 要图」才该走到这里。用户把多条件需求写成一段话时
+    # （「我今晚想吃清淡低盐少油的晚餐…再给我一张对应的成品图」），上面的动作词剥离
+    # 会把整段需求留在 text 里，再被截成 40 字当菜名去搜图 —— 实测会把整句用户消息
+    # 当成菜名，出一张「菜名叫用户原话」的空卡片，且聊天区正文全空。
+    # 判据用「菜名」的结构特征，不依赖具体菜品词表：
+    #   1) 长度：真菜名极少超过 12 字（含括号备注）；
+    #   2) 转折/条件词：出现「但是 / 然后 / 如果 / 请 / 帮我 / 我想 / 之后 / 等」说明是需求句；
+    #   3) 多个逗号分句痕迹：剥标点前若含 ≥3 个顿号/逗号，基本是列举式需求。
+    if len(text) > 12:
+        return None
+    if any(word in text for word in _REQUEST_SENTENCE_WORDS):
+        return None
+    # 残片防护：真菜名至少 2 字。剥完动作词只剩一个字（「再来一张」→「再」）
+    # 说明这句根本没有菜名，不能拿它去搜图/生图。
+    if len(text) < 2:
         return None
     return text[:40] or None
 
@@ -701,9 +849,35 @@ _DISH_HINT_NOISE = (
 )
 _DISH_HINT_GENERIC = ("一道", "几道", "什么", "这个", "这道", "哪个", "一点", "一下")
 
+# 菜名前的量词：「给我一道柠檬香茅烤鲈鱼的成品图」要剥成「柠檬香茅烤鲈鱼」。
+_LEADING_QUANTIFIER_STRIP = re.compile(r"^(?:一|两|三|四|五|几|个|道|份|款|些|点|盘|碗|锅|条|只)+")
+
+# 需求句特征词：出现这些说明用户发的是一段需求描述，不是一个菜名。
+# 用于拦住 `_extract_requested_dish` 把整段需求当菜名（实测「我今晚想吃清淡低盐少油的
+# 晚餐…再给我一张对应的成品图」被截成 40 字菜名，出了一张菜名=用户原话的空卡片）。
+_REQUEST_SENTENCE_WORDS = (
+    "但是", "不过", "然后", "如果", "请先", "请给", "请你", "帮我", "帮我做", "我想", "我要",
+    "之后", "等我", "还有", "并且", "而且", "另外", "然后", "顺便", "记得", "不要直接",
+    "候选", "方案", "建议给", "明确告诉", "告诉我", "缺什么", "做什么", "怎么", "多少",
+    "家里有", "手上有", "我有", "今晚", "今天", "明天", "口味", "吃的", "晚餐", "午餐",
+    "早餐", "夜宵", "过敏", "高血压", "糖尿病", "减脂", "增肌", "营养", "热量",
+)
+
 
 def _names_dish_for_image(message: str) -> bool:
-    """用户要图时是否点明了菜名（「看看红烧肉的图」算，只说「补张图」不算）。"""
+    """用户要图时是否点明了菜名（「看看红烧肉的图」算，只说「补张图」不算）。
+
+    ⚠️ 这里必须和 `_extract_requested_dish` 同源。旧实现只靠
+    `is_specific_dish_request` + `_DISH_IMAGE_HINT_PATTERN`（要求消息里出现
+    「看看/来张/给我看…」这类**视觉动词**），于是「给我柠檬香茅烤鲈鱼的成品图」
+    「给我一道「柠檬香茅烤鲈鱼」的成品图」这种**动词缺失但菜名明确**的句子
+    被判成「没点名菜」→ 明明抽得出菜名却不去配图。
+    改造：先取 `_extract_requested_dish` 的结果（它已经处理了书名号、量词、
+    动作词剥离、需求句防护），有结果即可直接认定点名；视觉动词正则退化为兜底。
+    """
+    named = _extract_requested_dish(message)
+    if named and not any(word in named for word in _DISH_HINT_GENERIC):
+        return True
     if is_specific_dish_request(message):
         return True
     for match in _DISH_IMAGE_HINT_PATTERN.finditer(str(message or "")):
@@ -878,13 +1052,45 @@ async def chat(
         turn_intent = "confirm_one"
     image_requested = _should_enable_image_pipeline(message, want_image) or bool(picked_candidate)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
+    if picked_candidate:
+        # ⚠️ 把解析出的菜名**显式注入**给 Agent。
+        # 路由层靠会话记录里的候选锚点解析出「第2个 = 青椒炒鸡丝」，但 Agent 层读的是
+        # checkpoint 的候选 payload —— 两处锚点并不总是同时在场（实测 T2 就断了：
+        # checkpoint 里没有候选 payload，`resolve_candidate_pick` 返回 None）。
+        # 不注入的后果：模型自己去猜「第2个」是哪道，实测凭空造了一个
+        # 「滑炒鸡丝（无青椒·番茄提鲜版）」—— 候选清单里根本没有这道菜，
+        # 用户看到的第2道是「青椒炒鸡丝」。菜名一旦漂移，后面所有轮次（含配图、
+        # 过敏原审计、份量表）都建立在错误菜名上。
+        effective_message = (
+            f"【已选定候选：{picked_candidate}】\n"
+            f"（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
+            f"不得改名、不得替换成别的菜。）\n\n{effective_message}"
+        )
     asset_prompt = _global_asset_prompt(message)
     if asset_prompt:
         effective_message = f"{asset_prompt}\n\n{effective_message}"
+    memory_candidate_ids: list[str] = []
+    try:
+        # 先提取为本轮 pending 约束，确保当前回答立即遵守；只有回答成功后才会
+        # 在 finish 后由前端展示确认提示，失败轮次会在持久化兜底中清理。
+        from api.routes.preferences_route import _migrate, _read_family
+        from memory_candidates import extract_candidates, remember_candidates
+
+        family = _read_family() or _migrate({})
+        candidates = extract_candidates(
+            message,
+            family.get("members") or [],
+            session_id=session_id,
+        )
+        remember_candidates(candidates)
+        memory_candidate_ids = [str(item.get("id") or "") for item in candidates]
+    except Exception:
+        pass
     human_message = build_human_message(
         _apply_mode_prompt(effective_message, mode),
         save_img_url,
         location_context,
+        session_id,
     )
     config = {"configurable": {"thread_id": session_id}}
 
@@ -934,7 +1140,16 @@ async def chat(
             from sessions_store import find_recent_recipe_for_image
 
             requested_dish = _extract_requested_dish(message)
-            if find_recent_recipe_for_image(session_id, requested_dish or None) or find_recent_recipe_for_image(session_id, None):
+            if _names_dish_for_image(message) and not picked_candidate:
+                # ⚠️ 用户**点名了一道菜**并要图 → 直接走配图链路。
+                # 旧实现只在「历史里能找到这道菜」时才开配图（`find_recent_recipe_for_image`
+                # 命中才置位），于是点名一道没听过的菜 + 要图时落回常规 Agent 链路 ——
+                # 而常规链路里 `agent_graph._is_candidate_turn` 判定为 True（E4 实测），
+                # 反手甩出一份候选清单，用户明确要的成品图一张没出。
+                # 要图是硬意图，优先于「泛推荐先出候选」的产品形态。
+                # 序号选定（「就第2个」）除外：那是在候选清单里挑，交给候选链路。
+                standalone_image_request = True
+            elif find_recent_recipe_for_image(session_id, requested_dish or None) or find_recent_recipe_for_image(session_id, None):
                 standalone_image_request = True
         except Exception:
             pass
@@ -991,9 +1206,14 @@ async def chat(
                 )
             if not target and requested_dish:
                 target = find_recent_recipe_for_image(session_id, requested_dish)
-            if not target:
+            if not target and not requested_dish:
+                # ⚠️ 兜底「抓最近一道菜」只能在用户**没点名新菜**时用。
+                # 用户点名了一道库里没有的菜（E4「给我一道「柠檬香茅烤鲈鱼」的成品图」），
+                # 这里抓到上一道旧菜（冬瓜豆腐汤）后，下面的 existing_image_url 判定为真，
+                # 于是回「「冬瓜豆腐汤」上一轮已经有配图了」—— 用户要的菜一张图没出，
+                # 还被答非所问。点名新菜时宁可按「无历史菜谱」走直接生图分支。
                 target = find_recent_recipe_for_image(session_id, target_dish_name)
-            if not target:
+            if not target and not requested_dish:
                 target = find_recent_recipe_for_image(session_id, None)
             if not target:
                 dish_hint = str(requested_dish or target_dish_name or "").strip()
@@ -1124,6 +1344,14 @@ async def chat(
             saved_flag[0] = True
             answer = final_answer if final_answer else "".join(full_parts)
             print(f"[persist] sid={session_id} rec={pending_rec_id} answer_len={len(answer or '')} parts={len(full_parts)}")
+            if not (answer and answer.strip()) or answer.strip() == "__pending__":
+                try:
+                    from memory_candidates import dismiss
+
+                    for candidate_id in memory_candidate_ids:
+                        dismiss(candidate_id)
+                except Exception:
+                    pass
             # T2-P0 饮食记录：结构化答案产出菜品时自动记账（失败不阻塞聊天）
             if final_answer:
                 try:
@@ -1186,6 +1414,12 @@ async def chat(
         image_failed_sent = False  # image_failed 去重：补图线程早到 / done 分支补发只发一次
 
         def _fill_images():
+            try:
+                _fill_images_once()
+            finally:
+                events.put(("image_thread_done", None))
+
+        def _fill_images_once():
             """后台补图：先复用资产/搜现成图，找不到时统一允许 AI 兜底。"""
             # 默认推荐也必须保持“有菜就尽量有图”的原有体验；
             # 全局资产命中时不会走到生图，只有没有可用资产和现成图时才消耗 AI 兜底。
@@ -1313,10 +1547,33 @@ async def chat(
         yield f"data: {json.dumps({'status': 'working'}, ensure_ascii=False)}\n\n"
 
         started = time.time()
+        image_wait_deadline = None
+        agent_done_seen = False
+        image_thread_done_seen = False
         try:
             while True:
+                poll_timeout = _IMAGE_THREAD_POLL_TIMEOUT_S
+                if image_wait_deadline is not None:
+                    remaining = image_wait_deadline - time.monotonic()
+                    if remaining <= 0:
+                        if answer_dict is not None and not image_failed_sent and not _is_image_cancelled(session_id, turn_id):
+                            with _img_lock:
+                                failed_indexes = [
+                                    i for i, r in enumerate(answer_dict.get("recipes") or [])
+                                    if not r.get("image_url")
+                                ]
+                                for i in failed_indexes:
+                                    r = answer_dict["recipes"][i]
+                                    r["image_note"] = "成品图未能生成（搜图与 AI 生图均不可用），文字做法完整可照做"
+                                    if i == 0:
+                                        answer_dict["image_note"] = r["image_note"]
+                                final_answer = json.dumps(answer_dict, ensure_ascii=False)
+                            if failed_indexes:
+                                yield f"data: {json.dumps({'image_failed': {'record_id': pending_rec_id, 'turn_id': turn_id, 'indexes': failed_indexes}}, ensure_ascii=False)}\n\n"
+                        break
+                    poll_timeout = min(poll_timeout, max(0.05, remaining))
                 try:
-                    event_type, event = events.get(timeout=10)
+                    event_type, event = events.get(timeout=poll_timeout)
                 except queue.Empty:
                     elapsed = int(time.time() - started)
                     yield f"data: {json.dumps({'heartbeat': {'elapsed': elapsed}}, ensure_ascii=False)}\n\n"
@@ -1325,34 +1582,18 @@ async def chat(
                 if event_type == "error":
                     raise event
                 if event_type == "done":
-                    # done 由 run_agent 主线在 structure 完成后立刻 put，而 image 事件
-                    # 由补图线程几秒后才 put——不在这里等一小窗并补推，image 事件会
-                    # 永远被 break 跳过（用户看到卡片一直无图的根因）。
-                    if img_thread is not None and not _is_image_cancelled(session_id, turn_id):
-                        img_thread.join(timeout=25)
-                        with _img_lock:
-                            if answer_dict is not None and not _is_image_cancelled(session_id, turn_id):
-                                failed_indexes = []
-                                for i, r in enumerate(answer_dict.get("recipes") or []):
-                                    if r.get("image_url"):
-                                        img_event = {
-                                            "record_id": pending_rec_id,
-                                            "turn_id": turn_id,
-                                            "index": i,
-                                            "url": r["image_url"],
-                                            "ai_generated": bool(r.get("image_ai_generated")),
-                                        }
-                                        yield f"data: {json.dumps({'image': img_event}, ensure_ascii=False)}\n\n"
-                                    elif not img_thread.is_alive():
-                                        # 真正走完补图流程仍无图，才落明确失败态。
-                                        r["image_note"] = "成品图未能生成（搜图与 AI 生图均不可用），文字做法完整可照做"
-                                        if i == 0:
-                                            answer_dict["image_note"] = r["image_note"]
-                                        failed_indexes.append(i)
-                                final_answer = json.dumps(answer_dict, ensure_ascii=False)
-                                if failed_indexes and not image_failed_sent and not img_thread.is_alive() and not _is_image_cancelled(session_id, turn_id):
-                                    yield f"data: {json.dumps({'image_failed': {'record_id': pending_rec_id, 'turn_id': turn_id, 'indexes': failed_indexes}}, ensure_ascii=False)}\n\n"
-                    break
+                    # done 只表示 Agent 主链结束，补图线程仍可能稍晚返回。
+                    # 继续消费队列并保持心跳，直到 image_thread_done 到达。
+                    agent_done_seen = True
+                    if img_thread is None or _is_image_cancelled(session_id, turn_id) or image_thread_done_seen:
+                        break
+                    image_wait_deadline = time.monotonic() + _IMAGE_THREAD_MAX_WAIT_S
+                    continue
+                if event_type == "image_thread_done":
+                    image_thread_done_seen = True
+                    if agent_done_seen:
+                        break
+                    continue
 
                 kind, payload = event
                 if kind == "token":

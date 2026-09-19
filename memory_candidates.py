@@ -81,7 +81,8 @@ def _match_member(user_text: str, members: list[dict]) -> tuple[str, str]:
             for member in members:
                 if member["name"] == canonical or any(alias in member["name"] for alias in aliases):
                     return member["id"], member["name"]
-            return "", canonical
+            # 明确提到家庭成员但档案里没有该成员时，不能回退到 active member。
+            return "", ""
     if len(members) == 1:
         return members[0]["id"], members[0]["name"]
     return "", ""
@@ -94,6 +95,8 @@ def _candidate(
     value: str,
     source_text: str,
     severity: str,
+    session_id: str = "",
+    scope: str = "always",
 ) -> dict:
     return {
         "id": f"mc_{uuid.uuid4().hex[:10]}",
@@ -102,14 +105,17 @@ def _candidate(
         "dimension": dimension,
         "value": value,
         "severity": severity,
-        "scope": "always",
+        "scope": scope,
+        "session_id": session_id,
         "source_text": source_text,
         "status": "pending",
         "created_at": _now(),
+        "asked_at": "",
+        "prompt_count": 0,
     }
 
 
-def extract_candidates(user_text: str, members: list) -> list[dict]:
+def extract_candidates(user_text: str, members: list, session_id: str = "") -> list[dict]:
     """从持续性表达中提取候选；临时表达只作为 once，不生成长期候选。"""
     text = str(user_text or "").strip()
     if not text:
@@ -132,11 +138,19 @@ def extract_candidates(user_text: str, members: list) -> list[dict]:
             found.append(("energy", "减重", "soft"))
             break
 
-    # “不能吃辣”先归口味偏好，避免把口感词错误塞进过敏原硬拦截。
+    medical_restrict = any(
+        marker in text
+        for marker in ("医生要求", "医嘱", "医生说", "必须避免", "严格忌口", "治疗期间不能")
+    )
+    # 医嘱/治疗期间的限制必须进入硬约束，不得降级成口味偏好。
     if any(word in text for word in _SPICY_WORDS) and any(
         marker in text for marker in ("不能吃", "不吃", "忌口", "不要")
     ):
-        found.append(("preference", "不吃辣", "soft"))
+        found.append((
+            "restrict" if medical_restrict else "preference",
+            "不吃辣",
+            "hard" if medical_restrict else "soft",
+        ))
 
     for word in sorted(_ALLERGEN_WORDS, key=len, reverse=True):
         if word not in text or word == "辣":
@@ -148,7 +162,6 @@ def extract_candidates(user_text: str, members: list) -> list[dict]:
         )
         if nearby:
             found.append(("allergen", word, "hard"))
-            break
 
     existing = _load()
     existing_keys = {
@@ -156,13 +169,30 @@ def extract_candidates(user_text: str, members: list) -> list[dict]:
         for item in existing
         if item.get("status") in ("pending", "confirmed")
     }
+    for member_row in rows:
+        profile = member_row.get("profile") or {}
+        member_key = str(member_row.get("id") or "")
+        for dimension, key in (
+            ("allergen", "allergens"),
+            ("chronic", "conditions"),
+            ("restrict", "restricts"),
+            ("preference", "taste_notes"),
+            ("preference", "dislikes"),
+        ):
+            values = profile.get(key) or []
+            if isinstance(values, str):
+                values = [values]
+            for value in values:
+                text_value = str(value or "").strip()
+                if text_value:
+                    existing_keys.add((member_key, dimension, text_value))
     candidates = []
     for dimension, value, severity in found:
         key = (member_id, dimension, value)
         if key in existing_keys:
             continue
         candidates.append(
-            _candidate(member_id, member, dimension, value, text, severity)
+            _candidate(member_id, member, dimension, value, text, severity, session_id=session_id)
         )
         existing_keys.add(key)
     return candidates
@@ -186,8 +216,64 @@ def should_ask(session_state: dict) -> bool:
     return int((session_state or {}).get("memory_asked_count") or 0) < 2
 
 
-def get_pending() -> list[dict]:
-    return [item for item in _load() if item.get("status") == "pending"]
+def get_pending(session_id: str | None = None) -> list[dict]:
+    return [
+        item
+        for item in _load()
+        if item.get("status") == "pending"
+        and (session_id is None or str(item.get("session_id") or "") == str(session_id))
+    ]
+
+
+def get_pending_for_session(session_id: str) -> list[dict]:
+    return get_pending(session_id)
+
+
+def get_session_allergens(session_id: str | None) -> list[str]:
+    """读取当前会话中仍处于 pending/once 的过敏原，供确定性硬护栏使用。"""
+    if not session_id:
+        return []
+    values = []
+    for item in _load():
+        if item.get("status") not in ("pending", "once"):
+            continue
+        if str(item.get("dimension") or "") != "allergen":
+            continue
+        if str(item.get("session_id") or "") != str(session_id):
+            continue
+        value = str(item.get("value") or "").strip()
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def mark_asked(candidate_ids: list[str]) -> list[dict]:
+    """标记已向用户提议的候选，避免刷新或重复完成事件反复弹窗。"""
+    wanted = {str(item) for item in candidate_ids if item}
+    if not wanted:
+        return []
+    items = _load()
+    marked = []
+    for item in items:
+        if str(item.get("id") or "") not in wanted or item.get("status") != "pending":
+            continue
+        item["asked_at"] = _now()
+        item["prompt_count"] = int(item.get("prompt_count") or 0) + 1
+        marked.append(item)
+    if marked:
+        _save(items)
+    return marked
+
+
+def remember_once(candidate_id: str) -> dict:
+    items = _load()
+    for item in items:
+        if item.get("id") == candidate_id and item.get("status") == "pending":
+            item["status"] = "once"
+            item["scope"] = "once"
+            _save(items)
+            return item
+    return {}
 
 
 def confirm(candidate_id: str) -> dict:
@@ -230,6 +316,11 @@ def confirm(candidate_id: str) -> dict:
         profile["conditions"] = values
     elif dimension == "energy":
         profile["goal"] = value
+    elif dimension == "restrict":
+        values = list(profile.get("restricts") or [])
+        if value not in values:
+            values.append(value)
+        profile["restricts"] = values
     else:
         values = list(profile.get("taste_notes") or [])
         if value not in values:
@@ -268,9 +359,17 @@ def clear_member_candidates(member_id: str, member_name: str = "") -> int:
     return removed
 
 
-def render_pending_constraints() -> str:
+def render_pending_constraints(session_id: str | None = None) -> str:
     """把 pending 候选作为本轮严格约束注入；它不会写长期档案。"""
-    pending = get_pending()
+    items = _load()
+    pending = [
+        item for item in items
+        if item.get("status") in ("pending", "once")
+        and (
+            session_id is None
+            or str(item.get("session_id") or "") == str(session_id)
+        )
+    ]
     if not pending:
         return ""
     labels = []
@@ -278,7 +377,8 @@ def render_pending_constraints() -> str:
         member = str(item.get("member") or "家庭成员")
         value = str(item.get("value") or "")
         if value:
-            labels.append(f"{member}：{value}")
+            qualifier = "硬约束" if item.get("severity") == "hard" else "本轮偏好"
+            labels.append(f"{member}：{value}（{qualifier}）")
     if not labels:
         return ""
     return (

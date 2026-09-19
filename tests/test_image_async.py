@@ -8,6 +8,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from fastapi.testclient import TestClient
 
 from api.routes import chat_route
 import sessions_store
@@ -410,6 +411,91 @@ class SessionsStoreCancellationTest(unittest.TestCase):
             )
         )
 
+
+class ChatRouteLateImageStreamTest(unittest.TestCase):
+    """真实 SSE 路径：done 到达后图片稍晚完成，也必须把终态推给前端。"""
+
+    def _events(self, response):
+        parsed = []
+        for line in response.text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                parsed.append(json.loads(line[6:]))
+            except Exception:
+                continue
+        return parsed
+
+    def test_late_image_is_forwarded_before_stream_finishes(self):
+        answer = {
+            "opening": "番茄炒蛋做法如下。",
+            "recipes": [
+                {
+                    "name": "番茄炒蛋",
+                    "intro": "少油少盐",
+                    "seasonings": [{"name": "盐", "amount": "少许"}],
+                    "steps": ["番茄切块", "炒熟出锅"],
+                    "image_url": None,
+                }
+            ],
+        }
+
+        def stream_agent(_human_message, _session_id):
+            yield "token", "番茄炒蛋做法如下。"
+            yield "answer", json.dumps(answer, ensure_ascii=False)
+
+        def delayed_image(_name, allow_ai_fallback):
+            self.assertTrue(allow_ai_fallback)
+            import time
+
+            time.sleep(0.2)
+            return "https://images.test/tomato-egg.png", "ai"
+
+        patches = [
+            patch.object(chat_route, "stream_agent", stream_agent),
+            patch.object(chat_route, "_find_recipe_image_cached", delayed_image),
+            patch.object(chat_route, "_find_global_dish_asset", return_value=None),
+            patch.object(chat_route, "_save_global_dish_assets", return_value=None),
+            patch.object(chat_route, "_handle_image", return_value=(None, None, None)),
+            patch.object(chat_route, "_classify_turn_intent", return_value="dish"),
+            patch.object(chat_route, "_resolve_picked_candidate", return_value=None),
+            patch.object(chat_route, "_should_enable_image_pipeline", return_value=True),
+            patch.object(chat_route, "_wants_image", return_value=False),
+            patch.object(chat_route, "_global_asset_prompt", return_value=None),
+            patch.object(chat_route, "build_human_message", return_value="test-message"),
+            patch.object(chat_route, "append_message", return_value=321),
+            patch.object(chat_route, "_IMAGE_THREAD_POLL_TIMEOUT_S", 0.05),
+            patch.object(chat_route, "_IMAGE_THREAD_MAX_WAIT_S", 2.0),
+            patch("sessions_store.update_message_answer", return_value=True),
+            patch("memory_candidates.extract_candidates", return_value=[]),
+            patch("memory_candidates.remember_candidates", return_value=None),
+            patch("api.routes.reports_route.record_meal", return_value=None),
+        ]
+        for item in patches:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+
+        from api.main_app import app
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat",
+                data={
+                    "session_id": "late-image-stream-test",
+                    "message": "就做番茄炒蛋，给我完整做法",
+                    "want_image": "1",
+                    "turn_id": "turn-late-image",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = self._events(response)
+        images = [event["image"] for event in events if "image" in event]
+        failures = [event["image_failed"] for event in events if "image_failed" in event]
+        self.assertEqual(len(images), 1, events)
+        self.assertEqual(images[0]["url"], "https://images.test/tomato-egg.png")
+        self.assertFalse(failures, events)
+        self.assertTrue(any(event.get("finish") for event in events), events)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

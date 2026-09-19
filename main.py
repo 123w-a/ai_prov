@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息
 #   - 不写 / 留空 → 自动用 configs.py 里第一个配好 key 的模型，无需改任何代码
 #   - 想用哪个写哪个：CHEF_PROVIDER=deepseek / gpt，或任何你在 configs 配置过的键名
 from agent import agent  # 调用写好的 LangGraph Agent
+from agent_trace import add_turn_usage, new_turn_usage, record_turn_usage  # 本轮 token 计量
 from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
 from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
 from feedback_store import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
@@ -43,6 +44,9 @@ def _render_health_profile(profile: dict) -> str:
     if alg:
         lines.append(f"- 过敏原：{'、'.join(alg)}（绝对禁止出现在任何推荐与食谱中）")
         lines.append(f"- 过敏原（硬约束，输出前会做确定性审计）：{'、'.join(alg)}")
+    restricts = [r for r in (profile.get("restricts") or []) if r]
+    if restricts:
+        lines.append(f"- 医嘱/长期硬限制：{'、'.join(restricts)}（必须遵守，不得按普通口味偏好处理）")
     if profile.get("goal"):
         lines.append(f"- 当前目标：{profile['goal']}")
     if profile.get("diet_style"):
@@ -56,7 +60,7 @@ def _render_health_profile(profile: dict) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def load_preferences() -> str:
+def load_preferences(session_id: str | None = None) -> str:
     """会话初始化时读取用户长期偏好。
     P2 升级：存在 data/profile.json 时优先渲染结构化健康画像（确定性段落）；
     不存在或渲染为空则回落旧自由文本 preferences.txt（向后兼容）。
@@ -91,6 +95,7 @@ def load_preferences() -> str:
                             for label, key in (
                                 ("慢病", "conditions"),
                                 ("过敏原", "allergens"),
+                                ("医嘱硬限制", "restricts"),
                                 ("目标", "goal"),
                                 ("饮食", "diet_style"),
                                 ("忌口", "dislikes"),
@@ -119,7 +124,7 @@ def load_preferences() -> str:
                         try:
                             from memory_candidates import render_pending_constraints
 
-                            rendered += render_pending_constraints()
+                            rendered += render_pending_constraints(session_id)
                         except Exception:
                             pass
                         return rendered
@@ -165,7 +170,7 @@ def image_bytes_to_oss_url(image_bytes, mime_type="image/jpeg"):
     return upload_to_oss(image_bytes, mime_type)
 
 
-def build_human_message(text, image_url=None, location_context=None):
+def build_human_message(text, image_url=None, location_context=None, session_id=None):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
     所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
     偏好注入：每次请求都带上用户长期偏好（忌口/辣度/减脂/糖尿病忌糖），
@@ -173,7 +178,7 @@ def build_human_message(text, image_url=None, location_context=None):
     反馈注入：近期被踩菜名作为推荐约束（换做法/给替代），反馈闭环落地。
     location_context 只作为内部上下文注入，不写回前端可见文本。"""
     prefix_parts: list[str] = []
-    prefs = load_preferences()
+    prefs = load_preferences(session_id)
     if prefs:
         prefix_parts.append(
             "【用户长期偏好（每次对话自动加载，务必严格遵守）】\n"
@@ -368,92 +373,101 @@ def _stream_agent(message, session_id):
     last_stage = None
     gate_asked = False  # 充分性门控已追问时，抑制后续节点的重复正文
     stream_gates: dict = {}  # 每个节点一份控制 JSON 门闸（见 _ControlJsonGate）
+    turn_usage = new_turn_usage()  # 本轮 token 用量累计桶（收尾时落 usage.jsonl）
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
     # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
     # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
-    for mode, payload in agent.stream(
-        {"messages": [message]},
-        config=config,
-        stream_mode=["messages", "updates"],
-    ):
-        if mode == "updates":
-            for node, update in (payload or {}).items():
-                if node == "run_tools":
-                    used = (update or {}).get("tool_calls_in_turn")
-                    if used is not None:
-                        print(f"[agent-metrics] tool_calls_in_turn={used}")
-                elif node == "tool_budget_finalize":
-                    print("[agent-metrics] tool_budget_exhausted=true")
+    try:
+        for mode, payload in agent.stream(
+            {"messages": [message], "session_id": session_id},
+            config=config,
+            stream_mode=["messages", "updates"],
+        ):
+            if mode == "updates":
+                for node, update in (payload or {}).items():
+                    if node == "run_tools":
+                        used = (update or {}).get("tool_calls_in_turn")
+                        if used is not None:
+                            print(f"[agent-metrics] tool_calls_in_turn={used}")
+                    elif node == "tool_budget_finalize":
+                        print("[agent-metrics] tool_budget_exhausted=true")
+                        msgs = (update or {}).get("messages") or []
+                        tail_type = type(msgs[-1]).__name__ if msgs else "none"
+                        if msgs and tail_type == "AIMessage":
+                            content = _normalize_stream_content(msgs[-1].content).strip()
+                            if content:
+                                # 预算耗尽路线不会进入 structure_answer，收口正文必须
+                                # 在这里显式转发，否则前端与落库都会拿到空回答。
+                                yield ("token", content)
+                        continue
+                    elif node == "verify_answer":
+                        status = (update or {}).get("verify_status")
+                        attempts = (update or {}).get("verify_attempts")
+                        if status is not None:
+                            print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
+                    elif node in ("chef_think", "ask_user"):
+                        # 这一条消息已结束：门闸收尾（控制 JSON 丢弃、正常正文补发），
+                        # 并释放状态，等下一条消息到来时重建。漏了这步会在换条时残留扣留。
+                        pending_out = _flush_gate(stream_gates, node)
+                        if pending_out:
+                            yield ("token", pending_out)
+                    elif node == "allergen_block":
+                        msgs = (update or {}).get("messages") or []
+                        if msgs:
+                            content = _normalize_stream_content(msgs[-1].content).strip()
+                            if content:
+                                # 过敏原阻断节点不经过 structure_answer，必须在这里
+                                # 显式转发安全文案，否则前端会只看到空回答。
+                                yield ("token", content)
+                        continue
+                    if node != "structure_answer":
+                        continue
                     msgs = (update or {}).get("messages") or []
                     tail_type = type(msgs[-1]).__name__ if msgs else "none"
+                    print(f"[stream] updates structure_answer tail={tail_type} n={len(msgs)}")
+                    # 类型名字符串判定而非 isinstance：项目里存在两份 langchain
+                    # 类对象（agent_chains 与 main 各自 import），isinstance 跨身份恒 False。
                     if msgs and tail_type == "AIMessage":
-                        content = _normalize_stream_content(msgs[-1].content).strip()
-                        if content:
-                            # 预算耗尽路线不会进入 structure_answer，收口正文必须
-                            # 在这里显式转发，否则前端与落库都会拿到空回答。
-                            yield ("token", content)
-                    continue
-                elif node == "verify_answer":
-                    status = (update or {}).get("verify_status")
-                    attempts = (update or {}).get("verify_attempts")
-                    if status is not None:
-                        print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
-                elif node in ("chef_think", "ask_user"):
-                    # 这一条消息已结束：门闸收尾（控制 JSON 丢弃、正常正文补发），
-                    # 并释放状态，等下一条消息到来时重建。漏了这步会在换条时残留扣留。
-                    pending_out = _flush_gate(stream_gates, node)
-                    if pending_out:
-                        yield ("token", pending_out)
-                elif node == "allergen_block":
-                    msgs = (update or {}).get("messages") or []
-                    if msgs:
-                        content = _normalize_stream_content(msgs[-1].content).strip()
-                        if content:
-                            # 过敏原阻断节点不经过 structure_answer，必须在这里
-                            # 显式转发安全文案，否则前端会只看到空回答。
-                            yield ("token", content)
-                    continue
-                if node != "structure_answer":
-                    continue
-                msgs = (update or {}).get("messages") or []
-                tail_type = type(msgs[-1]).__name__ if msgs else "none"
-                print(f"[stream] updates structure_answer tail={tail_type} n={len(msgs)}")
-                # 类型名字符串判定而非 isinstance：项目里存在两份 langchain
-                # 类对象（agent_chains 与 main 各自 import），isinstance 跨身份恒 False。
-                if msgs and tail_type == "AIMessage":
-                    raw = msgs[-1].content
-                    if isinstance(raw, list):
-                        # 新版 LangChain/官方端点可能给结构化 content blocks，规范化为纯文本
-                        raw = "".join(
-                            block.get("text", "") for block in raw if isinstance(block, dict)
-                        )
-                    yield ("answer", raw)
-            continue
-        message_chunk, metadata = payload
-        node = metadata.get("langgraph_node")
-        stage = _stage_for_node(node, message_chunk)
-        if stage and stage != last_stage:
-            yield ("stage", stage)
-            last_stage = stage
-        content = _normalize_stream_content(getattr(message_chunk, "content", ""))
-        if not content:
-            continue
-        if _looks_like_structured_payload(content):
-            continue
-        # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
-        # ask_user 节点：只放行 LLM 流式块；节点最终返回的完整 AIMessage 会再次
-        # 出现在 messages 流里，不过滤就会把同一句追问推给前端两遍。
-        if node == "ask_user" and isinstance(message_chunk, AIMessageChunk):
-            gate_asked = True
-            guarded = _guarded_token(stream_gates, node, message_chunk, content)
-            if guarded:
-                yield ("token", guarded)
-        elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
-            if gate_asked:
+                        raw = msgs[-1].content
+                        if isinstance(raw, list):
+                            # 新版 LangChain/官方端点可能给结构化 content blocks，规范化为纯文本
+                            raw = "".join(
+                                block.get("text", "") for block in raw if isinstance(block, dict)
+                            )
+                        yield ("answer", raw)
                 continue
-            guarded = _guarded_token(stream_gates, node, message_chunk, content)
-            if guarded:
-                yield ("token", guarded)
+            message_chunk, metadata = payload
+            # token 计量：只有真正来自 LLM 的块才带 usage_metadata；
+            # 多数端点的 usage 只挂在**最后一块**上（DeepSeek 会额外给缓存命中数），
+            # 所以这里逐块累加，抽不到就跳过（add_turn_usage 内部容错）。
+            add_turn_usage(turn_usage, message_chunk)
+            node = metadata.get("langgraph_node")
+            stage = _stage_for_node(node, message_chunk)
+            if stage and stage != last_stage:
+                yield ("stage", stage)
+                last_stage = stage
+            content = _normalize_stream_content(getattr(message_chunk, "content", ""))
+            if not content:
+                continue
+            if _looks_like_structured_payload(content):
+                continue
+            # ask_user 节点：充分性门控生成的追问，直接作为正文推给前端。
+            # ask_user 节点：只放行 LLM 流式块；节点最终返回的完整 AIMessage 会再次
+            # 出现在 messages 流里，不过滤就会把同一句追问推给前端两遍。
+            if node == "ask_user" and isinstance(message_chunk, AIMessageChunk):
+                gate_asked = True
+                guarded = _guarded_token(stream_gates, node, message_chunk, content)
+                if guarded:
+                    yield ("token", guarded)
+            elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
+                if gate_asked:
+                    continue
+                guarded = _guarded_token(stream_gates, node, message_chunk, content)
+                if guarded:
+                    yield ("token", guarded)
+    finally:
+        # 无论正常收尾还是中途异常，都要把本轮用量落盘（record_turn_usage 内部静默失败）
+        record_turn_usage(turn_usage, session_id=session_id, node="_stream_agent")
 
 
 def stream_agent(message, session_id):

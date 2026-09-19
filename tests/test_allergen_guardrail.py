@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import allergen_rules
 import agent_graph
 import main
+import memory_candidates
 from agent_schemas import ChefAnswer, Recipe, Seasoning
 
 
@@ -268,6 +269,29 @@ class TestVerifyGraph(unittest.TestCase):
             result = agent_graph.verify_answer_node(self._state("推荐油焖大虾"))
         self.assertEqual(result["verify_status"], "retry")
         self.assertIn("过敏原是绝对硬约束", result["messages"][0].content)
+
+    def test_pending_session_allergens_join_deterministic_audit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidates_path = Path(temp_dir) / "memory_candidates.json"
+            with patch.object(memory_candidates, "_CANDIDATES_PATH", candidates_path):
+                candidates = memory_candidates.extract_candidates(
+                    "我对花生和芝麻过敏",
+                    [{"id": "me", "name": "我", "profile": {}}],
+                    session_id="pending-allergen-session",
+                )
+                memory_candidates.remember_candidates(candidates)
+                state = self._state(
+                    "推荐花生拌面",
+                    session_id="pending-allergen-session",
+                )
+                with patch(
+                    "agent_graph._active_profile_allergens",
+                    return_value=["虾"],
+                ):
+                    result = agent_graph.verify_answer_node(state)
+
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
 
     def test_single_recipe_safety_notes_do_not_trigger_retry(self):
         text = (

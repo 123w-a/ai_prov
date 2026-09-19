@@ -6,11 +6,15 @@ import {
   deleteMessage,
   deleteSession,
   fetchSessions,
+  fetchPendingMemoryCandidates,
+  confirmMemoryCandidate,
+  rememberMemoryCandidateOnce,
+  dismissMemoryCandidate,
   renameSession,
   sendChat,
   transcribeAudio,
 } from './api/client'
-import type { ChatImageTarget } from './api/client'
+import type { ChatImageTarget, MemoryCandidate } from './api/client'
 import { ChatArea } from './components/ChatArea'
 import { Icon } from './components/Icon'
 import { InsightPanel } from './components/InsightPanel'
@@ -77,6 +81,7 @@ function sessionToMessages(session: Session): ChatMessage[] {
       feedback: record.feedback ?? null,
       time: record.time,
       imageCancelled,
+      serverPending: record.answer === '__pending__',
     })
   }
   return history
@@ -230,6 +235,12 @@ function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessag
       imageCancelled: true,
     }
   }
+  if (serverMessage.serverPending && (localMessage.answer || localMessage.streaming)) {
+    return {
+      ...localMessage,
+      recordId: localMessage.recordId ?? serverMessage.recordId,
+    }
+  }
   const serverHasImage = answerHasImage(serverMessage.answer)
   if ((localMessage.streaming || localMessage.imagePending) && !serverHasImage) {
     return localMessage
@@ -248,8 +259,35 @@ function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessag
 
 function mergeSyncedMessages(localMessages: ChatMessage[], serverMessages: ChatMessage[]): ChatMessage[] {
   const localById = new Map(localMessages.map((message) => [message.id, message]))
-  return serverMessages.map((serverMessage) => {
-    const localMessage = localById.get(serverMessage.id)
+  // 只收助手消息：同一轮里 user 与 assistant 共用同一个 recordId，若把 user 也放进来，
+  // 本地恰好缺该轮 assistant 时这里会取到 user 消息，mergeSyncedMessage 见 role 不是
+  // assistant 就回退成服务端消息，占位照样覆盖本地气泡。
+  const localByRecordId = new Map(
+    localMessages
+      .filter((message) => message.role === 'assistant' && message.recordId != null)
+      .map((message) => [message.recordId as number, message]),
+  )
+  // 本地正在流式的那条助手消息此刻还没有 recordId（要等 onFinish 才回填），id 是前端
+  // 自己生成的，而服务端入口就已经预落了 __pending__ 记录。两边 id 天然对不上，若不补
+  // 一层兜底配对，服务端那条「回答生成中」占位会顶替掉正在流式的气泡，而且之后 onToken
+  // 按 id 再也找不到目标，token 会全部静默丢失。
+  const liveAssistant =
+    [...localMessages].reverse().find((message) => message.role === 'assistant' && message.streaming) ?? null
+  let liveServerIndex = -1
+  if (liveAssistant) {
+    for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = serverMessages[index]
+      if (candidate.role === 'assistant' && candidate.serverPending) {
+        liveServerIndex = index
+        break
+      }
+    }
+  }
+  return serverMessages.map((serverMessage, index) => {
+    const matched =
+      localById.get(serverMessage.id) ??
+      (serverMessage.recordId != null ? localByRecordId.get(serverMessage.recordId) : undefined)
+    const localMessage = matched ?? (index === liveServerIndex && liveAssistant ? liveAssistant : undefined)
     return localMessage ? mergeSyncedMessage(localMessage, serverMessage) : serverMessage
   })
 }
@@ -314,6 +352,8 @@ export default function App() {
   const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
   const [view, setView] = useState<WorkspaceView>('decision')
   const [sendingSessions, setSendingSessions] = useState<Record<string, true>>({})
+  const [memoryCandidates, setMemoryCandidates] = useState<Record<string, MemoryCandidate[]>>({})
+  const [memoryBusyId, setMemoryBusyId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [connection, setConnection] = useState<'checking' | 'online' | 'offline'>('checking')
   const [appError, setAppError] = useState('')
@@ -345,8 +385,9 @@ export default function App() {
   }, [])
 
   const syncActiveSession = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, options?: { skipWhileSending?: boolean }) => {
       const list = await refreshSessions()
+      if (options?.skipWhileSending && sendingSessionsRef.current[sessionId]) return list
       const current = list.find((session) => session.session_id === sessionId)
       if (current) {
         setMessagesBySession((state) => {
@@ -682,13 +723,16 @@ export default function App() {
                   : message,
               ),
             }))
+            void fetchPendingMemoryCandidates(sessionId).then((candidates) => {
+              setMemoryCandidates((current) => ({ ...current, [sessionId]: candidates }))
+            }).catch(() => undefined)
           },
         }, abortController.signal, assistantId)
         window.setTimeout(() => {
-          void syncActiveSession(sessionId)
+          void syncActiveSession(sessionId, { skipWhileSending: true })
         }, 1800)
         window.setTimeout(() => {
-          void syncActiveSession(sessionId)
+          void syncActiveSession(sessionId, { skipWhileSending: true })
         }, 6000)
         await syncActiveSession(sessionId)
         // 配图由后端线程生成：视觉审计不可用时会统一回落 AI 文生图，实测图片是在
@@ -699,9 +743,11 @@ export default function App() {
         if (sessionId) {
           const sid = sessionId
           let imagePolls = 0
+          // 看门狗是为「上一轮」的配图回填服务的，最长存活 180s；期间用户可能已经发出
+          // 新一轮。必须 skipWhileSending，否则上一轮的收尾同步会打断新一轮的流式渲染。
           const imageWatchdog = window.setInterval(() => {
             imagePolls += 1
-            void syncActiveSession(sid)
+            void syncActiveSession(sid, { skipWhileSending: true })
             if (imagePolls >= 18) {
               window.clearInterval(imageWatchdog)
               setMessagesBySession((current) => {
@@ -830,6 +876,25 @@ export default function App() {
     return activeSession ? sessionToMessages(activeSession) : []
   }, [activeId, activeSession, messagesBySession])
 
+  const hasPendingServerMessage = useMemo(
+    () => messages.some((message) => message.role === 'assistant' && message.serverPending),
+    [messages],
+  )
+
+  useEffect(() => {
+    if (!activeId || !hasPendingServerMessage) return
+    let attempts = 0
+    const timer = window.setInterval(() => {
+      attempts += 1
+      // 同理：轮询只负责把「服务端已落库的最终答案」补进来，不能在本轮还在流式时
+      // 用服务端的 __pending__ 占位去顶掉本地气泡（页面重载时 sendingSessionsRef
+      // 为空，跳过条件不成立，兜底轮询照常工作）。
+      void syncActiveSession(activeId, { skipWhileSending: true }).catch(() => {})
+      if (attempts >= 60) window.clearInterval(timer)
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [activeId, hasPendingServerMessage, syncActiveSession])
+
   const latestAnswer = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index].answer) return messages[index].answer ?? null
@@ -927,6 +992,44 @@ export default function App() {
               onClear={() => void handleClearSession()}
               onDeleteTurn={(messageId) => void handleDeleteTurn(messageId)}
               onTranscribe={transcribeAudio}
+              memoryCandidates={activeSession ? (memoryCandidates[activeSession.session_id] ?? []) : []}
+              memoryBusyId={memoryBusyId}
+              onConfirmMemory={async (candidateId) => {
+                setMemoryBusyId(candidateId)
+                try {
+                  await confirmMemoryCandidate(candidateId)
+                  if (activeSession) {
+                    const candidates = await fetchPendingMemoryCandidates(activeSession.session_id)
+                    setMemoryCandidates((current) => ({ ...current, [activeSession.session_id]: candidates }))
+                  }
+                } finally {
+                  setMemoryBusyId(null)
+                }
+              }}
+              onRememberMemoryOnce={async (candidateId) => {
+                setMemoryBusyId(candidateId)
+                try {
+                  await rememberMemoryCandidateOnce(candidateId)
+                  setMemoryCandidates((current) => ({
+                    ...current,
+                    [activeSession?.session_id ?? '']: (current[activeSession?.session_id ?? ''] ?? []).filter((item) => item.id !== candidateId),
+                  }))
+                } finally {
+                  setMemoryBusyId(null)
+                }
+              }}
+              onDismissMemory={async (candidateId) => {
+                setMemoryBusyId(candidateId)
+                try {
+                  await dismissMemoryCandidate(candidateId)
+                  setMemoryCandidates((current) => ({
+                    ...current,
+                    [activeSession?.session_id ?? '']: (current[activeSession?.session_id ?? ''] ?? []).filter((item) => item.id !== candidateId),
+                  }))
+                } finally {
+                  setMemoryBusyId(null)
+                }
+              }}
             />
             <InsightPanel answer={latestAnswer} />
           </div>

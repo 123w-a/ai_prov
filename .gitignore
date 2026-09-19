@@ -117,3 +117,24 @@ data/taste_signals.json
 data/weekly_summary.json
 data/dish_assets.json
 data/toc_map.json
+
+# --------------------------------------------------------------------------- #
+# 以下为「本地工具 / 运行期产物」隔离规则（2026-09-19 补）
+# 起因：一次 git add -A 把 45 个 .tmpdir 调试产物 + 8 个 .corepack 运行时文件
+# 混进了提交。协作项目里这类文件会让协作者 clone 到一堆无用内容、并在 diff 里长期闪。
+# --------------------------------------------------------------------------- #
+
+# pnpm 运行时（corepack 自动下载，体积大且机器相关，不入库）
+.corepack/
+
+# 会话内临时探针脚本与产物（调试专用，不入库）
+.tmpdir/
+
+# 逐轮 token 用量日志（运行期累积，与 agent_trace.jsonl 同类，不入库）
+data/usage.jsonl
+
+# 三层健康记忆的候选池（含成员过敏原等隐私，不入库）
+data/memory_candidates.json
+
+# 本地调试启动脚本（写死本机路径/端口，协作者无意义，不入库）
+start_deepseek_harness.cmd

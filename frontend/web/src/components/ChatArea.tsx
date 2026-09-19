@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchNearby, resolveLocation, sendMessageFeedback } from '../api/client'
+import type { MemoryCandidate } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult, ResolvedLocation } from '../types'
 import { Icon } from './Icon'
 import html2canvas from 'html2canvas'
@@ -26,6 +27,11 @@ interface Props {
   onClear: () => void
   onDeleteTurn: (messageId: number) => void
   onTranscribe: (audio: File) => Promise<string>
+  memoryCandidates: MemoryCandidate[]
+  memoryBusyId: string | null
+  onConfirmMemory: (candidateId: string) => Promise<void>
+  onRememberMemoryOnce: (candidateId: string) => Promise<void>
+  onDismissMemory: (candidateId: string) => Promise<void>
 }
 
 const QUICK_PROMPTS: Array<{ text: string; mode: DecisionMode; tag: string }> = [
@@ -91,6 +97,11 @@ export function ChatArea({
   onClear,
   onDeleteTurn,
   onTranscribe,
+  memoryCandidates,
+  memoryBusyId,
+  onConfirmMemory,
+  onRememberMemoryOnce,
+  onDismissMemory,
 }: Props) {
   const [text, setText] = useState('')
   const [mode, setMode] = useState<DecisionMode>('home')
@@ -1170,6 +1181,41 @@ export function ChatArea({
             </span>
           </div>
         )}
+
+        {memoryCandidates.map((candidate) => (
+          <div className="dislike-hint" role="status" key={candidate.id}>
+            <span>
+              我记下了：{candidate.member || '这位成员'}{candidate.value}。
+              <br />
+              要加入{candidate.member || '这位成员'}的长期饮食画像吗？
+            </span>
+            <span className="dislike-hint-actions">
+              <button
+                type="button"
+                disabled={memoryBusyId === candidate.id}
+                onClick={() => void onConfirmMemory(candidate.id)}
+              >
+                加入长期画像
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={memoryBusyId === candidate.id}
+                onClick={() => void onRememberMemoryOnce(candidate.id)}
+              >
+                仅本次记住
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={memoryBusyId === candidate.id}
+                onClick={() => void onDismissMemory(candidate.id)}
+              >
+                不记录
+              </button>
+            </span>
+          </div>
+        ))}
 
         {tasteHint && (
           <div className="dislike-hint" role="status">

@@ -48,6 +48,7 @@ class HealthProfilePayload(BaseModel):
     basic: BasicInfo = Field(default_factory=BasicInfo)
     conditions: List[str] = Field(default_factory=list, max_length=24)
     allergens: List[str] = Field(default_factory=list, max_length=24)
+    restricts: List[str] = Field(default_factory=list, max_length=24)
     goal: str = Field(default="", max_length=40)
     diet_style: str = Field(default="", max_length=40)
     dislikes: List[str] = Field(default_factory=list, max_length=60)
@@ -360,11 +361,15 @@ def import_family(payload: ImportPayload):
 
 
 @router.get("/preferences/candidates/pending")
-def pending_candidates():
+def pending_candidates(session_id: Optional[str] = None):
     """返回尚未确认的本地画像候选，不含任何远程同步逻辑。"""
-    from memory_candidates import get_pending
+    from memory_candidates import get_pending, mark_asked
 
-    return {"code": 200, "data": {"candidates": get_pending()}}
+    candidates = get_pending(session_id)
+    # 每次只把尚未主动提议过的候选交给前端；服务端也限制批量，避免历史积压一次弹出。
+    fresh = [item for item in candidates if int(item.get("prompt_count") or 0) == 0][:2]
+    mark_asked([str(item.get("id") or "") for item in fresh])
+    return {"code": 200, "data": {"candidates": fresh}}
 
 
 @router.post("/preferences/candidates/{candidate_id}/confirm")
@@ -384,3 +389,13 @@ def dismiss_candidate(candidate_id: str):
     if not dismiss(candidate_id):
         raise HTTPException(status_code=404, detail="候选不存在")
     return {"code": 200, "messages": "已永久忽略该候选"}
+
+
+@router.post("/preferences/candidates/{candidate_id}/once")
+def remember_candidate_once(candidate_id: str):
+    from memory_candidates import remember_once
+
+    candidate = remember_once(candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="候选不存在或已处理")
+    return {"code": 200, "messages": "仅本次记住", "data": {"candidate": candidate}}

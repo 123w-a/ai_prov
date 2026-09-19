@@ -7,7 +7,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.graph.message import add_messages
 
 import agent_graph as g
 import sessions_store
@@ -45,6 +46,8 @@ class SpecificDishRequestTest(unittest.TestCase):
             "推荐一道清蒸鲈鱼",
             "我想吃鲈鱼",
             "做个红烧肉",
+            "油炸花生米怎么做",
+            "油炸花生米做法",
         ]:
             with self.subTest(text=text):
                 self.assertTrue(g.is_specific_dish_request(text))
@@ -75,6 +78,25 @@ class SpecificDishRequestTest(unittest.TestCase):
         self.assertTrue(
             g.is_specific_dish_request("联网搜索 我想吃徐福烩饭 怎么做呢")
         )
+
+    def test_narrative_requirement_is_not_a_dish_name(self):
+        """回归：需求句里的「再给我完整做法」不能被当成点名一道菜。
+
+        实测事故：用户写「…等我选定后，再给我完整做法、营养估算、运动当量和一张对应的
+        成品图」，`_DISH_HOWTO_PATTERN` 命中「再给我完整做法」→ 截出「再给我完整」→
+        判成点名一道具体的菜 → 整轮跳过候选清单直接出单卡，且卡片菜名就是这句话。
+        """
+        long_request = (
+            "我今晚想吃清淡、低盐、少油的晚餐。家里有鸡蛋、西红柿、青椒、米饭和鸡胸肉。"
+            "我有高血压，并且对花生和芝麻过敏。请先给我 3 个候选菜名，只列候选，"
+            "不要直接展开完整菜谱。等我选定后，再给我完整做法、营养估算、运动当量"
+            "和一张对应的成品图。如果家里食材不够，也请明确告诉我缺什么。"
+        )
+        self.assertFalse(g.is_specific_dish_request(long_request))
+        # 单句形式同样不能命中
+        self.assertFalse(g.is_specific_dish_request("给我完整做法"))
+        self.assertFalse(g.is_specific_dish_request("再给我详细步骤"))
+        self.assertFalse(g.is_specific_dish_request("请告诉我做法"))
 
 
 class CandidateIndexParseTest(unittest.TestCase):
@@ -137,6 +159,114 @@ class CandidateTurnTest(unittest.TestCase):
 
     def test_recommend_with_image_keeps_candidate_turn(self):
         self.assertTrue(g._is_candidate_turn(self._m("推荐几道菜，配张图")))
+
+    def test_confirm_execution_after_card_is_not_candidate_turn(self):
+        """卡片已交付后，「就按这个方案执行」这类确认语不能退回候选清单。
+
+        回归背景（端到端实测 T1→T2→T3 复现）：T1 出候选清单、T2 选定后出了卡片+配图，
+        T3 用户说「就按这个方案执行。请检查一次花生和芝麻风险，并告诉我每人建议吃多少。」
+        —— 这句话既不是点名菜、也不含健康问答词，穿透了 `_is_candidate_turn` 的所有过滤，
+        被当成新一轮泛推荐，于是 T2 刚交付的卡片和配图被退回成编号候选清单：
+        T3 正文变成「1. 低盐番茄滑炒鸡胸肉丝 2. 番茄炒蛋 3. 西红柿鸡胸肉汤，回复序号就行」，
+        用户明明已经确认过方案，却拿不到卡片、也拿不到过敏原复查和份量建议。
+        """
+        card = json.dumps(
+            {"answer_kind": "recipe", "recipes": [{"name": "低盐番茄滑炒鸡胸肉丝", "intro": "x"}]},
+            ensure_ascii=False,
+        )
+        for text in [
+            "就按这个方案执行。请检查一次花生和芝麻风险，并告诉我每人建议吃多少。",
+            "就按这个方案执行",
+            "按这个方案做吧，顺便告诉我每人吃多少",
+            "照这个方案来，帮我确认下芝麻风险",
+            "就这样，开始做吧",
+        ]:
+            with self.subTest(text=text):
+                msgs = [
+                    HumanMessage(content="选第2个"),
+                    AIMessage(content=card),
+                    HumanMessage(content=text),
+                ]
+                self.assertFalse(g._is_candidate_turn(msgs))
+
+    def test_confirm_execution_without_card_is_not_candidate_turn(self):
+        """「就按这个方案执行」本身不含食材/菜名，无论前面是候选还是卡片都不进候选阶段。
+
+        这条锁的是**既有**行为、不是新闸门：`_is_candidate_turn` 末尾还有一道
+        「intent == 'other' 且正文没点食材 → False」，而「就按这个方案执行」正好
+        既判不出意图、也没有食材词，所以本来就被挡在外面。
+        新加的 `_has_delivered_card` 闸门只负责拦住**混杂执行语+需求**的长句
+        （见 `test_confirm_execution_after_card_is_not_candidate_turn`），
+        不应该顺手放宽这条既有边界。
+        """
+        msgs = [
+            HumanMessage(content="我有鸡蛋和西红柿"),
+            AIMessage(content=json.dumps(
+                {"answer_kind": "candidates", "candidates": ["番茄炒蛋", "西红柿鸡蛋汤"], "recipes": []},
+                ensure_ascii=False)),
+            HumanMessage(content="就按这个方案执行"),
+        ]
+        self.assertFalse(g._is_candidate_turn(msgs))
+
+    def test_generic_recommend_after_card_still_candidate_turn(self):
+        """卡片交付后，用户明确又要泛推荐时必须能回候选阶段。
+
+        与 `test_confirm_execution_after_card_is_not_candidate_turn` 互补：
+        确认语才拦，新的泛推荐请求不拦，否则用户就再也点不了第二轮菜了。
+        注意「还有别的菜吗」这种带目的词却没有食材/菜名的问法，本来就被
+        「intent == 'other' 且没点食材 → False」挡住，它**不属于**本闸门放行的范围，
+        所以不列进来。
+        """
+        card = json.dumps(
+            {"answer_kind": "recipe", "recipes": [{"name": "低盐番茄滑炒鸡胸肉丝", "intro": "x"}]},
+            ensure_ascii=False,
+        )
+        for text in ["再推荐几道菜", "晚上不知道吃什么"]:
+            with self.subTest(text=text):
+                msgs = [
+                    HumanMessage(content="选第2个"),
+                    AIMessage(content=card),
+                    HumanMessage(content=text),
+                ]
+                self.assertTrue(g._is_candidate_turn(msgs))
+
+    def test_injected_selected_candidate_blocks_candidate_turn(self):
+        """路由层注入「已选定候选」后，本轮必须按选定落地处理，不能回候选清单。
+
+        回归背景（端到端实测 T2 复现）：路由层靠会话记录里的候选锚点正确解析出
+        「第 2 个 = 青椒炒鸡丝」，但 Agent 层读的是 checkpoint 的候选 payload——
+        两处锚点不同时在场时 `resolve_candidate_pick` 返回 None，模型就自己去猜
+        「第2个」是哪道，实测凭空造了一个候选清单里根本没有的
+        「滑炒鸡丝（无青椒·番茄提鲜版）」。
+
+        修法：路由层把解析结果以 `【已选定候选：X】` 控制信令注入 effective_message
+        （仅后端可见，`_strip_internal_request_markers` 负责剥离回显），
+        并由这里拦住候选阶段。
+
+        注意：单消息快照判不出「选第 2 个」的序号意图（那需要历史里的候选锚点），
+        所以这条闸门必须靠信令，不能靠文本正则。
+        """
+        injected = (
+            "【已选定候选：青椒炒鸡丝】\n"
+            "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
+            "不得改名、不得替换成别的菜。）\n\n"
+            "【配图开关：开启】\n选第 2 个，但不要放青椒，改成两人份，盐控制低一些。"
+        )
+        self.assertEqual(g._extract_selected_candidate(injected), "青椒炒鸡丝")
+        self.assertFalse(g._is_candidate_turn([HumanMessage(content=injected)]))
+        self.assertTrue(g._wants_recipe_images([HumanMessage(content=injected)]))
+
+    def test_selected_candidate_marker_is_stripped_from_visible_text(self):
+        """控制信令绝不能出现在用户可见正文里。"""
+        injected = "【已选定候选：青椒炒鸡丝】\n选第 2 个"
+        cleaned = g._strip_internal_request_markers(injected)
+        self.assertNotIn("已选定候选", cleaned)
+        self.assertIn("选第 2 个", cleaned)
+
+    def test_no_injection_keeps_candidate_turn_for_generic_request(self):
+        """没有注入信令时，泛推荐请求照旧走候选阶段（不能误伤）。"""
+        self.assertTrue(g._is_candidate_turn(self._m("推荐几道清淡少油的菜")))
+        self.assertEqual(g._extract_selected_candidate("推荐几道清淡少油的菜"), "")
 
 
 class CandidateIntentTest(unittest.TestCase):
@@ -267,6 +397,31 @@ class StructureAnswerCandidateTest(unittest.TestCase):
         self.assertEqual(payload["candidates"], names)
         self.assertFalse(payload["image_requested"])
 
+    def test_candidate_payload_survives_structure_parse_failure(self):
+        """正文已展示编号候选时，结构化菜谱链解析失败不能吞掉候选锚点。
+
+        真实 T1 回归：模型正文正确列出三道候选，但结构化链连续 parse-fail，
+        structure_answer_node 直接从异常分支返回空消息，checkpoint 里没有 candidates。
+        下一轮「选第2个」因此找不到锚点，最终无回答、无卡片、无配图。
+        """
+        with (
+            patch(
+                "agent_graph.build_structured_answer",
+                side_effect=ValueError("structured parse failed"),
+            ),
+            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent_graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(self._state(CANDIDATE_LIST_TEXT))
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(
+            payload["candidates"],
+            ["鸡胸肉炒青菜", "青菜豆腐汤", "鸡胸肉蔬菜沙拉"],
+        )
+        self.assertEqual(payload["recipes"], [])
+        self.assertFalse(payload["image_requested"])
+
     def test_unparseable_list_falls_back_to_no_message(self):
         # 正文没有编号清单、结构化结果也只有一道菜时：宁可不登记，也不硬塞卡片
         p1, p2, p3 = self._patches(_chef_answer(["青菜豆腐汤"]))
@@ -307,6 +462,42 @@ class StructureAnswerCandidateTest(unittest.TestCase):
             payload["candidates"],
             ["鸡胸肉炒青菜", "青菜豆腐汤", "鸡胸肉蔬菜沙拉"],
         )
+
+
+class StructureAnswerConclusionSourceTest(unittest.TestCase):
+    """卡片 recipes 跟随本轮 Agent 结论，候选锚点不能在结构化阶段二次覆盖。"""
+
+    def test_candidate_anchor_does_not_override_agent_conclusion(self):
+        messages = [
+            HumanMessage(content="推荐几道菜"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["番茄炒蛋", "青菜豆腐汤"]), ensure_ascii=False
+            )),
+            HumanMessage(content="就第2个，但我刚发现豆腐坏了，换成番茄鸡蛋汤"),
+            AIMessage(content="那就改做番茄鸡蛋汤，避开已经坏掉的豆腐。"),
+        ]
+        conclusion_context = (
+            "用户需求：就第2个，但我刚发现豆腐坏了，换成番茄鸡蛋汤\n\n"
+            "本轮 Agent 已确认的回答（菜名和食材以此为准）：\n"
+            "那就改做番茄鸡蛋汤，避开已经坏掉的豆腐。"
+        )
+        with (
+            patch("agent_graph.build_structured_answer",
+                  return_value=_chef_answer(["番茄鸡蛋汤"])) as build_mock,
+            patch("agent_graph._build_structure_context",
+                  return_value=(conclusion_context, None, False)),
+            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent_graph._family_members", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+        build_mock.assert_called_once_with(conclusion_context)
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual([recipe["name"] for recipe in payload["recipes"]], ["番茄鸡蛋汤"])
 
 
 class VerifyCandidateTurnTest(unittest.TestCase):
@@ -457,6 +648,11 @@ class ImagePipelineGateTest(unittest.TestCase):
 
     def test_specific_dish_with_image_keeps_pipeline(self):
         text = "我想吃徐福烩饭，配张图"
+        self.assertTrue(chat_route._should_enable_image_pipeline(text, None))
+        self.assertTrue(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_execute_confirmed_plan_keeps_image_pipeline(self):
+        text = "就按这个方案执行。请检查一次花生和芝麻风险，并告诉我每人建议吃多少。"
         self.assertTrue(chat_route._should_enable_image_pipeline(text, None))
         self.assertTrue(g._wants_recipe_images([HumanMessage(content=text)]))
 
@@ -682,8 +878,15 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
         payload = json.loads(result["messages"][-1].content)
         self.assertEqual(payload["recipes"][0]["name"], "青菜豆腐汤")
 
-    def test_pick_is_pinned_into_structure_context(self):
-        # 选定轮必须把「选了哪一道」钉死喂给结构化链，否则收口路径下会换菜名
+    def test_structure_context_is_passed_through_untouched(self):
+        """结构性锚点只在 chef_think 层生效，结构化链必须拿到**未被改写**的上下文。
+
+        历史：结构化阶段曾把「本轮已选定：X（候选第N道）——只输出这一道，不得换菜名」
+        前置进 context。但那会让旧锚点压过本轮结论 —— 用户说「选第2个，但豆腐坏了换成
+        番茄鸡蛋汤」时，模型结论已改，卡片却被锚点拉回旧候选（实测「模型懂了、卡片没懂」）。
+        现在锚点只约束 chef_think 生成本轮结论，这里改锁「上下文原样透传」。
+        选定约束的保障仍在 `chef_agent_node`（见 test_pick_is_pinned_into_agent_prompt）。
+        """
         with (
             patch("agent_graph.build_structured_answer",
                   return_value=_chef_answer(["青菜豆腐汤"])) as mocked_build,
@@ -692,8 +895,29 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
         ):
             g.structure_answer_node(self._state(self.OPENING))
         sent_context = mocked_build.call_args.args[0]
-        self.assertIn("本轮已选定：青菜豆腐汤（候选第2道）", sent_context)
-        self.assertIn("不得换菜名", sent_context)
+        self.assertEqual(sent_context, "上下文")
+        self.assertNotIn("本轮已选定", sent_context)
+
+    def test_pick_is_pinned_into_agent_prompt(self):
+        """选定约束的真正落点：chef_think 的提示词必须把「选了哪一道」钉死。
+
+        否则收口/降级路径下模型会自由发挥，正文菜名与用户选的那道对不上。
+        """
+        state = {
+            "messages": [
+                HumanMessage(content="我有鸡胸肉和青菜"),
+                AIMessage(content=json.dumps(
+                    _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤"]), ensure_ascii=False)),
+                HumanMessage(content="就第2个"),
+            ]
+        }
+        with patch("agent_graph.llm_with_tools") as mocked_llm:
+            g.chef_agent_node(state)
+        payload = mocked_llm.invoke.call_args.args[0]
+        system_text = str(payload[0].content)
+        self.assertIn("本轮已选定的候选", system_text)
+        self.assertIn("青菜豆腐汤", system_text)
+        self.assertIn("不要换菜", system_text)
 
     def test_question_without_anchor_is_still_suppressed(self):
         # 窄口子：没有菜名锚点的纯提问必须继续被挡住，否则会答非所问地弹卡片
@@ -709,6 +933,60 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
         with patch.object(g, "build_structured_answer") as mocked:
             self.assertEqual(g.structure_answer_node(state), {"messages": []})
         mocked.assert_not_called()
+
+
+class CandidateRevisionTurnTest(unittest.TestCase):
+    """否定上一批推荐时只能重列候选，不能顺手生成单菜卡片。"""
+
+    def _messages(self, user_text, opening=""):
+        return [
+            HumanMessage(content="推荐几道下酒菜"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["甜辣番茄鸡腿", "甜辣拌豆腐", "甜辣蒸茄子"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content=user_text),
+            AIMessage(content=opening),
+        ]
+
+    def test_rhetorical_correction_is_candidate_revision(self):
+        messages = self._messages("难道这些是下酒菜吗")
+        self.assertTrue(g._is_candidate_revision_turn(messages))
+        self.assertEqual(g._classify_turn_intent(messages), "recommend")
+        self.assertTrue(g._is_candidate_turn(messages))
+
+    def test_revision_does_not_resolve_as_pick(self):
+        messages = self._messages("难道这些是下酒菜吗")
+        self.assertIsNone(g.resolve_candidate_pick(messages))
+        self.assertFalse(g._is_dish_pick_turn(messages))
+
+    def test_revision_discards_model_recipe_and_keeps_candidates(self):
+        messages = self._messages(
+            "难道这些是下酒菜吗",
+            "不是。给你三道真正的下酒菜：\n\n"
+            "1. 甜辣卤鸡蛋 —— 咸香耐吃\n"
+            "2. 甜辣拌内酯豆腐 —— 入口即化\n"
+            "3. 甜辣蒸茄子 —— 吸汁入味",
+        )
+        with (
+            patch("agent_graph.build_structured_answer",
+                  return_value=_chef_answer(["甜辣拌内酯豆腐"])),
+            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent_graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(payload["recipes"], [])
+        self.assertFalse(payload["image_requested"])
+        self.assertEqual(
+            payload["candidates"],
+            ["甜辣卤鸡蛋", "甜辣拌内酯豆腐", "甜辣蒸茄子"],
+        )
 
 
 class ConstraintCorrectionTurnTest(unittest.TestCase):
@@ -878,6 +1156,327 @@ class ToolBudgetOnPickTurnTest(unittest.TestCase):
             }),
             "plain",
         )
+
+    def test_route_keeps_structured_flow_for_named_image_request(self):
+        for status in ("ok", "degraded"):
+            with self.subTest(status=status):
+                self.assertNotEqual(
+                    g.verify_route({
+                        "messages": [
+                            HumanMessage(
+                                content="【配图开关：开启】\n油炸花生米怎么做"
+                            )
+                        ],
+                        "verify_status": status,
+                        "tool_budget_exhausted": True,
+                    }),
+                    "plain",
+                )
+
+
+class ToolBudgetTruncationTest(unittest.TestCase):
+    """模型一次并排提多个工具时，按余额「截断放行」，不是「整批否决」。
+
+    实测事故（2026-09-17 19:04，session user_6ba4743f26）：选定轮里模型一次并排提 3 个工具
+    （web_search ×2 + nutrition_kb_search），旧判定 `used + max(pending, 1) > budget`
+    直接判超预算 → 一个工具都不执行 → 上下文里没有 ToolMessage → 收口时 evidence 为空 →
+    用户既看不到菜、也没有讲解。断点快照坐实：used=0 / budget=2 / pending=3。
+    """
+
+    CALLS = [
+        {"name": "web_search", "args": {"query": "咖喱羊肉 家常做法"}, "id": "t1"},
+        {"name": "web_search", "args": {"query": "羊肉怎么炖才软烂"}, "id": "t2"},
+        {"name": "nutrition_kb_search", "args": {"query": "高血压 少盐 咖喱"}, "id": "t3"},
+    ]
+
+    class _FakeExecutor:
+        """记录真正被执行的 tool_call，返回等量 ToolMessage。"""
+
+        def __init__(self):
+            self.seen_ids = []
+
+        def invoke(self, state):
+            calls = list(getattr(state["messages"][-1], "tool_calls") or [])
+            self.seen_ids = [c["id"] for c in calls]
+            return {"messages": [
+                ToolMessage(content="{}", tool_call_id=c["id"], name=c["name"]) for c in calls
+            ]}
+
+    def _state(self, **overrides):
+        # 经 add_messages 落库，模拟真实 state（消息带 id，截断才删得掉）
+        messages = list(add_messages([], [
+            HumanMessage(content="推荐几道菜，今晚想解馋放纵一下"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["咖喱牛腩", "红烧肉"]), ensure_ascii=False)),
+            HumanMessage(content="5吧，想要吃羊肉的，吃不了牛肉"),
+            AIMessage(content="", tool_calls=self.CALLS),
+        ]))
+        base = {
+            "messages": messages,
+            "tool_calls_in_turn": 0,
+            "tool_budget": g.PICK_TURN_TOOL_BUDGET,
+            "tool_rounds": 0,
+        }
+        base.update(overrides)
+        return base
+
+    def test_route_passes_as_long_as_balance_left(self):
+        # 旧实现这里会返回 tool_budget_exhausted（0+3 > 2）
+        self.assertEqual(g.chef_route_with_tool_budget(self._state()), "tools")
+
+    def test_node_executes_only_up_to_balance(self):
+        executor = self._FakeExecutor()
+        state = self._state()
+        with patch.object(g, "tool_executor", executor):
+            out = g.run_tools_node(state)
+        self.assertEqual(executor.seen_ids, ["t1", "t2"])
+        self.assertEqual(out["tool_calls_in_turn"], 2)
+        self.assertEqual(out["tool_rounds"], 1)
+        # 消息序列必须自洽：原 3 调用的 AI 消息被替换掉，只留 2 个 ToolMessage，
+        # 否则下次调用会因为「有 tool_call 却无 ToolMessage」直接 400。
+        merged = add_messages(state["messages"], out["messages"])
+        ai = [m for m in merged if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)]
+        self.assertEqual(len(ai), 1)
+        self.assertEqual([c["id"] for c in ai[0].tool_calls], ["t1", "t2"])
+        self.assertEqual(
+            [m.tool_call_id for m in merged if isinstance(m, ToolMessage)], ["t1", "t2"]
+        )
+
+    def test_no_trim_when_within_balance(self):
+        executor = self._FakeExecutor()
+        state = self._state(tool_budget=g.MAX_TOOL_CALLS_PER_TURN)
+        with patch.object(g, "tool_executor", executor):
+            out = g.run_tools_node(state)
+        self.assertEqual(executor.seen_ids, ["t1", "t2", "t3"])
+        self.assertEqual(out["tool_calls_in_turn"], 3)
+        merged = add_messages(state["messages"], out["messages"])
+        ai = [m for m in merged if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)]
+        self.assertEqual(len(ai[0].tool_calls), 3)
+
+    def test_round_cap_ends_tool_loop(self):
+        # 循环轮数与并发宽度分开封顶：圈数超了收口，余额用完也收口
+        self.assertEqual(
+            g.chef_route_with_tool_budget(self._state(tool_rounds=g.MAX_TOOL_ROUNDS)),
+            "tool_budget_exhausted",
+        )
+        self.assertEqual(
+            g.chef_route_with_tool_budget(
+                self._state(tool_calls_in_turn=g.PICK_TURN_TOOL_BUDGET)
+            ),
+            "tool_budget_exhausted",
+        )
+
+
+class OpeningCleanupTest(unittest.TestCase):
+    """模型把控制 JSON 当正文吐出来时的清洗：单层 / 双层包裹 / 解析失败，都不许漏 JSON。
+
+    实测真实会话里模型会**双层包裹**：外层 {"opening": "```json{...}```"}，
+    只剥一层壳的实现会被直接穿透，用户就在气泡里看到一坨 JSON。
+    """
+
+    def test_double_wrapped_opening_is_unwrapped(self):
+        inner = json.dumps({
+            "opening": "好的，换成严格控制调料的番茄鸡蛋羹。",
+            "answer_kind": "recipe",
+            "recipes": [{"name": "番茄鸡蛋羹"}],
+        }, ensure_ascii=False)
+        raw = json.dumps({"opening": "```json\n" + inner + "\n```"}, ensure_ascii=False)
+        self.assertEqual(g._clean_opening_text(raw), "好的，换成严格控制调料的番茄鸡蛋羹。")
+
+    def test_single_fenced_control_json_yields_inner_opening(self):
+        inner = json.dumps(
+            {"opening": "只用盐和香油。", "recipes": [{"name": "番茄鸡蛋羹"}]},
+            ensure_ascii=False,
+        )
+        self.assertEqual(g._clean_opening_text("```json\n" + inner + "\n```"), "只用盐和香油。")
+
+    def test_unparseable_json_with_fingerprint_never_leaks(self):
+        for bad in ('```json\n{"opening": "好的', '{"recipes": [1,2', '[{"recipes": 1}]'):
+            out = g._clean_opening_text(bad)
+            self.assertFalse(
+                out.lstrip().startswith(("{", "[", "```")), f"控制 JSON 泄漏了: {out!r}"
+            )
+
+    def test_unescaped_quote_inside_value_rescues_opening(self):
+        """回归 T3：模型在 JSON 字符串**内部**写未转义引号时，正文不能被丢掉。
+
+        实测事故：T3「就按这个方案执行。请检查一次花生和芝麻风险，并告诉我每人
+        建议吃多少。」模型产出的 payload 里，`说明` 字段写了
+        `风险点在成品"炸粉、脆皮粉、裹粉"——这类复合粉…标注"可能含芝麻"。`，
+        未转义的双引号让整包 `json.loads` 失败。旧实现「解析失败 + 带控制键指纹
+        → 返回空串」，把模型写好的整篇过敏原审计（3895 字）静默丢弃，
+        用户只看到一张 opening 为空的卡片（端到端表现为 chars=0）。
+
+        修法：解析失败时先正则捞回 opening 字段，捞不到才回落空串。
+        """
+        broken = (
+            '{\n'
+            '  "opening": "先答你的两件事：花生／芝麻风险逐项过了一遍。",\n'
+            '  "recipes": [{"name": "滑炒鸡丝"}],\n'
+            '  "allergen_audit": {"说明": "风险点在成品"炸粉、脆皮粉、裹粉"这类复合粉。"}\n'
+            '}'
+        )
+        out = g._clean_opening_text(broken)
+        self.assertEqual(out, "先答你的两件事：花生／芝麻风险逐项过了一遍。")
+
+    def test_rescue_still_refuses_non_human_text(self):
+        """救援路径同样不能放行 JSON/控制信令残片。"""
+        # opening 字段本身又是 JSON → 丢弃
+        nested = '{"opening": "{\\"recipes\\": []}", "x": "a"b"}'
+        out = g._clean_opening_text(nested)
+        self.assertFalse(out.lstrip().startswith(("{", "[", "```")), f"泄漏: {out!r}")
+        # 没有 opening 字段 → 仍是空串
+        self.assertEqual(g._rescue_opening_field('{"recipes": [1,2'), "")
+        # 截断在 opening 字符串中间（没有收尾引号）→ 空串
+        self.assertEqual(g._rescue_opening_field('{"opening": "好的'), "")
+
+    def test_plain_text_passes_through(self):
+        self.assertEqual(g._clean_opening_text("今晚想吃点清淡的。"), "今晚想吃点清淡的。")
+        self.assertEqual(g._clean_opening_text(""), "")
+
+    def test_depth_cap_returns_empty(self):
+        raw = json.dumps({"opening": "x"}, ensure_ascii=False)
+        for _ in range(g._MAX_OPENING_UNWRAP + 2):
+            raw = json.dumps({"opening": raw}, ensure_ascii=False)
+        self.assertEqual(g._clean_opening_text(raw), "")
+
+    def test_final_opening_guard_replaces_json_shape(self):
+        self.assertEqual(
+            g._final_opening_guard('```json\n{"opening": "好的'), g._FINAL_OPENING_FALLBACK
+        )
+        self.assertEqual(g._final_opening_guard("正常正文"), "正常正文")
+        self.assertEqual(g._final_opening_guard(""), "")
+
+
+def _stale_index_messages():
+    """复刻真实失败会话 user_98be9ab536：候选清单 → 「就第2个」出卡 → 「换成第3个」改选。"""
+    return [
+        HumanMessage(content="我有西红柿和鸡蛋，晚上想做个简单的家常菜"),
+        AIMessage(content=json.dumps({
+            "opening": "1. 番茄炒蛋 —— 最省事\n2. 番茄鸡蛋羹 —— 口感极软\n3. 番茄鸡蛋汤面 —— 一锅出",
+            "answer_kind": "candidates",
+            "candidates": ["番茄炒蛋", "番茄鸡蛋羹", "番茄鸡蛋汤面"],
+            "recipes": [],
+        }, ensure_ascii=False)),
+        HumanMessage(content="就第2个"),
+        AIMessage(content=json.dumps({
+            "opening": "好的，换成严格控制调料的番茄鸡蛋羹。",
+            "recipes": [{"name": "番茄鸡蛋羹"}],
+        }, ensure_ascii=False)),
+        HumanMessage(content="要不换成第3个吧，并且还想要能让他变得酸点，我还多了香肠和鸡腿肉"),
+    ]
+
+
+class StaleIndexRecoveryTest(unittest.TestCase):
+    """序号跨轮失效：不许模型自由换菜；要能回收上一份清单并重新登记锚点。"""
+
+    def test_real_failure_sequence_is_detected(self):
+        msgs = _stale_index_messages()
+        # 冻结语义没被破坏：实时候选锚点依然为空，旧序号依然不算「选定」
+        self.assertEqual(g._recent_candidates(msgs), [])
+        self.assertIsNone(g.resolve_candidate_pick(msgs))
+        self.assertNotEqual(g._classify_turn_intent(msgs), "confirm_one")
+        # 但能回收上一份清单 → 给出确定性的「重新列一遍」处理
+        self.assertEqual(
+            g._older_candidates(msgs), ["番茄炒蛋", "番茄鸡蛋羹", "番茄鸡蛋汤面"]
+        )
+        self.assertEqual(g._latest_card_recipe_count(msgs), 1)
+        self.assertTrue(g._index_ref_without_target(msgs))
+
+    def test_live_candidate_list_is_not_treated_as_stale(self):
+        msgs = [
+            HumanMessage(content="我有鸡胸肉和青菜，帮我看看能做什么"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤"]), ensure_ascii=False
+            )),
+            HumanMessage(content="就第2个"),
+        ]
+        self.assertFalse(g._index_ref_without_target(msgs))
+        self.assertEqual(g.resolve_candidate_pick(msgs), (2, "青菜豆腐汤"))
+
+    def test_index_within_multi_dish_card_is_not_stale(self):
+        msgs = [
+            AIMessage(content=json.dumps(
+                {"opening": "两道", "recipes": [{"name": "A"}, {"name": "B"}]},
+                ensure_ascii=False,
+            )),
+            HumanMessage(content="换成第2道吧"),
+        ]
+        self.assertFalse(g._index_ref_without_target(msgs))
+
+    def _run_structure(self, msgs):
+        with patch("agent_graph.build_structured_answer", return_value=_chef_answer(["番茄鸡蛋羹"])), \
+                patch("agent_graph._build_structure_context", return_value=("上下文", None, False)), \
+                patch("agent_graph._allergens_for_audit", return_value=[]):
+            return g.structure_answer_node({
+                "messages": msgs, "verify_status": "ok", "verify_violated": [],
+            })
+
+    def test_structure_node_re_registers_recovered_list(self):
+        # 回收清单后必须重新登记成候选 payload：否则用户下一轮说「就第3个」还是认不出，
+        # 会卡在「说了序号 → 清单已过期」的死循环里。
+        result = self._run_structure(_stale_index_messages())
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(payload["candidates"], ["番茄炒蛋", "番茄鸡蛋羹", "番茄鸡蛋汤面"])
+        self.assertEqual(payload["recipes"], [])
+        self.assertFalse(payload["image_requested"])
+
+    def test_no_recovered_list_falls_back_to_no_message(self):
+        result = self._run_structure([HumanMessage(content="换成第3个吧，加点鸡腿肉")])
+        self.assertEqual(result, {"messages": []})
+
+
+class OccasionHintTest(unittest.TestCase):
+    """候选「推荐理由」的用途锚定（纯函数，离线）
+
+    背景：用户问「推荐几道下酒菜」，候选理由却写成「去皮后脂肪更低 / 爷爷好嚼 / 不费牙」。
+    根因是规则只规定了理由的**长度**、没规定**维度**，模型就用默认的营养维度把空填了。
+    修法 = 模板里写死维度优先级 + 这里这个确定性用途抽取做兜底。
+    """
+
+    def test_extracts_purpose(self):
+        cases = {
+            "推荐几道下酒菜": "下酒",
+            "晚上想喝点啤酒，配什么菜好": "下酒",
+            "来几道佐酒的": "下酒",
+            "推荐几道宵夜": "宵夜",
+            "明天上班带饭，推荐几道": "带饭",
+            "家里来客人了，推荐几道菜": "招待",
+            "想减脂，推荐几道菜": "减脂",
+            "就想解馋过瘾，推荐几道": "解馋",
+        }
+        for text, expect in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(g._occasion_hint(text), expect)
+
+    def test_no_occasion_returns_empty(self):
+        """抽不到用途必须返回空串 —— 绝不能硬塞一个用途，否则泛推荐被污染。"""
+        for text in ["随便推荐几道家常菜", "推荐几道番茄炒蛋", "用什么食材做什么", "", None]:
+            with self.subTest(text=text):
+                self.assertEqual(g._occasion_hint(text), "")
+
+    def test_audience_is_not_occasion(self):
+        """受众（爷爷/孩子）不算用途 —— 混进来会盖掉用户真正说的用途。
+
+        用户问的是「下酒」，不该被「爷爷能吃」顶掉；受众由家庭档案与约束矩阵处理。
+        """
+        for text in ["爷爷能吃的菜推荐几道", "给孩子做的菜推荐几道", "长辈适合吃什么"]:
+            with self.subTest(text=text):
+                self.assertEqual(g._occasion_hint(text), "")
+
+    def test_rule_keeps_allergen_bottom_line(self):
+        """底线冻结点：用途锚定可以压低营养维度，但绝不能动摇过敏原。"""
+        rule = g._occasion_rule("下酒")
+        self.assertIn("下酒", rule)
+        self.assertIn("过敏原与致命禁忌照旧不退让", rule)
+
+    def test_candidate_template_declares_dimension_and_bottom_line(self):
+        """模板必须同时含：维度优先级 / 约 30 字理由 / 人性化 / 过敏原底线 / opening 收短。"""
+        tpl = g.CANDIDATE_LIST_RULE_TEMPLATE.format(count=3)
+        for key in ["用途/场合", "约 30 字", "永不退让", "不是「能不能吃」", "人性化", "25 字以内"]:
+            with self.subTest(key=key):
+                self.assertIn(key, tpl)
 
 
 if __name__ == "__main__":

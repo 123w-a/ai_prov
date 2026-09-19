@@ -258,6 +258,7 @@ export interface MemberInput {
   profile: {
     conditions: string[]
     allergens: string[]
+    restricts?: string[]
     goal: string
     diet_style?: string
     dislikes: string[]
@@ -269,6 +270,49 @@ export interface MemberInput {
       sex: '' | 'male' | 'female' | 'other'
     }
   }
+}
+
+export interface MemoryCandidate {
+  id: string
+  session_id?: string
+  member: string
+  member_id: string
+  dimension: string
+  value: string
+  severity: 'hard' | 'soft'
+  scope: 'always' | 'once'
+  source_text: string
+  status: 'pending' | 'once' | 'confirmed' | 'dismissed'
+}
+
+export async function fetchPendingMemoryCandidates(sessionId: string): Promise<MemoryCandidate[]> {
+  const result = await jsonRequest<ApiEnvelope<{ candidates: MemoryCandidate[] }>>(
+    `/api/preferences/candidates/pending?session_id=${encodeURIComponent(sessionId)}`,
+  )
+  return result.data.candidates ?? []
+}
+
+export async function confirmMemoryCandidate(candidateId: string): Promise<MemoryCandidate> {
+  const result = await jsonRequest<ApiEnvelope<{ candidate: MemoryCandidate }>>(
+    `/api/preferences/candidates/${encodeURIComponent(candidateId)}/confirm`,
+    { method: 'POST' },
+  )
+  return result.data.candidate
+}
+
+export async function rememberMemoryCandidateOnce(candidateId: string): Promise<MemoryCandidate> {
+  const result = await jsonRequest<ApiEnvelope<{ candidate: MemoryCandidate }>>(
+    `/api/preferences/candidates/${encodeURIComponent(candidateId)}/once`,
+    { method: 'POST' },
+  )
+  return result.data.candidate
+}
+
+export async function dismissMemoryCandidate(candidateId: string): Promise<void> {
+  await jsonRequest(
+    `/api/preferences/candidates/${encodeURIComponent(candidateId)}/dismiss`,
+    { method: 'POST' },
+  )
 }
 
 export async function fetchFamily(): Promise<FamilyData> {
