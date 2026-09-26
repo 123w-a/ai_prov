@@ -2,7 +2,7 @@
 # 冒烟测试：确认 LangGraph 整图能编译、关键节点/边齐全（导入即触发 compile）
 import unittest
 
-import agent_graph
+import agent.graph as agent_graph
 
 
 class TestGraphCompiles(unittest.TestCase):
@@ -18,7 +18,7 @@ class TestGraphCompiles(unittest.TestCase):
             self.assertIn(n, nodes, f"缺失节点 {n}")
 
     def test_state_has_guard_fields(self):
-        from agent_graph import ChefState
+        from agent.graph import ChefState
         self.assertIn("verify_attempts", ChefState.__annotations__)
         self.assertIn("verify_warning", ChefState.__annotations__)
         self.assertIn("verify_status", ChefState.__annotations__)

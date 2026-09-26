@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import patch
 
-from agent_graph import (
+from agent.graph import (
     _declared_covers,
     _hit_without_negation,
     _parse_declared_conditions,
@@ -61,7 +61,7 @@ class SelfDeclaredTest(unittest.TestCase):
             "profile_ready": True,
             "profile_missing": [],
         }
-        with patch("agent_graph._active_profile_conditions", return_value=["高血压"]):
+        with patch("agent.graph._active_profile_conditions", return_value=["高血压"]):
             result = profile_gate_node(state)
         self.assertTrue(result["profile_ready"])
         self.assertEqual(result["profile_missing"], [])

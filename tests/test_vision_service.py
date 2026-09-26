@@ -3,11 +3,11 @@ from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
 
-import vision_service
+from services import vision as vision_service
 
 
 class VisionServiceTest(unittest.TestCase):
-    @patch("vision_service.get_vision_llm")
+    @patch("services.vision.get_vision_llm")
     def test_describe_image_returns_text_and_includes_user_request(self, mock_get_llm):
         mock_get_llm.return_value.invoke.return_value = AIMessage(
             content="可见豆腐一盒、番茄两个。"

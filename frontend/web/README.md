@@ -41,6 +41,15 @@ frontend/web
 
 开发时应分别确认前端 `http://localhost:5178/` 和后端 `http://127.0.0.1:8010/docs` 均返回 `200`。
 
+附近餐厅地图需要在 `frontend/web/.env` 配置高德开放平台的 Web 端 JS API 凭证：
+
+```dotenv
+VITE_AMAP_JS_KEY=你的Web端JS API Key
+VITE_AMAP_SECURITY_CODE=对应的安全密钥
+```
+
+这两个值用于浏览器地图展示；仓库根目录的 `AMAP_KEY` 用于后端 POI 检索，不能相互替代。
+
 ## 已对接接口
 
 - `GET /api/`：健康检查

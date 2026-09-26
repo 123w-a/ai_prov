@@ -7,10 +7,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
 
+from infrastructure.paths import DATA_DIR
+
 
 _CONFIG_LOCK = Lock()
 _CONFIGURED = False
-LOG_PATH = Path(__file__).resolve().parent / "data" / "app.log"
+LOG_PATH = DATA_DIR / "app.log"
 MAX_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 5
 

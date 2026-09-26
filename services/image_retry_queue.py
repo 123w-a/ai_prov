@@ -12,7 +12,7 @@ import json
 import threading
 import time
 
-from sessions_store import SESSIONS_DIR, update_answer_image_by_dish
+from storage.sessions import SESSIONS_DIR, update_answer_image_by_dish
 from agent_tools import find_recipe_image
 
 RETRY_INTERVAL_S = 600      # 每轮扫描间隔 10 分钟

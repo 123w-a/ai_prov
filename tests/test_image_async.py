@@ -11,7 +11,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from api.routes import chat_route
-import sessions_store
+from storage import sessions as sessions_store
 
 
 def _make_event_generator(answer_dict):
@@ -95,7 +95,7 @@ class StructureNoImageSearchTest(unittest.TestCase):
     def test_structure_node_source_has_no_search_call(self):
         import inspect
 
-        import agent_graph
+        import agent.graph as agent_graph
 
         src = inspect.getsource(agent_graph.structure_answer_node)
         self.assertNotIn("_search_recipe_image(", src)
@@ -160,7 +160,7 @@ class ChatRouteImageGateTest(unittest.TestCase):
 
     def test_cancel_endpoint_routes_keep_text_to_image_cancel_state(self):
         with patch.object(chat_route, "_get_turn_record", return_value=42), patch(
-            "sessions_store.mark_message_image_cancelled", return_value=True
+            "storage.sessions.mark_message_image_cancelled", return_value=True
         ) as mark_keep_text:
             response = asyncio.run(
                 chat_route.cancel_image_decision(
@@ -466,9 +466,9 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
             patch.object(chat_route, "append_message", return_value=321),
             patch.object(chat_route, "_IMAGE_THREAD_POLL_TIMEOUT_S", 0.05),
             patch.object(chat_route, "_IMAGE_THREAD_MAX_WAIT_S", 2.0),
-            patch("sessions_store.update_message_answer", return_value=True),
-            patch("memory_candidates.extract_candidates", return_value=[]),
-            patch("memory_candidates.remember_candidates", return_value=None),
+            patch("storage.sessions.update_message_answer", return_value=True),
+            patch("storage.memory_candidates.extract_candidates", return_value=[]),
+            patch("storage.memory_candidates.remember_candidates", return_value=None),
             patch("api.routes.reports_route.record_meal", return_value=None),
         ]
         for item in patches:
@@ -495,6 +495,9 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
         self.assertEqual(len(images), 1, events)
         self.assertEqual(images[0]["url"], "https://images.test/tomato-egg.png")
         self.assertFalse(failures, events)
+        answer_index = next(i for i, event in enumerate(events) if "answer" in event)
+        image_index = next(i for i, event in enumerate(events) if "image" in event)
+        self.assertLess(answer_index, image_index, events)
         self.assertTrue(any(event.get("finish") for event in events), events)
 
 if __name__ == "__main__":

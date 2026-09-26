@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_graph
+import agent.graph as agent_graph
 import main
-from agent_chains import rank_recipes
-from agent_schemas import ChefAnswer, DishMatrixItem, Recipe
+from agent.chains import rank_recipes
+from agent.schemas import ChefAnswer, DishMatrixItem, Recipe
 
 
 def _recipe(name):
@@ -55,7 +55,7 @@ class FamilyJointDecisionTest(unittest.TestCase):
 
     def test_inactive_member_allergen_does_not_union_block_main_dish(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            profile_path = Path(temp_dir) / "data" / "profile.json"
+            profile_path = Path(temp_dir) / "agent" / "data" / "profile.json"
             profile_path.parent.mkdir(parents=True, exist_ok=True)
             profile_path.write_text(
                 json.dumps(
@@ -86,8 +86,8 @@ class FamilyJointDecisionTest(unittest.TestCase):
             )
             with patch.object(
                 agent_graph,
-                "__file__",
-                str(profile_path.parent.parent / "agent_graph.py"),
+                "_PROFILE_PATH",
+                profile_path,
             ):
                 self.assertEqual(agent_graph._family_allergens(), ["虾"])
                 self.assertEqual(agent_graph._allergens_for_audit(), [])

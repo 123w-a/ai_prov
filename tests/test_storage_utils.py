@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from storage_utils import atomic_write_json, atomic_write_text
+from storage.utils import atomic_write_json, atomic_write_text
 
 
 class StorageUtilsTest(unittest.TestCase):
@@ -44,7 +44,7 @@ class StorageUtilsTest(unittest.TestCase):
         target = self.root / "state.json"
         target.write_text('{"version": 1}', encoding="utf-8")
 
-        with patch("storage_utils.os.replace", side_effect=OSError("disk error")):
+        with patch("storage.utils.os.replace", side_effect=OSError("disk error")):
             with self.assertRaises(OSError):
                 atomic_write_json(target, {"version": 2})
 

@@ -2,6 +2,7 @@
 # 工具与图逻辑解耦：这里只管"工具本身怎么干活"，不涉及 LLM、状态图、断点等编排细节
 
 import base64       # 把候选图片转成视觉模型可读取的 data URL
+import hashlib      # 为图片审核结果生成稳定缓存键
 import os           # 读环境变量（UNSPLASH_ACCESS_KEY）
 import re           # 解析 Bing 国内版返回 HTML 里的图片直链
 import csv          # 读取结构化营养表 nutrition_table.csv
@@ -12,10 +13,13 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage  # 发送图片给视觉模型做内容校验
 from langchain_core.tools import tool  # 创键工具
 from langchain_tavily import TavilySearch#进行联网搜索
-from model_name import get_vision_llm  # 获取用于图片审核的视觉模型
-from oss_utils import upload_to_oss  # 把成品图上传到OSS并返回公网URL
-from image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
-from allergen_rules import audit_allergens
+from infrastructure.model_name import (  # 获取图片审核主模型与稳定备用模型
+    get_langchain_llm,
+    get_vision_llm,
+)
+from services.oss import upload_to_oss  # 把成品图上传到OSS并返回公网URL
+from services.image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
+from domain.allergen_rules import audit_allergens
 
 load_dotenv()
 
@@ -23,7 +27,7 @@ load_dotenv()
 def _tool_allergens() -> list:
     """读取当前家庭过敏原用于旁路工具过滤；延迟导入避免工具与图模块循环依赖。"""
     try:
-        from agent_graph import _allergens_for_audit
+        from agent.graph import _allergens_for_audit
 
         return list(_allergens_for_audit() or [])
     except Exception:
@@ -107,6 +111,8 @@ MIN_PHOTO_BYTES = 20_000  # 过小的图片通常是纯色占位图、文字缩�
 
 # 图片先通过视觉模型审核，确认无误后才上传 OSS，避免无关图片污染图片桶。
 _IMAGE_CHECK_LLM = None
+_IMAGE_AUDIT_CACHE = {}
+_IMAGE_AUDIT_CACHE_LIMIT = 256
 
 
 def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: str) -> bool:
@@ -116,6 +122,21 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
     这样宁可暂时无图，也不把建筑、风景或其他菜品错配到当前菜谱。
     """
     global _IMAGE_CHECK_LLM#用外部定义的语言模型
+    cache_key = (
+        str(recipe_name).strip().casefold(),
+        str(content_type or "").strip().casefold(),
+        hashlib.sha256(image_bytes).hexdigest(),
+    )
+    if cache_key in _IMAGE_AUDIT_CACHE:
+        return _IMAGE_AUDIT_CACHE[cache_key]
+
+    def _remember(result: bool) -> bool:
+        # 只保留最近一小批审核结果，避免长期运行时缓存无限增长。
+        if len(_IMAGE_AUDIT_CACHE) >= _IMAGE_AUDIT_CACHE_LIMIT:
+            _IMAGE_AUDIT_CACHE.pop(next(iter(_IMAGE_AUDIT_CACHE)))
+        _IMAGE_AUDIT_CACHE[cache_key] = result
+        return result
+
     try:
         if _IMAGE_CHECK_LLM is None:
             _IMAGE_CHECK_LLM = get_vision_llm(
@@ -145,7 +166,18 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
                 },
             ]
         )
-        response = _IMAGE_CHECK_LLM.invoke([message])
+        try:
+            response = _IMAGE_CHECK_LLM.invoke([message])
+        except Exception as primary_exc:
+            # 视觉模型额度或服务异常时，保留已有的可用模型作为审核备用；
+            # 两个模型都失败仍然拒绝放行，不能把未审核图片上传到 OSS。
+            print(f"[image_check] 视觉模型失败，尝试备用模型：{primary_exc}")
+            fallback_llm = get_langchain_llm(
+                temperature=0,
+                max_tokens=30,
+                timeout=15,
+            )
+            response = fallback_llm.invoke([message])
         result = response.content
         if isinstance(result, list):
             result = " ".join(
@@ -156,18 +188,18 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
         result = str(result).strip().upper()
         matched = result.startswith("YES") or result.startswith("是")
         print(f"[image_check] {recipe_name} -> {'通过' if matched else '跳过'}")
-        return matched
+        return _remember(matched)
     except Exception as exc:
         # 审核模型不可用时不放行未审核图片，优先保证图片与菜名不乱配。
         print(f"[image_check] 审核失败，跳过候选图：{exc}")
-        return False
+        return _remember(False)
 
 # --------------------------------------------------------------------------- #
 #  本地文件读取沙箱（安全红线）
 #  get_file 只能读「项目内指定白名单目录」下的「白名单扩展名」文件，且单文件 ≤200KB。
 #  目的：杜绝路径遍历读系统文件 / 密钥文件（如 .env），又不挡正常业务（菜谱库、偏好文件）。
 # --------------------------------------------------------------------------- #
-_PROJECT_ROOT = Path(__file__).resolve().parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _ALLOWED_DIRS = [
     _PROJECT_ROOT / "data",                 # 用户偏好、营养表等本地知识
     _PROJECT_ROOT / "recipes",              # 用户私房菜谱库（离线、零成本、隐私）
@@ -347,7 +379,7 @@ def find_recipe_image(recipe_name: str, allow_ai_fallback: bool = False):#搜索
     if not base_query:
         return None, "none"
     # AI 生图缓存前置：同一菜名第二次提问秒出（缓存图均为 AI 生成，语义准确）
-    from image_gen import cached_dish_image
+    from services.image_gen import cached_dish_image
     cached = cached_dish_image(base_query)
     if cached:
         return cached, "ai"
@@ -635,6 +667,16 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
         biz = p.get("biz_ext") or {}
         if not isinstance(biz, dict):
             biz = {}
+        lng = lat = None
+        raw_location = str(p.get("location") or "")
+        try:
+            lng_text, lat_text = raw_location.split(",", 1)
+            parsed_lng = float(lng_text)
+            parsed_lat = float(lat_text)
+            if -180 <= parsed_lng <= 180 and -90 <= parsed_lat <= 90:
+                lng, lat = parsed_lng, parsed_lat
+        except (TypeError, ValueError):
+            pass
         cost_str = (biz.get("cost") or "").strip()
         try:
             cost = int(float(cost_str))
@@ -647,14 +689,18 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
             distance_km = round(int(dist_m) / 1000, 1) if dist_m not in (None, "") else None
         except Exception:
             distance_km = None
-        results.append({
+        result = {
             "name": p.get("name", ""),
             "cuisine": cuisine,
             "avg_price": cost if cost is not None else 0,
             "distance_km": distance_km,
             "address": p.get("address", "") or "",
             "guardrail": _infer_guardrail(p.get("name", ""), raw_type, cost),
-        })
+        }
+        if lng is not None and lat is not None:
+            result["lng"] = lng
+            result["lat"] = lat
+        results.append(result)
     return results
 
 

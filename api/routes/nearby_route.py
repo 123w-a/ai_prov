@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 router = APIRouter()
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_LEGACY_PATH = _PROJECT_ROOT / "agent_tools.py"
+_LEGACY_PATH = _PROJECT_ROOT / "agent_tools" / "legacy.py"
 _spec = importlib.util.spec_from_file_location("_legacy_agent_tools", _LEGACY_PATH)
 if _spec is None or _spec.loader is None:
     raise ImportError(f"无法加载旧工具模块: {_LEGACY_PATH}")

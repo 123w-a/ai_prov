@@ -13,7 +13,10 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-_FILE = Path(__file__).resolve().parent / "data" / "agent_trace.jsonl"
+from infrastructure.paths import DATA_DIR
+
+
+_FILE = DATA_DIR / "agent_trace.jsonl"
 _TRACE_LOCK = threading.Lock()
 _MAX_BYTES = 10 * 1024 * 1024
 _BACKUP_COUNT = 3
@@ -106,7 +109,7 @@ def trace_node(name: str):
 #  写入沿用本模块的"绝不阻塞主链路"约定：任何异常一律静默。
 # --------------------------------------------------------------------------- #
 
-_USAGE_FILE = Path(__file__).resolve().parent / "data" / "usage.jsonl"
+_USAGE_FILE = DATA_DIR / "usage.jsonl"
 _USAGE_LOCK = threading.Lock()
 
 

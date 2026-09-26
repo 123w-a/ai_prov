@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-import agent_graph
+import agent.graph as agent_graph
 
 
 class SummaryFlashTest(unittest.TestCase):

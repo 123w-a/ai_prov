@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import dish_assets_store as store
+from storage import dish_assets as store
 from api.routes import chat_route
 
 

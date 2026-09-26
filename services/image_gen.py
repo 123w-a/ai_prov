@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 load_dotenv()      # 加载 .env（DASHSCOPE_API_KEY 等）
 
-from oss_utils import upload_to_oss  # 把图片字节上传到自家 OSS，返回持久公网 URL
+from .oss import upload_to_oss  # 把图片字节上传到自家 OSS，返回持久公网 URL
 
 # ============================ 1. 配置（全部来自 .env） ============================ #
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")   # 通义万相 / 阿里云百炼 API Key（留空则功能降级）

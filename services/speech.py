@@ -13,7 +13,7 @@ import requests
 from dashscope.audio.asr import Transcription
 from http import HTTPStatus
 
-import oss_utils
+from . import oss as oss_utils
 
 
 def _extract_text(result) -> str:

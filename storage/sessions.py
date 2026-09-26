@@ -33,12 +33,14 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 
-from storage_utils import atomic_write_json
+from infrastructure.paths import SESSIONS_DIR as PROJECT_SESSIONS_DIR
+
+from .utils import atomic_write_json
 
 _logger = logging.getLogger("sessions_store")
 
 # 会话 JSON 存放目录（与 checkpoint.db 分开，体现两层职责解耦）
-SESSIONS_DIR = Path(__file__).with_name("sessions")
+SESSIONS_DIR = PROJECT_SESSIONS_DIR
 
 # 写文件用锁，避免 FastAPI 多线程并发读写同一个 JSON 把内容写坏
 _lock = threading.Lock()
@@ -190,7 +192,7 @@ def init_db():
 
 def _migrate_from_sqlite_once():
     """历史兼容：把上一版 SQLite 业务库数据搬到 JSON 文件，搬完即删，避免两层并存混乱。"""
-    db_path = Path(__file__).with_name("sessions.db")
+    db_path = SESSIONS_DIR.with_name("sessions.db")
     if not db_path.exists():
         return
     try:

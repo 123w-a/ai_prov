@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import answer_backfill as ab
+from scripts import answer_backfill as ab
 
 
 class ClassifyTest(unittest.TestCase):

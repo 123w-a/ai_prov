@@ -16,7 +16,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from storage_utils import atomic_write_json, atomic_write_text
+from storage.utils import atomic_write_json, atomic_write_text
 
 router = APIRouter()
 
@@ -243,7 +243,7 @@ def add_taste_note(payload: TasteNotePayload):
 @router.get("/profile/taste-suggestion")
 def taste_suggestion():
     """口味建议：近14天点踩里同口味≥2次 → 提示用户确认写入画像。"""
-    from taste_store import suggest
+    from storage.taste import suggest
     return {"code": 200, "data": {"suggestion": suggest(min_count=2)}}
 
 
@@ -275,7 +275,7 @@ def delete_member(member_id: str):
             family["active_id"] = family["members"][0]["id"]
         _write_family(family)
     try:
-        from memory_candidates import clear_member_candidates
+        from storage.memory_candidates import clear_member_candidates
 
         clear_member_candidates(member_id, str(member.get("name") or ""))
     except Exception:
@@ -363,7 +363,7 @@ def import_family(payload: ImportPayload):
 @router.get("/preferences/candidates/pending")
 def pending_candidates(session_id: Optional[str] = None):
     """返回尚未确认的本地画像候选，不含任何远程同步逻辑。"""
-    from memory_candidates import get_pending, mark_asked
+    from storage.memory_candidates import get_pending, mark_asked
 
     candidates = get_pending(session_id)
     # 每次只把尚未主动提议过的候选交给前端；服务端也限制批量，避免历史积压一次弹出。
@@ -374,7 +374,7 @@ def pending_candidates(session_id: Optional[str] = None):
 
 @router.post("/preferences/candidates/{candidate_id}/confirm")
 def confirm_candidate(candidate_id: str):
-    from memory_candidates import confirm
+    from storage.memory_candidates import confirm
 
     candidate = confirm(candidate_id)
     if not candidate:
@@ -384,7 +384,7 @@ def confirm_candidate(candidate_id: str):
 
 @router.post("/preferences/candidates/{candidate_id}/dismiss")
 def dismiss_candidate(candidate_id: str):
-    from memory_candidates import dismiss
+    from storage.memory_candidates import dismiss
 
     if not dismiss(candidate_id):
         raise HTTPException(status_code=404, detail="候选不存在")
@@ -393,7 +393,7 @@ def dismiss_candidate(candidate_id: str):
 
 @router.post("/preferences/candidates/{candidate_id}/once")
 def remember_candidate_once(candidate_id: str):
-    from memory_candidates import remember_once
+    from storage.memory_candidates import remember_once
 
     candidate = remember_once(candidate_id)
     if not candidate:

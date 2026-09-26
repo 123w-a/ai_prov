@@ -8,9 +8,11 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from storage_utils import atomic_write_json
+from infrastructure.paths import DATA_DIR
 
-_LOG = Path(__file__).resolve().parent / "data" / "answer_feedback.json"
+from .utils import atomic_write_json
+
+_LOG = DATA_DIR / "answer_feedback.json"
 
 
 def read_events() -> list[dict]:
@@ -60,7 +62,7 @@ def forget_dish(dish: str) -> int:
         kept.append(e)
     write_events(kept)
     try:
-        from taste_store import clear_signals_for
+        from .taste import clear_signals_for
         for sid, rec_id in removed_refs:
             clear_signals_for(sid, rec_id)
     except Exception:

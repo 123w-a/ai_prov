@@ -148,7 +148,7 @@ class LiveApiSmokeTest(unittest.TestCase):
         self.assertFalse(body["data"]["keep_text"])
 
     def test_allergen_guardrail_contract(self):
-        from allergen_rules import audit_allergens, normalize_allergens
+        from domain.allergen_rules import audit_allergens, normalize_allergens
 
         _, profile = _json_request("/api/profile", timeout=5)
         members = profile["data"]["family"]["members"]

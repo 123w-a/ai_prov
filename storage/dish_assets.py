@@ -10,10 +10,12 @@ import threading
 import time
 from pathlib import Path
 
-from storage_utils import atomic_write_json
+from infrastructure.paths import DATA_DIR
+
+from .utils import atomic_write_json
 
 
-ASSETS_PATH = Path(__file__).resolve().parent / "data" / "dish_assets.json"
+ASSETS_PATH = DATA_DIR / "dish_assets.json"
 _LOCK = threading.Lock()
 
 

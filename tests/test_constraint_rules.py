@@ -2,7 +2,7 @@
 
 import unittest
 
-from constraint_rules import audit_constraint, build_member_adjustments, build_matrix
+from domain.constraint_rules import audit_constraint, build_member_adjustments, build_matrix
 
 
 class ConstraintDimensionTest(unittest.TestCase):

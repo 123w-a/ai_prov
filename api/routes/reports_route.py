@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from api.routes.fridge_route import _PANTRY_LOG, get_fridge
-from storage_utils import atomic_write_json
+from storage.utils import atomic_write_json
 
 router = APIRouter()
 _MEALS = Path(__file__).resolve().parents[2] / "data" / "meals.json"
@@ -249,7 +249,7 @@ def _weekly_evidence() -> dict | None:
         if str(e.get("ts", ""))[:10] >= (datetime.now() - timedelta(days=7)).date().isoformat()
     )
     try:
-        from feedback_store import recent_down_dishes
+        from storage.feedback import recent_down_dishes
         downs = recent_down_dishes(days=7, limit=3)
     except Exception:
         downs = []
@@ -290,7 +290,7 @@ def weekly_summary(refresh: bool = False):
         except Exception:
             pass
     try:
-        from model_name import extract_message_text, get_summary_llm
+        from infrastructure.model_name import extract_message_text, get_summary_llm
         llm = get_summary_llm(temperature=0.3, max_tokens=500)
         lines = [
             f"餐数：{evidence['meals']}",

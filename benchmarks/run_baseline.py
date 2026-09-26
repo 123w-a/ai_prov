@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from configs import KB_CONFIG
+from infrastructure.configs import KB_CONFIG
 from indexing.parser_router import route, SimplePDFParser
-from nutrition_rules import audit, detect_conditions
+from domain.nutrition_rules import audit, detect_conditions
 from benchmarks.historical_cases import CASES
 
 

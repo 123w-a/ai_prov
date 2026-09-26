@@ -2,7 +2,7 @@
 
 import unittest
 
-from model_name import (
+from infrastructure.model_name import (
     _PROVIDER_COOLDOWN,
     _PROVIDER_COOLDOWN_SECONDS,
     _is_configured,
@@ -44,7 +44,7 @@ class ProviderCooldownTest(unittest.TestCase):
         self.assertIsNone(pick_fallback_provider(exclude=None))
 
     def test_cooldown_expires(self):
-        from model_name import _provider_in_cooldown
+        from infrastructure.model_name import _provider_in_cooldown
 
         mark_provider_down("__fake__", seconds=-1)
         self.assertFalse(_provider_in_cooldown("__fake__"))
@@ -53,7 +53,7 @@ class ProviderCooldownTest(unittest.TestCase):
 
 class RebuildLlmsTest(unittest.TestCase):
     def test_rebuild_keeps_bound_tools_fresh(self):
-        import agent_graph
+        import agent.graph as agent_graph
 
         old_tools_obj = agent_graph.llm_with_tools
         agent_graph.rebuild_llms(agent_graph.provider)

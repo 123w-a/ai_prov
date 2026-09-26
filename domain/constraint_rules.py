@@ -57,7 +57,7 @@ def _normalise_entry(entry: Any) -> dict:
     value = _text(entry)
     dimension = ""
     try:
-        from allergen_rules import normalize_allergens
+        from .allergen_rules import normalize_allergens
 
         if normalize_allergens(value, log_unresolved=False):
             dimension = "allergen"
@@ -65,7 +65,7 @@ def _normalise_entry(entry: Any) -> dict:
         pass
     if not dimension:
         try:
-            from nutrition_rules import RULES
+            from .nutrition_rules import RULES
 
             if value in RULES or any(word in value for word in RULES):
                 dimension = "chronic"
@@ -137,7 +137,7 @@ def entries_from_profile(profile: dict, member: str = "") -> list[dict]:
 
 
 def _allergen_codes(entries: list[dict]) -> list[str]:
-    from allergen_rules import normalize_allergens
+    from .allergen_rules import normalize_allergens
 
     codes = []
     for entry in entries:
@@ -150,7 +150,7 @@ def _allergen_codes(entries: list[dict]) -> list[str]:
 
 
 def _chronic_values(entries: list[dict]) -> list[str]:
-    from nutrition_rules import RULES
+    from .nutrition_rules import RULES
 
     values = []
     for entry in entries:
@@ -261,7 +261,7 @@ def audit_allergens_dimension(
     use_optional: bool = False,
 ) -> list[dict]:
     """过敏原统一分派入口；只转调既有确定性核心，避免复制词表。"""
-    from allergen_rules import _audit_tier
+    from .allergen_rules import _audit_tier
 
     return _audit_tier(
         text,
@@ -291,7 +291,9 @@ def audit_constraint(
     )
     for violation in violations:
         violation["dimension"] = "allergen"
-    for violation in __import__("nutrition_rules").audit(source_text, chronic_values):
+    from .nutrition_rules import audit as audit_nutrition
+
+    for violation in audit_nutrition(source_text, chronic_values):
         item = dict(violation)
         item["dimension"] = "chronic"
         violations.append(item)
@@ -304,7 +306,7 @@ def audit_constraint(
 
     # “可能含”只作为提醒，绝不升级成硬拦截。
     if allergen_codes:
-        from allergen_rules import audit_allergen_advisories
+        from .allergen_rules import audit_allergen_advisories
 
         for notice in audit_allergen_advisories(
             source_text, allergen_codes, use_optional=use_optional
@@ -314,7 +316,7 @@ def audit_constraint(
             adjustments.append(item)
 
     # 未归一过敏原：没有规则可查，但必须让用户看见这个覆盖缺口。
-    from allergen_rules import unresolved_allergen_advisories
+    from .allergen_rules import unresolved_allergen_advisories
 
     adjustments.extend(
         unresolved_allergen_advisories(
@@ -334,7 +336,7 @@ def build_matrix(
     「待确认」用于档案里存在**未归一过敏原**且该原文出现在菜名/食材里的情况：
     规则查不到，但也不能当「可吃」——那是对用户的虚假保证。
     """
-    from allergen_rules import UNRESOLVED_ALLERGEN_ADVICE, unresolved_allergen_advisories
+    from .allergen_rules import UNRESOLVED_ALLERGEN_ADVICE, unresolved_allergen_advisories
 
     result = []
     for dish in dishes or []:

@@ -12,7 +12,7 @@ from rag._pilot_query_transform_variant import multi_query_variant
 from benchmarks.retrieval_cases import CASES
 from benchmarks.retrieval_cases_extended import EXTENDED_CASES
 from benchmarks.recall import evaluate_recall
-from model_name import get_langchain_llm
+from infrastructure.model_name import get_langchain_llm
 
 _base = get_langchain_llm("deepseek", temperature=0.3, max_tokens=200)
 llm = lambda system, user: _base.invoke([("system", system), ("human", user)]).content

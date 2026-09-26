@@ -99,7 +99,7 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
     )
     chef_tip: str = Field(#膳食管家小建议
         default="",
-        description="3句内建议"
+        description="2-4句具体讲解：推荐理由、对当前约束的适配方式、关键烹饪提醒，禁止空泛套话"
     )
     sources: list[SourceRef] = Field(
         default_factory=list,

@@ -20,8 +20,8 @@ import argparse
 import glob
 import json
 
-from model_name import get_langchain_llm, resolve_provider
-from sessions_store import _lock, _read_session, _write_session
+from infrastructure.model_name import get_langchain_llm, resolve_provider
+from storage.sessions import SESSIONS_DIR, _lock, _read_session, _write_session
 
 _MIN_LEN = 300
 _SKIP_MARKS = ("回答未能完成",)
@@ -39,9 +39,9 @@ def classify_answer(answer: str) -> str:
 def scan_targets() -> list[dict]:
     """扫全部会话，返回待增强记录的定位信息（不读内容进内存过多）。"""
     targets = []
-    for path in sorted(glob.glob("sessions/*.json")):
+    for path in sorted(SESSIONS_DIR.glob("*.json")):
         try:
-            data = json.loads(_read_file(path))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
         sid = data.get("session_id") or path
@@ -113,7 +113,7 @@ def main() -> None:
         print("（dry-run，加 --apply 执行重写回写）")
         return
 
-    import sessions_store
+    from storage import sessions as sessions_store
 
     for t in targets:
         data = sessions_store._read_session(t["sid"])

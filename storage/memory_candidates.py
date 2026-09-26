@@ -11,10 +11,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from storage_utils import atomic_write_json
+from infrastructure.paths import DATA_DIR
+
+from .utils import atomic_write_json
 
 
-_DATA_DIR = Path(__file__).resolve().parent / "data"
+_DATA_DIR = DATA_DIR
 _CANDIDATES_PATH = _DATA_DIR / "memory_candidates.json"
 
 _TEMPORARY_WORDS = ("今天", "这次", "暂时", "先", "本顿", "这顿", "临时的")

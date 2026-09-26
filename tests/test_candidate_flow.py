@@ -10,9 +10,9 @@ from unittest.mock import patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph.message import add_messages
 
-import agent_graph as g
-import sessions_store
-from agent_schemas import ChefAnswer, Recipe, Seasoning
+import agent.graph as g
+from storage import sessions as sessions_store
+from agent.schemas import ChefAnswer, Recipe, Seasoning
 from api.routes import chat_route
 
 CANDIDATE_LIST_TEXT = (
@@ -61,6 +61,16 @@ class SpecificDishRequestTest(unittest.TestCase):
             "今晚吃什么",
             "我想吃番茄",  # 只报食材，没有确定做法
             "高血压能吃火锅吗",
+            "吃麻薯的话有几种吃法",
+            "麻薯有几种吃法",
+            "麻薯有哪些做法",
+            "番茄怎么做",
+            "鸡蛋怎么做",
+            "鸡胸肉怎么做",
+            "糯米粉怎么做",
+            "推荐几道低糖麻薯点心",
+            "来几个适合孩子的甜品",
+            "下酒菜有哪些",
             "你好",
         ]:
             with self.subTest(text=text):
@@ -78,6 +88,15 @@ class SpecificDishRequestTest(unittest.TestCase):
         self.assertTrue(
             g.is_specific_dish_request("联网搜索 我想吃徐福烩饭 怎么做呢")
         )
+
+    def test_named_dish_with_explanation_question_is_still_specific(self):
+        """点名一道菜后追问原因，仍要出这道菜的卡片并解释原因。"""
+        for text in [
+            "帮我做个番茄炒蛋，为什么要先炒蛋",
+            "我想吃番茄炒蛋，为什么要先炒蛋",
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(g.is_specific_dish_request(text))
 
     def test_narrative_requirement_is_not_a_dish_name(self):
         """回归：需求句里的「再给我完整做法」不能被当成点名一道菜。
@@ -144,14 +163,57 @@ class CandidateTurnTest(unittest.TestCase):
         return [HumanMessage(content=text)]
 
     def test_generic_recommend_is_candidate_turn(self):
-        for text in ["我有鸡胸肉和青菜", "推荐几道菜", "不知道吃什么", "晚上不知道吃什么"]:
+        for text in [
+            "我有鸡胸肉和青菜",
+            "推荐几道菜",
+            "不知道吃什么",
+            "晚上不知道吃什么",
+            "吃麻薯的话有几种吃法",
+            "麻薯有哪些做法",
+            "推荐几道低糖麻薯点心",
+            "来几个适合孩子的甜品",
+            "下酒菜有哪些",
+            "虾有几种做法",
+            "鸡蛋有什么花样",
+            "土豆做法大全",
+        ]:
             with self.subTest(text=text):
                 self.assertTrue(g._is_candidate_turn(self._m(text)))
 
-    def test_named_dish_not_candidate_turn(self):
-        for text in ["我想吃番茄炒蛋", "就做番茄炒蛋", "没胃口换一道"]:
+    def test_information_questions_are_not_candidate_turn(self):
+        for text in [
+            "虾怎么处理",
+            "牛肉怎么腌",
+            "糯米粉怎么挑",
+            "麻薯怎么保存",
+            "虾和什么不能一起吃",
+            "吃麻薯会胖吗",
+            "海鲜后能喝牛奶吗",
+            "番茄炒蛋和红烧肉哪个更健康",
+            "这道和上一道比呢",
+            "吃火锅的时候喝什么",
+            "别忘了爷爷不能吃虾",
+            "你刚才说的放盐是什么意思",
+            "这道菜为什么要先炒蛋",
+            "为什么焯水这一步不能省",
+            "这段讲解里说的火候是什么意思",
+            "这道菜适合谁吃",
+            "这个菜谱为什么只要三步",
+            "前面那个步骤没看懂，解释一下",
+            "先告诉我原理，再决定做不做",
+            "解释一下番茄炒蛋为什么要先炒蛋",
+            "麻薯为什么不能放冰箱",
+        ]:
             with self.subTest(text=text):
                 self.assertFalse(g._is_candidate_turn(self._m(text)))
+
+    def test_named_dish_not_candidate_turn(self):
+        for text in ["我想吃番茄炒蛋", "就做番茄炒蛋"]:
+            with self.subTest(text=text):
+                self.assertFalse(g._is_candidate_turn(self._m(text)))
+
+    def test_change_one_without_named_dish_returns_to_candidates(self):
+        self.assertTrue(g._is_candidate_turn(self._m("没胃口换一道")))
 
     def test_explicit_image_request_not_candidate_turn(self):
         # 泛推荐即便带配图开关，也必须先走候选；只有具体菜才能直接出卡片和配图。
@@ -327,7 +389,7 @@ class RoutePickedCandidateTest(unittest.TestCase):
 
     def test_resolve_from_store(self):
         with patch(
-            "sessions_store.find_recent_candidates",
+            "storage.sessions.find_recent_candidates",
             return_value={"record_id": 7, "candidates": ["鸡胸肉炒青菜", "青菜豆腐汤"]},
         ):
             self.assertEqual(
@@ -338,10 +400,10 @@ class RoutePickedCandidateTest(unittest.TestCase):
             )
 
     def test_resolve_none_cases(self):
-        with patch("sessions_store.find_recent_candidates", return_value=None):
+        with patch("storage.sessions.find_recent_candidates", return_value=None):
             self.assertIsNone(chat_route._resolve_picked_candidate("s1", "就第2个"))
         with patch(
-            "sessions_store.find_recent_candidates",
+            "storage.sessions.find_recent_candidates",
             return_value={"record_id": 7, "candidates": ["鸡胸肉炒青菜"]},
         ):
             self.assertIsNone(chat_route._resolve_picked_candidate("s1", "就第5个"))
@@ -381,9 +443,9 @@ class StructureAnswerCandidateTest(unittest.TestCase):
 
     def _patches(self, answer, allergens=None):
         return (
-            patch("agent_graph.build_structured_answer", return_value=answer),
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=list(allergens or [])),
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=list(allergens or [])),
         )
 
     def test_candidate_payload_has_no_recipes(self):
@@ -406,11 +468,11 @@ class StructureAnswerCandidateTest(unittest.TestCase):
         """
         with (
             patch(
-                "agent_graph.build_structured_answer",
+                "agent.graph.build_structured_answer",
                 side_effect=ValueError("structured parse failed"),
             ),
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
         ):
             result = g.structure_answer_node(self._state(CANDIDATE_LIST_TEXT))
         payload = json.loads(result["messages"][-1].content)
@@ -432,7 +494,7 @@ class StructureAnswerCandidateTest(unittest.TestCase):
     def test_allergen_filter_drops_bad_candidate(self):
         p1, p2, p3 = self._patches(_chef_answer(["鸡胸肉炒青菜"]), allergens=["花生"])
         with p1, p2, p3, patch(
-            "agent_graph.audit_allergens",
+            "agent.graph.audit_allergens",
             side_effect=lambda text, allergens, use_optional=False: (
                 [{"condition": "过敏原:花生"}] if "沙拉" in str(text) else []
             ),
@@ -482,12 +544,12 @@ class StructureAnswerConclusionSourceTest(unittest.TestCase):
             "那就改做番茄鸡蛋汤，避开已经坏掉的豆腐。"
         )
         with (
-            patch("agent_graph.build_structured_answer",
+            patch("agent.graph.build_structured_answer",
                   return_value=_chef_answer(["番茄鸡蛋汤"])) as build_mock,
-            patch("agent_graph._build_structure_context",
+            patch("agent.graph._build_structure_context",
                   return_value=(conclusion_context, None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
-            patch("agent_graph._family_members", return_value=[]),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._family_members", return_value=[]),
         ):
             result = g.structure_answer_node({
                 "messages": messages,
@@ -619,16 +681,38 @@ class ImagePipelineGateTest(unittest.TestCase):
     """配图门两层同源：候选阶段不烧图"""
 
     def test_generic_recommend_no_image(self):
-        for text in ["我有鸡胸肉和青菜", "推荐几道菜", "不知道吃什么"]:
+        for text in [
+            "我有鸡胸肉和青菜",
+            "推荐几道菜",
+            "不知道吃什么",
+            "吃麻薯的话有几种吃法",
+            "麻薯有哪些做法",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+                self.assertFalse(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_explanation_question_no_image(self):
+        for text in [
+            "这道菜为什么要先炒蛋",
+            "这道菜适合谁吃",
+            "这个菜谱为什么只要三步",
+            "前面那个步骤没看懂，解释一下",
+        ]:
             with self.subTest(text=text):
                 self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
                 self.assertFalse(g._wants_recipe_images([HumanMessage(content=text)]))
 
     def test_named_dish_keeps_image(self):
-        for text in ["我想吃番茄炒蛋", "就做番茄炒蛋", "没胃口换一道"]:
+        for text in ["我想吃番茄炒蛋", "就做番茄炒蛋"]:
             with self.subTest(text=text):
                 self.assertTrue(chat_route._should_enable_image_pipeline(text, None))
                 self.assertTrue(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_change_one_without_named_dish_stays_before_image_stage(self):
+        text = "没胃口换一道"
+        self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+        self.assertFalse(g._wants_recipe_images([HumanMessage(content=text)]))
 
     def test_generic_recommend_with_image_does_not_bypass_candidates(self):
         text = "推荐几道菜，配张图"
@@ -673,6 +757,64 @@ class NonFoodSafetyFollowupTest(unittest.TestCase):
             result = g.structure_answer_node(state)
         self.assertEqual(result, {"messages": []})
         mocked.assert_not_called()
+
+
+class NonRecipeInformationTurnTest(unittest.TestCase):
+    """食材处理、安全、营养和比较问题只走文字，不进入菜谱结构化。"""
+
+    CASES = [
+        "虾怎么处理",
+        "牛肉怎么腌",
+        "糯米粉怎么挑",
+        "麻薯怎么保存",
+        "虾和什么不能一起吃",
+        "吃麻薯会胖吗",
+        "番茄炒蛋和红烧肉哪个更健康",
+        "吃火锅的时候喝什么",
+        "你刚才说的放盐是什么意思",
+        "这道菜为什么要先炒蛋",
+        "为什么焯水这一步不能省",
+        "这段讲解里说的火候是什么意思",
+        "这道菜适合谁吃",
+        "这个菜谱为什么只要三步",
+        "前面那个步骤没看懂，解释一下",
+        "先告诉我原理，再决定做不做",
+        "解释一下番茄炒蛋为什么要先炒蛋",
+        "麻薯为什么不能放冰箱",
+    ]
+
+    def test_information_question_skips_structure(self):
+        for text in self.CASES:
+            with self.subTest(text=text), patch.object(
+                g, "build_structured_answer"
+            ) as mocked:
+                state = {
+                    "messages": [
+                        HumanMessage(content=text),
+                        AIMessage(content="这是对问题的文字说明。"),
+                    ],
+                    "verify_status": "ok",
+                    "verify_violated": [],
+                }
+                self.assertEqual(g.structure_answer_node(state), {"messages": []})
+                mocked.assert_not_called()
+
+    def test_information_question_routes_plain(self):
+        for text in self.CASES:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    g.verify_route(
+                        {
+                            "messages": [
+                                HumanMessage(content=text),
+                                AIMessage(content="这是对问题的文字说明。"),
+                            ],
+                            "verify_status": "ok",
+                            "verify_violated": [],
+                        }
+                    ),
+                    "plain",
+                )
 
 
 class CandidatesStoreTest(unittest.TestCase):
@@ -734,7 +876,7 @@ class CandidateAnchorFallbackTest(unittest.TestCase):
     """结构事件缺失时，落库正文仍能建立候选锚点，且不误收普通菜谱步骤。"""
 
     def test_generic_recommend_text_registers_candidates(self):
-        with patch("sessions_store.set_message_candidates", return_value=True) as mocked:
+        with patch("storage.sessions.set_message_candidates", return_value=True) as mocked:
             ok = chat_route._register_candidate_anchor(
                 "s1", 7, "我有鸡胸肉和青菜", CANDIDATE_LIST_TEXT
             )
@@ -752,7 +894,7 @@ class CandidateAnchorFallbackTest(unittest.TestCase):
             "2. 番茄切块\n"
             "3. 下锅翻炒"
         )
-        with patch("sessions_store.set_message_candidates", return_value=True) as mocked:
+        with patch("storage.sessions.set_message_candidates", return_value=True) as mocked:
             ok = chat_route._register_candidate_anchor(
                 "s1", 8, "我想吃番茄炒蛋", recipe_steps
             )
@@ -833,9 +975,13 @@ class BareIndexPickTest(unittest.TestCase):
 
     def test_route_layer_resolves_bare_number_pick(self):
         with patch(
-            "sessions_store.find_recent_candidates",
+            "storage.sessions.find_recent_candidates",
             return_value={"record_id": 7, "candidates": ["鸡胸肉炒青菜", "青菜豆腐汤", "番茄牛腩"]},
         ):
+            self.assertEqual(
+                chat_route._resolve_picked_candidate("s1", "3"),
+                "番茄牛腩",
+            )
             self.assertEqual(
                 chat_route._resolve_picked_candidate("s1", "3吧，但是可以辣一点"),
                 "番茄牛腩",
@@ -868,10 +1014,10 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
 
     def test_pick_with_question_still_emits_card(self):
         with (
-            patch("agent_graph.build_structured_answer",
+            patch("agent.graph.build_structured_answer",
                   return_value=_chef_answer(["青菜豆腐汤"])) as mocked_build,
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
         ):
             result = g.structure_answer_node(self._state(self.OPENING))
         mocked_build.assert_called_once()
@@ -888,10 +1034,10 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
         选定约束的保障仍在 `chef_agent_node`（见 test_pick_is_pinned_into_agent_prompt）。
         """
         with (
-            patch("agent_graph.build_structured_answer",
+            patch("agent.graph.build_structured_answer",
                   return_value=_chef_answer(["青菜豆腐汤"])) as mocked_build,
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
         ):
             g.structure_answer_node(self._state(self.OPENING))
         sent_context = mocked_build.call_args.args[0]
@@ -911,7 +1057,7 @@ class SelectedDishWithQuestionTest(unittest.TestCase):
                 HumanMessage(content="就第2个"),
             ]
         }
-        with patch("agent_graph.llm_with_tools") as mocked_llm:
+        with patch("agent.graph.llm_with_tools") as mocked_llm:
             g.chef_agent_node(state)
         payload = mocked_llm.invoke.call_args.args[0]
         system_text = str(payload[0].content)
@@ -969,10 +1115,10 @@ class CandidateRevisionTurnTest(unittest.TestCase):
             "3. 甜辣蒸茄子 —— 吸汁入味",
         )
         with (
-            patch("agent_graph.build_structured_answer",
+            patch("agent.graph.build_structured_answer",
                   return_value=_chef_answer(["甜辣拌内酯豆腐"])),
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
         ):
             result = g.structure_answer_node({
                 "messages": messages,
@@ -1033,10 +1179,10 @@ class ConstraintCorrectionTurnTest(unittest.TestCase):
             "verify_violated": [],
         }
         with (
-            patch("agent_graph.build_structured_answer",
+            patch("agent.graph.build_structured_answer",
                   return_value=_chef_answer(["柠檬米醋蒸鲈鱼（低温·零含钠调味版）"])) as mocked_build,
-            patch("agent_graph._build_structure_context", return_value=("上下文", None, False)),
-            patch("agent_graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
         ):
             result = g.structure_answer_node(state)
         # 前置的门都放行了（结构化链确实跑了一次），是「约束纠正轮」把它挡下来的
@@ -1405,9 +1551,9 @@ class StaleIndexRecoveryTest(unittest.TestCase):
         self.assertFalse(g._index_ref_without_target(msgs))
 
     def _run_structure(self, msgs):
-        with patch("agent_graph.build_structured_answer", return_value=_chef_answer(["番茄鸡蛋羹"])), \
-                patch("agent_graph._build_structure_context", return_value=("上下文", None, False)), \
-                patch("agent_graph._allergens_for_audit", return_value=[]):
+        with patch("agent.graph.build_structured_answer", return_value=_chef_answer(["番茄鸡蛋羹"])), \
+                patch("agent.graph._build_structure_context", return_value=("上下文", None, False)), \
+                patch("agent.graph._allergens_for_audit", return_value=[]):
             return g.structure_answer_node({
                 "messages": msgs, "verify_status": "ok", "verify_violated": [],
             })

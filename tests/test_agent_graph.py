@@ -7,7 +7,7 @@ from unittest.mock import patch
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # 导入被测模块（其导入链会初始化 LLM/编译图，但在 .venv 下已验证可安全 import）
-from agent_graph import (
+from agent.graph import (
     MAIN_AGENT_MAX_TOKENS,
     MAX_VERIFY,
     _current_request_text,
@@ -25,14 +25,14 @@ from agent_graph import (
     tool_budget_finalize_node,
     verify_answer_node,
 )
-from agent_schemas import ChefAnswer, Recipe
+from agent.schemas import ChefAnswer, Recipe
 
 
 class TestMainAgentOutputBudget(unittest.TestCase):
     """主 Agent 要给 DeepSeek 推理 token 和完整正文都留出空间。"""
 
     def test_main_llm_uses_extended_output_budget(self):
-        import agent_graph
+        import agent.graph as agent_graph
 
         self.assertEqual(agent_graph.llm.max_tokens, MAIN_AGENT_MAX_TOKENS)
         self.assertGreater(MAIN_AGENT_MAX_TOKENS, 1024)
@@ -241,7 +241,7 @@ class TestStructureImagePolicy(unittest.TestCase):
 
     def test_concrete_recipe_keeps_recipe_images(self):
         state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
-        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
             result = structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
         self.assertTrue(payload["image_requested"])
@@ -250,7 +250,7 @@ class TestStructureImagePolicy(unittest.TestCase):
 
     def test_toggle_keeps_recipe_image(self):
         state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
-        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
             result = structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
         self.assertTrue(payload["image_requested"])
@@ -260,7 +260,7 @@ class TestStructureImagePolicy(unittest.TestCase):
     def test_explicit_image_phrase_keeps_recipe_image(self):
         # 具体菜品请求中的“配张图”与自动配图规则一致，保留图片元数据。
         state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋，配张图"), AIMessage(content="推荐番茄炒蛋")]}
-        with patch("agent_graph.build_structured_answer", return_value=self._answer_with_image()):
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
             result = structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
         self.assertTrue(payload["image_requested"])
@@ -284,7 +284,7 @@ class TestStructureImagePolicy(unittest.TestCase):
             image_note="",
         )
         state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
-        with patch("agent_graph.build_structured_answer", return_value=answer):
+        with patch("agent.graph.build_structured_answer", return_value=answer):
             result = structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
         self.assertTrue(payload["image_requested"])
@@ -382,7 +382,7 @@ class TestHistoryIsolation(unittest.TestCase):
                 AIMessage(content=f"回答{i}", id=f"a{i}"),
                 HumanMessage(content=f"问题{i}", id=f"h{i}"),
             ])
-        with patch("agent_graph.summary_llm") as mock_llm:
+        with patch("agent.graph.summary_llm") as mock_llm:
             mock_llm.invoke.return_value = AIMessage(content="摘要")
             result = maybe_condense({"messages": msgs})
         removed_ids = {m.id for m in result["messages"] if m.__class__.__name__ == "RemoveMessage"}
@@ -418,7 +418,7 @@ class TestToolBudgetFinalize(unittest.TestCase):
         }
         fake_llm = unittest.mock.Mock()
         fake_llm.invoke.return_value = AIMessage(content="推荐番茄炒蛋，先炒鸡蛋，再下番茄合炒。")
-        with patch("agent_graph.llm", fake_llm):
+        with patch("agent.graph.llm", fake_llm):
             result = tool_budget_finalize_node(state)
         self.assertTrue(result["tool_budget_exhausted"])
         self.assertEqual(len(result["messages"]), 2)
@@ -432,7 +432,7 @@ class TestToolBudgetFinalize(unittest.TestCase):
         }
         fake_llm = unittest.mock.Mock()
         fake_llm.invoke.side_effect = RuntimeError("offline")
-        with patch("agent_graph.llm", fake_llm):
+        with patch("agent.graph.llm", fake_llm):
             result = tool_budget_finalize_node(state)
         content = result["messages"][-1].content
         self.assertTrue(content.strip())

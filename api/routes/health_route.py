@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from configs import KB_CONFIG
+from infrastructure.configs import KB_CONFIG
 from rag.store import resolve_project_path
 
 

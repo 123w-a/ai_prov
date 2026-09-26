@@ -6,12 +6,12 @@ from langchain_core.messages import HumanMessage, AIMessageChunk  # 用户消息
 #   - 不写 / 留空 → 自动用 configs.py 里第一个配好 key 的模型，无需改任何代码
 #   - 想用哪个写哪个：CHEF_PROVIDER=deepseek / gpt，或任何你在 configs 配置过的键名
 from agent import agent  # 调用写好的 LangGraph Agent
-from agent_trace import add_turn_usage, new_turn_usage, record_turn_usage  # 本轮 token 计量
-from oss_utils import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
+from agent.trace import add_turn_usage, new_turn_usage, record_turn_usage  # 本轮 token 计量
+from services.oss import upload_to_oss  # 把图片上传到 OSS 并返回公网 URL
 from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
-from feedback_store import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
+from storage.feedback import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
 from pathlib import Path
-from vision_service import describe_image
+from services.vision import describe_image
 
 # 用户长期偏好文件路径（白名单目录 data/ 下）
 _PREFS_PATH = str(Path(__file__).resolve().parent / "data" / "preferences.txt")
@@ -122,7 +122,7 @@ def load_preferences(session_id: str | None = None) -> str:
                                 "并给出单独替换、份量或口感调整建议。"
                             )
                         try:
-                            from memory_candidates import render_pending_constraints
+                            from storage.memory_candidates import render_pending_constraints
 
                             rendered += render_pending_constraints(session_id)
                         except Exception:
@@ -276,6 +276,24 @@ def _looks_like_structured_payload(content: str) -> bool:
     return isinstance(data, list)
 
 
+def _stream_update_content(content: str):
+    """把节点收口内容分成结构化答案事件或普通正文事件。
+
+    `allergen_block` 不经过 structure_answer，但它仍会返回 ChefAnswer
+    payload；这类内容必须走 answer，不能作为 token 直接展示给用户。
+    """
+    text = str(content or "").strip()
+    if not text:
+        return None
+    if _looks_like_structured_payload(text):
+        try:
+            return ("answer", json.loads(text))
+        except Exception:
+            # JSON 不完整时不要把控制内容外露，保留既有正文保护。
+            return None
+    return ("token", text)
+
+
 # 控制 JSON 的「键指纹」：必须是带引号的对象键，正常中文正文里几乎不会出现
 # `"recipes":` 这种形态，用它区分「模型吐了控制 JSON」和「正文里提到 recipes 这个词」。
 _STREAM_CONTROL_KEYS = (
@@ -395,10 +413,11 @@ def _stream_agent(message, session_id):
                         tail_type = type(msgs[-1]).__name__ if msgs else "none"
                         if msgs and tail_type == "AIMessage":
                             content = _normalize_stream_content(msgs[-1].content).strip()
-                            if content:
+                            event = _stream_update_content(content)
+                            if event:
                                 # 预算耗尽路线不会进入 structure_answer，收口正文必须
                                 # 在这里显式转发，否则前端与落库都会拿到空回答。
-                                yield ("token", content)
+                                yield event
                         continue
                     elif node == "verify_answer":
                         status = (update or {}).get("verify_status")
@@ -415,10 +434,12 @@ def _stream_agent(message, session_id):
                         msgs = (update or {}).get("messages") or []
                         if msgs:
                             content = _normalize_stream_content(msgs[-1].content).strip()
-                            if content:
+                            event = _stream_update_content(content)
+                            if event:
                                 # 过敏原阻断节点不经过 structure_answer，必须在这里
-                                # 显式转发安全文案，否则前端会只看到空回答。
-                                yield ("token", content)
+                                # 显式转发安全文案或结构化答案，否则前端会只看到空回答
+                                # 或把 ChefAnswer JSON 当成普通正文。
+                                yield event
                         continue
                     if node != "structure_answer":
                         continue

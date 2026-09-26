@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from api.routes import preferences_route as pr
 from main import load_preferences
-from nutrition_rules import audit, conditions_from_profile, detect_conditions
+from domain.nutrition_rules import audit, conditions_from_profile, detect_conditions
 
 
 def _client():

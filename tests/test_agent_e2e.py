@@ -21,7 +21,7 @@ RUN_E2E = os.environ.get("RUN_E2E") == "1"
 @unittest.skipUnless(RUN_E2E, "设 RUN_E2E=1 才跑真实 LLM 链路（耗 API 额度/较慢，约 1-3 分钟）")
 class TestAgentE2E(unittest.TestCase):
     def _run(self, text):
-        import agent_graph as ag  # 延迟导入：仅在真正跑 e2e 时初始化 LLM + 编译图
+        import agent.graph as ag  # 延迟导入：仅在真正跑 e2e 时初始化 LLM + 编译图
         tid = "e2e-%d-%d" % (int(time.time() * 1000), os.getpid())
         cfg = {"configurable": {"thread_id": tid}}
         events = []

@@ -7,8 +7,8 @@ import os
 from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from api.schemas import TranscribeData, TranscribeResponse
-from speech_transcriber import transcribe_audio
-from upload_guard import read_spooled_limited
+from services.speech import transcribe_audio
+from infrastructure.upload_guard import read_spooled_limited
 
 router = APIRouter()
 

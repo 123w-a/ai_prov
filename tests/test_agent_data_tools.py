@@ -103,6 +103,56 @@ class AgentDataToolsTest(unittest.TestCase):
         self.assertNotIn("芝麻酱拌面", payload["text"])
         self.assertEqual(payload["allergen_filter"]["removed"], 1)
 
+    def test_amap_poi_search_preserves_valid_coordinates(self):
+        response = {
+            "status": "1",
+            "pois": [{
+                "name": "示例餐厅",
+                "type": "餐饮服务;中餐厅",
+                "location": "112.938123,28.228456",
+                "address": "示例路",
+                "distance": "420",
+                "biz_ext": {"cost": "48"},
+            }],
+        }
+        with patch.object(agent_tools._legacy, "AMAP_KEY", "test-key"), \
+             patch.object(agent_tools._legacy.requests, "get") as get:
+            get.return_value.json.return_value = response
+            results = agent_tools._legacy._amap_poi_search(
+                city="长沙",
+                district="岳麓",
+                query="中餐",
+                budget=50,
+                location="112.930000,28.220000",
+            )
+
+        self.assertEqual(results[0]["lng"], 112.938123)
+        self.assertEqual(results[0]["lat"], 28.228456)
+
+    def test_amap_poi_search_omits_malformed_coordinates(self):
+        response = {
+            "status": "1",
+            "pois": [{
+                "name": "无坐标餐厅",
+                "type": "餐饮服务;中餐厅",
+                "location": "",
+                "address": "示例路",
+                "biz_ext": {},
+            }],
+        }
+        with patch.object(agent_tools._legacy, "AMAP_KEY", "test-key"), \
+             patch.object(agent_tools._legacy.requests, "get") as get:
+            get.return_value.json.return_value = response
+            results = agent_tools._legacy._amap_poi_search(
+                city="长沙",
+                district="岳麓",
+                query="中餐",
+                budget=50,
+            )
+
+        self.assertNotIn("lng", results[0])
+        self.assertNotIn("lat", results[0])
+
     def test_healthy_remix_blocks_recipe_with_allergen(self):
         with patch.object(agent_tools._legacy, "_tool_allergens", return_value=["花生"]):
             payload = json.loads(healthy_remix.func("花生炖鸡：花生、鸡肉、盐"))

@@ -10,11 +10,12 @@ from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-import allergen_rules
-import agent_graph
+from domain import allergen_rules
+import agent.graph as agent_graph
 import main
-import memory_candidates
-from agent_schemas import ChefAnswer, Recipe, Seasoning
+from infrastructure import paths as runtime_paths
+from storage import memory_candidates
+from agent.schemas import ChefAnswer, Recipe, Seasoning
 
 
 class TestAllergenRuleTable(unittest.TestCase):
@@ -214,21 +215,18 @@ class TestNormalization(unittest.TestCase):
         )
 
     def test_unresolved_is_logged_not_silent(self):
-        original_file = allergen_rules.__file__
         allergen_rules._UNRESOLVED_ALREADY_LOGGED.clear()
         with tempfile.TemporaryDirectory() as temp_dir:
-            allergen_rules.__file__ = str(Path(temp_dir) / "allergen_rules.py")
-            try:
+            data_dir = Path(temp_dir) / "data"
+            with patch.object(runtime_paths, "DATA_DIR", data_dir):
                 with warnings.catch_warnings(record=True) as caught:
                     warnings.simplefilter("always")
                     result = allergen_rules.normalize_allergen("完全未知的忌口")
-                log_path = Path(temp_dir) / "data" / "allergen_unresolved.log"
+                log_path = data_dir / "allergen_unresolved.log"
                 self.assertIsNone(result)
                 self.assertTrue(caught)
                 self.assertIn("完全未知的忌口", log_path.read_text(encoding="utf-8"))
-            finally:
-                allergen_rules.__file__ = original_file
-                allergen_rules._UNRESOLVED_ALREADY_LOGGED.clear()
+        allergen_rules._UNRESOLVED_ALREADY_LOGGED.clear()
 
     def test_safe_suggestions_are_audited(self):
         dishes = allergen_rules.suggest_safe_dishes(["crustacean"], k=3)
@@ -265,7 +263,7 @@ class TestVerifyGraph(unittest.TestCase):
         }
 
     def test_allergen_hit_retries_under_limit(self):
-        with patch("agent_graph._allergens_for_audit", return_value=["虾"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.verify_answer_node(self._state("推荐油焖大虾"))
         self.assertEqual(result["verify_status"], "retry")
         self.assertIn("过敏原是绝对硬约束", result["messages"][0].content)
@@ -285,7 +283,7 @@ class TestVerifyGraph(unittest.TestCase):
                     session_id="pending-allergen-session",
                 )
                 with patch(
-                    "agent_graph._active_profile_allergens",
+                    "agent.graph._active_profile_allergens",
                     return_value=["虾"],
                 ):
                     result = agent_graph.verify_answer_node(state)
@@ -300,8 +298,8 @@ class TestVerifyGraph(unittest.TestCase):
             "蚝油、鸡精也一并省掉。"
         )
         with (
-            patch("agent_graph._allergens_for_audit", return_value=["虾"]),
-            patch("agent_graph._merged_conditions", return_value=[]),
+            patch("agent.graph._allergens_for_audit", return_value=["虾"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
         ):
             result = agent_graph.verify_answer_node(self._state(text))
         self.assertEqual(result["verify_status"], "ok")
@@ -315,8 +313,8 @@ class TestVerifyGraph(unittest.TestCase):
             "也不与虾共用同一口锅、同一把铲，避免交叉污染。"
         )
         with (
-            patch("agent_graph._allergens_for_audit", return_value=["虾"]),
-            patch("agent_graph._merged_conditions", return_value=[]),
+            patch("agent.graph._allergens_for_audit", return_value=["虾"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
         ):
             result = agent_graph.verify_answer_node(self._state(text))
         self.assertEqual(result["verify_status"], "ok")
@@ -324,7 +322,7 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertNotIn("messages", result)
 
     def test_allergen_exhaustion_blocks_instead_of_degrading(self):
-        with patch("agent_graph._allergens_for_audit", return_value=["虾"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.verify_answer_node(
                 self._state("推荐油焖大虾", attempts=agent_graph.MAX_VERIFY)
             )
@@ -332,7 +330,7 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertFalse(result.get("verify_warning"))
 
     def test_tool_budget_does_not_degrade_allergen(self):
-        with patch("agent_graph._allergens_for_audit", return_value=["花生"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["花生"]):
             result = agent_graph.verify_answer_node(
                 self._state("花生拌面", tool_budget_exhausted=True)
             )
@@ -340,8 +338,8 @@ class TestVerifyGraph(unittest.TestCase):
 
     def test_chronic_exhaustion_keeps_degraded(self):
         with (
-            patch("agent_graph._allergens_for_audit", return_value=[]),
-            patch("agent_graph._merged_conditions", return_value=["痛风"]),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风"]),
         ):
             result = agent_graph.verify_answer_node(
                 self._state("老火汤炖猪肝", attempts=agent_graph.MAX_VERIFY)
@@ -362,7 +360,7 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertIn("allergen_block", nodes)
 
     def test_safety_node_returns_plain_safe_tip(self):
-        with patch("agent_graph._allergens_for_audit", return_value=["虾"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.allergen_block_node({
                 "messages": [],
                 "verify_violated": ["过敏原:甲壳纲类动物及其制品"],
@@ -377,7 +375,7 @@ class TestVerifyGraph(unittest.TestCase):
         回归背景——此前该节点只回纯文本，前端右栏（只在拿到 ChefAnswer 时渲染）
         完全空白，等于"拦是拦住了，但没有任何可见证据"。
         """
-        with patch("agent_graph._allergens_for_audit", return_value=["虾"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.allergen_block_node({
                 "messages": [HumanMessage(content="今晚吃什么")],
                 "verify_violated": ["过敏原:甲壳纲类动物及其制品"],
@@ -403,9 +401,9 @@ class TestVerifyGraph(unittest.TestCase):
 
     def test_safety_node_uses_optional_allergen_rules(self):
         with (
-            patch("agent_graph._allergens_for_audit", return_value=["芝麻过敏"]),
+            patch("agent.graph._allergens_for_audit", return_value=["芝麻过敏"]),
             patch(
-                "agent_graph.suggest_safe_dishes",
+                "agent.graph.suggest_safe_dishes",
                 return_value=["清炒青菜"],
             ) as suggest,
         ):
@@ -417,8 +415,8 @@ class TestVerifyGraph(unittest.TestCase):
 
     def test_safety_node_does_not_expand_one_member_allergy_to_whole_family(self):
         with (
-            patch("agent_graph._allergens_for_audit", return_value=["虾"]),
-            patch("agent_graph.suggest_safe_dishes", return_value=["清炒青菜"]),
+            patch("agent.graph._allergens_for_audit", return_value=["虾"]),
+            patch("agent.graph.suggest_safe_dishes", return_value=["清炒青菜"]),
         ):
             result = agent_graph.allergen_block_node({
                 "messages": [],
@@ -451,9 +449,9 @@ class TestStructuredReaudit(unittest.TestCase):
             ]
         }
         with (
-            patch("agent_graph._allergens_for_audit", return_value=["花生"]),
-            patch("agent_graph._build_structure_context", return_value=("可结构化上下文", None, False)),
-            patch("agent_graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._build_structure_context", return_value=("可结构化上下文", None, False)),
+            patch("agent.graph.build_structured_answer", return_value=answer),
         ):
             result = agent_graph.structure_answer_node(state)
         self.assertEqual(result["verify_status"], "blocked")
@@ -470,7 +468,7 @@ class TestStructuredReaudit(unittest.TestCase):
 
 class TestGuardrailVisibilityAndStream(unittest.TestCase):
     def test_build_guardrails_includes_allergen(self):
-        with patch("agent_graph._allergens_for_audit", return_value=["虾"]):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             items = agent_graph._build_guardrails(
                 "今晚吃什么",
                 "ok",
@@ -498,6 +496,32 @@ class TestGuardrailVisibilityAndStream(unittest.TestCase):
                 "allergen-stream-test",
             ))
         self.assertIn(("token", "过敏原安全替代文案"), events)
+
+    def test_blocked_structured_payload_is_forwarded_as_answer(self):
+        payload = {
+            "opening": "不能推荐含虾的菜。",
+            "recipes": [],
+            "guardrails": [{"condition": "过敏原:虾"}],
+        }
+
+        def fake_stream(*args, **kwargs):
+            yield (
+                "updates",
+                {
+                    "allergen_block": {
+                        "messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False))]
+                    }
+                },
+            )
+
+        with patch.object(main.agent, "stream", side_effect=fake_stream):
+            events = list(main._stream_agent(
+                HumanMessage(content="今晚吃虾"),
+                "allergen-structured-stream-test",
+            ))
+
+        self.assertIn(("answer", payload), events)
+        self.assertNotIn(("token", json.dumps(payload, ensure_ascii=False)), events)
 
     def test_prompt_mentions_deterministic_audit(self):
         rendered = main._render_health_profile({"allergens": ["虾"]})

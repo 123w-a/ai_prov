@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from agent_schemas import ChefAnswer, Recipe, Seasoning, SourceRef
+from agent.schemas import ChefAnswer, Recipe, Seasoning, SourceRef
 
 
 class TestRecipeSchema(unittest.TestCase):

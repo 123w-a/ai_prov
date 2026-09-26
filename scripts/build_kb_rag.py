@@ -21,7 +21,7 @@ def _make_contextual_llm():
     """
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    from model_name import get_langchain_llm
+    from infrastructure.model_name import get_langchain_llm
 
     # 上下文标签（Contextual Retrieval）是建库期高频、低难度任务，
     # 默认用便宜的 deepseek 生成前缀，不占用贵的 gpt 额度。

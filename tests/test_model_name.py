@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 
-from model_name import (
+from infrastructure.model_name import (
     PatchedChatDeepSeek,
     extract_message_text,
     get_langchain_llm,

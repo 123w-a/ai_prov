@@ -8,8 +8,8 @@ from pydantic import ValidationError  # Pydantic schema 越界/缺字段校验�
 import os
 import json
 
-from model_name import get_langchain_llm
-from agent_schemas import ChefAnswer#就是要回答的东西得到全部规范
+from infrastructure.model_name import get_langchain_llm
+from .schemas import ChefAnswer#就是要回答的东西得到全部规范
 
 
 class CompactPydanticOutputParser(PydanticOutputParser):
@@ -63,6 +63,9 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "9. health_lights：依据 recipes 实际用料给钠/糖/脂肪三盏灯（level 取 green/yellow/red，附一句话 reason）；拿不准的维度可省略。\n"
         "10. 场景化：本结构化整理只服务居家做菜/索要菜谱/烹饪做法；"
         "外出就餐、具体餐厅、食堂、外卖、点餐场景禁止整理成 recipes，必须交由上游纯文本回答承载。\n"
+        "11. chef_tip 必须是具体可执行的管家讲解，写 2-4 句：先说明为什么推荐这道菜，"
+        "再结合当前用户或家庭成员的有效约束说明如何适配，最后给出最重要的火候、份量或替换注意点。"
+        "禁止只写“少油少盐更健康”“注意营养”这类空泛结论；没有相关约束时也要给出一道关键烹饪提醒。\n"
         "{format_instructions}",# 预填充永久不变的模板变量
     ),
     ("human", "对话上下文：\n{context}"),#永远变化的我问这个大模型的问题
@@ -96,6 +99,7 @@ _STRUCTURE_FIX_PROMPT = ChatPromptTemplate.from_messages([#写一个修正的提
         "你是 小膳管家的结构化整理员。下面这次输出未能通过格式校验，请严格按格式说明书"
         "重新输出：默认只保留最合适的一道菜；如果原始上下文明确要求多道菜，才保留对应的多道菜；"
         "同餐家庭成员只写一句话调整建议，不生成第二份完整菜谱；"
+        "chef_tip 必须写 2-4 句具体讲解，说明推荐理由、当前约束下的适配方式和一个可执行的烹饪提醒，禁止空泛套话；"
         "不要输出任何额外文字、解释或代码围栏。\n{format_instructions}",
     ),
     (

@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import feedback_store
-from feedback_store import recent_down_dishes
+from storage import feedback as feedback_store
+from storage.feedback import recent_down_dishes
 from main import build_human_message
 
 

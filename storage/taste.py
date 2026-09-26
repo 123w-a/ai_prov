@@ -9,9 +9,11 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from storage_utils import atomic_write_json
+from infrastructure.paths import DATA_DIR
 
-_LOG = Path(__file__).resolve().parent / "data" / "taste_signals.json"
+from .utils import atomic_write_json
+
+_LOG = DATA_DIR / "taste_signals.json"
 
 # 口味词典：taste → 触发词（菜名/用户原话命中即算一票）
 TASTE_LEXICON: dict[str, list[str]] = {

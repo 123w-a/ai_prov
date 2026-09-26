@@ -2,7 +2,7 @@
 
 import unittest
 
-import allergen_rules
+from domain import allergen_rules
 from experiments.ab_allergen_guardrail import _run_case
 from experiments.allergen_cases import REAL_ALLERGEN_CASES
 

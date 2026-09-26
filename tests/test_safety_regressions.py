@@ -21,11 +21,11 @@ from unittest.mock import patch
 
 from starlette.datastructures import Headers, UploadFile
 
-import agent_graph
-import sessions_store
-import upload_guard
+import agent.graph as agent_graph
+from storage import sessions as sessions_store
+from infrastructure import upload_guard
 from api.routes import chat_route, preferences_route
-from constraint_rules import audit_constraint, build_matrix
+from domain.constraint_rules import audit_constraint, build_matrix
 from fastapi import HTTPException
 
 
@@ -97,9 +97,9 @@ class MemberConflictGuardrailTest(unittest.TestCase):
 
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
-        # 把 agent_graph 的 data/profile.json 指到空目录，避免读到真实档案影响断言
+        # 把 agent_graph 的家庭档案指到空目录，避免读到真实档案影响断言
         self._patch_file = patch.object(
-            agent_graph, "__file__", str(Path(self._temp.name) / "agent_graph.py")
+            agent_graph, "_PROFILE_PATH", Path(self._temp.name) / "profile.json"
         )
         self._patch_file.start()
 
@@ -140,9 +140,8 @@ class MemberConflictGuardrailTest(unittest.TestCase):
 
     def test_broken_profile_reports_degraded_guardrails(self):
         """档案损坏时不能装作「没有约束」，必须如实说护栏降级了。"""
-        data_dir = Path(self._temp.name) / "data"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / "profile.json").write_text("{不是合法 JSON", encoding="utf-8")
+        profile_path = Path(self._temp.name) / "profile.json"
+        profile_path.write_text("{不是合法 JSON", encoding="utf-8")
         items = agent_graph._build_guardrails("今晚吃什么", "ok", [])
         self.assertTrue(any(item.condition == "健康档案不可用" for item in items))
         self.assertTrue(any("降级" in item.rule for item in items))

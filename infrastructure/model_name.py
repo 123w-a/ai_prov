@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 
-from configs import MODEL_CONFIGS, VISION_CONFIGS  # 传入模型参数（已从 .env 加载）
+from .configs import MODEL_CONFIGS, VISION_CONFIGS  # 传入模型参数（已从 .env 加载）
 from langchain_core.language_models import LanguageModelInput
 from langchain_deepseek import ChatDeepSeek  # DeepSeek 原生适配：保留 thinking/reasoning_content
 from langchain_openai import ChatOpenAI  # 创建 LangChain 的 OpenAI 兼容对象

@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 import warnings
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Iterable, List
 
 
@@ -207,7 +206,9 @@ def _log_unresolved(text: object) -> None:
         return
     _UNRESOLVED_ALREADY_LOGGED.add(raw)
     try:
-        path = Path(__file__).resolve().parent / "data" / "allergen_unresolved.log"
+        from infrastructure.paths import DATA_DIR
+
+        path = DATA_DIR / "allergen_unresolved.log"
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(
@@ -555,7 +556,7 @@ def audit_allergens(
     具体分派由 constraint_rules 统一负责，本函数保留原公开签名与返回结构。
     """
     try:
-        from constraint_rules import audit_allergens_dimension
+        from .constraint_rules import audit_allergens_dimension
 
         return audit_allergens_dimension(
             text,

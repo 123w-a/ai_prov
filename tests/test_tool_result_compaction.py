@@ -10,7 +10,7 @@ import unittest
 
 from langchain_core.messages import ToolMessage
 
-import agent_graph as g
+import agent.graph as g
 
 
 def _tool_msg(name, payload):

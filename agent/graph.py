@@ -9,7 +9,8 @@ import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
 import time#重试间隔用
 import sqlite3#持久化短期记忆（断点续跑、循环状态保存）
-from model_name import (
+from infrastructure.paths import DATA_DIR
+from infrastructure.model_name import (
     extract_message_text,
     get_langchain_llm,
     get_summary_llm,
@@ -27,25 +28,32 @@ from langgraph.graph import StateGraph, END, MessagesState#状态图+结束标�
 from langgraph.prebuilt import ToolNode, tools_condition  # 内置工具节点 + 是否继续调用工具的路由判断
 from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断点续跑、循环状态保存）
 
-from agent_trace import trace_node
-from agent_prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
+from .trace import trace_node
+from .prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
-from agent_chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
-from agent_schemas import DishMatrixItem, GuardrailItem  # 结构化输出的确定性注入字段
+from .chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
+from .schemas import DishMatrixItem, GuardrailItem  # 结构化输出的确定性注入字段
 #build_structured_answer标准链+parser检查出错误后再进行重试
-from nutrition_rules import detect_conditions, audit, describe, RULES, conditions_from_profile  # L3 硬护栏：确定性健康禁忌审计
-from allergen_rules import (  # 过敏原 L3 硬护栏：与慢病规则分开，避免改变既有慢病降级语义
+from domain.nutrition_rules import detect_conditions, audit, describe, RULES, conditions_from_profile  # L3 硬护栏：确定性健康禁忌审计
+from domain.allergen_rules import (  # 过敏原 L3 硬护栏：与慢病规则分开，避免改变既有慢病降级语义
     allergen_label,
     audit_allergen_advisories,
     audit_allergens,
     describe_allergens,
     suggest_safe_dishes,
 )
-from constraint_rules import build_matrix, build_member_adjustments
+from domain.constraint_rules import build_matrix, build_member_adjustments
 
 
 # 画像自主采集默认关闭：关闭时候选提取、确认提示和写入链路均不生效。
 PROFILE_MEMORY_ENABLED = False
+
+_PROFILE_PATH = DATA_DIR / "profile.json"
+
+
+def _profile_path() -> Path:
+    """返回统一口径的家庭健康档案路径。"""
+    return _PROFILE_PATH
 
 
 def _active_profile_conditions() -> list:
@@ -55,7 +63,7 @@ def _active_profile_conditions() -> list:
     硬护栏也要同口径启用。读不到档案/解析失败一律返回空（护栏兜底不因档案缺失而崩）。
     """
     try:
-        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        path = _profile_path()
         if not path.exists():
             return []
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -76,7 +84,7 @@ def _active_profile_conditions() -> list:
 def _active_profile_allergens() -> list:
     """读取激活成员的过敏原自由文本；档案缺失或损坏时返回空列表。"""
     try:
-        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        path = _profile_path()
         if not path.exists():
             return []
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -100,7 +108,7 @@ def _active_profile_allergens() -> list:
 def _family_allergens() -> list:
     """读取全家成员过敏原并集；只用于过敏原护栏，不改变慢病条件口径。"""
     try:
-        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        path = _profile_path()
         if not path.exists():
             return []
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -135,16 +143,12 @@ def _allergens_for_audit(session_id: str | None = None) -> list:
     merged = list(_active_profile_allergens())
     if session_id:
         try:
-            from memory_candidates import get_session_allergens
+            from storage.memory_candidates import get_session_allergens
 
             merged.extend(get_session_allergens(session_id))
         except Exception:
             pass
     return list(dict.fromkeys(item for item in merged if item))
-
-
-def _profile_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "profile.json"
 
 
 def _profile_health() -> tuple[dict, str]:
@@ -199,7 +203,7 @@ def _active_member_name() -> str:
 def _family_members() -> list[dict]:
     """读取同餐成员及画像；只读、容错，档案缺失时不阻断主流程。"""
     try:
-        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        path = _profile_path()
         if not path.exists():
             return []
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -372,7 +376,7 @@ rebuild_llms()#import 时构建一次
 
 def failover_llms():
     """当前主 provider 黑洞后切换到备用 provider；返回实际切换到的名字或 None。"""
-    from model_name import _provider_in_cooldown, mark_provider_down, pick_fallback_provider
+    from infrastructure.model_name import _provider_in_cooldown, mark_provider_down, pick_fallback_provider
     with _FAILOVER_LOCK:#并发请求同时触发 failover 时只换一次
         if _provider_in_cooldown(provider):
             return None  # 当前 provider 已在冷却，说明别处刚切过/试过
@@ -747,17 +751,16 @@ def _wants_recipe_images(messages):
         return False
     intent = _classify_turn_intent(messages)
     is_specific = _is_specific_dish_request(text)
-    # 路由层已解析出选定候选菜名（「选第 2 个」）→ 这道菜已落地，直接进配图链路。
-    if _extract_selected_candidate(raw_text):
+    if _extract_selected_candidate(raw_text) or resolve_candidate_pick(messages):
         return True
-    # 泛推荐即使带内部配图开关，也必须先走候选清单。开关只能表达“已获准配图”，
-    # 不能反过来把尚未选定的菜跳过候选阶段。
+    if is_non_recipe_information_request(text):
+        return False
     if intent == "recommend" and not is_specific:
         return False
     if any(marker in raw_text for marker in _INTERNAL_REQUEST_MARKERS):
         return True
-    return intent in ("confirm_one", "change_one") or (
-        intent == "recommend" and is_specific
+    return intent == "confirm_one" or (
+        intent in ("recommend", "change_one") and is_specific
     )
 
 
@@ -804,9 +807,9 @@ def _has_recipe_index_ref(text: str) -> bool:
 # --------------------------------------------------------------------------- #
 # 纯食材字表：出现在「做/吃」后面且整段只有食材字时，说明用户给的是食材而不是一道菜
 _PURE_INGREDIENT_CHARS = set(
-    "鸡鸭鱼肉蛋虾蟹奶豆米面饭菜汤粥粉薯瓜茄葱姜蒜椒菇木耳叶花萝卜笋藕玉米山药枣花生"
+    "鸡鸭鱼肉蛋虾蟹奶豆米面饭菜汤粥粉薯糯瓜茄葱姜蒜椒菇木耳叶花萝卜笋藕玉米山药枣花生"
     "芝麻紫菜海带粉丝年糕豆腐青菜白菜菠菜生菜油菜番茄西红柿土豆胡萝卜洋葱西兰花黄瓜"
-    "南瓜冬瓜丝瓜韭菜芹菜豆角豌豆青豆燕麦藜麦小米糙米黑米意面挂面米粉河粉麦片排"
+    "南瓜冬瓜丝瓜韭菜芹菜豆角豌豆青豆燕麦藜麦小米糙米黑米意面挂面米粉河粉麦片排胸"
 )
 # 这些词作为完整菜名时说明用户没点名菜，而是要一个方向或一顿饭。
 # 不能按“包含单字”判断，否则「徐福烩饭」「番茄鸡蛋面」这类完整菜名会被误杀。
@@ -820,6 +823,7 @@ _GENERIC_DISH_PHRASES = (
     "什么", "点菜", "菜品", "菜谱", "食谱", "推荐", "几道", "几个", "一道", "两道", "三道",
     "吃的", "东西", "家常菜", "快手菜", "简单", "清淡", "健康", "营养", "减脂", "低卡",
     "晚饭", "午饭", "中饭", "早餐", "晚餐", "夜宵", "宵夜",
+    "几种", "哪些", "吃法",
 )
 _TASTE_ONLY_PATTERN = re.compile(
     r"^(?:更|稍微|偏|太|非常)?(?:辣|咸|甜|酸|苦|麻|重口|少盐|少油|低盐|低油)"
@@ -856,6 +860,38 @@ _REQUEST_FILLER_WORDS = (
 # 菜名里不该出现的动词/连词（出现即不是菜名）
 _NON_DISH_VERBS = ("给我", "帮我", "要一", "来一", "做一", "想吃", "我要", "请")
 _CONTEXTUAL_DISH_REFS = ("这个", "这道", "这道菜", "它", "这种", "那种")
+_RECOMMENDATION_COUNT_PATTERN = re.compile(
+    r"(?:推荐|来|要|给|列|挑).{0,4}(?:几道|几个|几款|几种|一些|多点)"
+    r"|(?:有|有没有)(?:哪些|几种|什么做法|什么吃法|什么花样)"
+    r"|做法大全"
+)
+_PURE_INGREDIENT_HOWTO_PATTERN = re.compile(
+    r"([^\s，。、！？；;：:（）()【】\[\]]{1,14}?)"
+    r"(?:怎么做才好吃|怎么做好吃|怎么做|如何做|怎样做|咋做|的做法|做法|怎么烹饪|烹饪方法)"
+)
+_INFORMATION_PREP_PATTERN = re.compile(
+    r"(?:怎么|如何|怎样|咋)"
+    r"(?:处理|清洗|洗|去腥|去皮|腌|腌制|挑选|挑|选购|保存|储存|存放|解冻|泡发|焯水|切)"
+)
+_INFORMATION_SAFETY_PATTERN = re.compile(
+    r"(?:不能一起吃|相克|过敏|忌口|不能吃|吃不了|"
+    r"(?:能|可以)(?:吃|喝).{0,8}(?:吗|么)|"
+    r"会胖吗|会长胖吗|升糖吗|"
+    r"(?:别忘|记得|注意).{0,10}(?:不能吃|吃不了|过敏|忌口))"
+)
+_INFORMATION_COMPARISON_PATTERN = re.compile(
+    r"(?:哪个|哪一种|哪种).{0,8}(?:更|最|比较|好|健康|营养)"
+    r"|(?:和|跟).{1,12}(?:比|哪个)"
+    r"|(?:有什么区别|有何区别|相比之下)"
+)
+_INFORMATION_DRINK_PATTERN = re.compile(
+    r"(?:吃|喝).{0,12}(?:的时候|时).{0,8}(?:喝|吃)什么"
+)
+_INFORMATION_EXPLANATION_PATTERN = re.compile(
+    r"(?:为什么|为何|为啥|解释|说明|讲解|讲一下|讲一讲|讲讲|"
+    r"什么意思|啥意思|含义|原理|原因|缘由|没看懂|看不懂|看不明白|弄不明白|"
+    r"适合谁吃|谁适合吃|适合什么人吃|适合哪些人吃)"
+)
 
 
 def _is_generic_dish_name(name: str) -> bool:
@@ -867,6 +903,53 @@ def _is_generic_dish_name(name: str) -> bool:
     )
 
 
+def _is_pure_ingredient_subject(name: str) -> bool:
+    """整段是否只是食材本身（没有形成一道确定的菜名）。"""
+    normalized = _LEADING_QUANTIFIER.sub("", str(name or "").strip())
+    return bool(normalized) and all(char in _PURE_INGREDIENT_CHARS for char in normalized)
+
+
+def is_non_recipe_information_request(text) -> bool:
+    """是否为不需要菜谱卡片的信息请求（处理、安全、营养、比较、饮品、讲解等）。
+
+    这条判定只处理「文字说明」型问题，不负责用户是否已选定候选。调用方若已有
+    候选锚点或已注入选定菜名，必须先短路选定轮，避免把“第2个，父亲能吃吗”
+    这类带安全追问的选定请求误降级成纯文本。
+    """
+    raw = _current_request_text(text)
+    if not raw:
+        return False
+    if _RECOMMENDATION_COUNT_PATTERN.search(raw):
+        return False
+
+    # 明确点了一道非纯食材的菜并要求制作时，安全追问不能把整轮降级掉。
+    # 例如「帮我做个番茄炒蛋，父亲高血压能吃吗」仍应走单菜卡片和安全复核。
+    for match in _DISH_REQUEST_PATTERN.finditer(raw):
+        name = _LEADING_QUANTIFIER.sub("", match.group(1).strip())
+        if (
+            len(name) >= 2
+            and not _is_generic_dish_name(name)
+            and not _is_pure_ingredient_subject(name)
+            and not _DISH_NAME_NOISE.search(name)
+        ):
+            return False
+
+    howto_match = _PURE_INGREDIENT_HOWTO_PATTERN.search(raw)
+    if howto_match and _is_pure_ingredient_subject(howto_match.group(1)):
+        return True
+    if _INFORMATION_PREP_PATTERN.search(raw):
+        return True
+    if _INFORMATION_SAFETY_PATTERN.search(raw):
+        return True
+    if _INFORMATION_COMPARISON_PATTERN.search(raw):
+        return True
+    if _INFORMATION_DRINK_PATTERN.search(raw):
+        return True
+    if _INFORMATION_EXPLANATION_PATTERN.search(raw):
+        return True
+    return False
+
+
 def _is_specific_dish_request(text) -> bool:
     """用户是否已经点名了一道具体的菜。
 
@@ -876,6 +959,10 @@ def _is_specific_dish_request(text) -> bool:
     """
     raw = str(text or "").strip()
     if not raw:
+        return False
+    if _RECOMMENDATION_COUNT_PATTERN.search(raw):
+        return False
+    if is_non_recipe_information_request(raw):
         return False
     if _NEGATED_EATING_PATTERN.search(raw) and not _DISH_REQUEST_PATTERN.search(raw):
         return False
@@ -902,7 +989,7 @@ def _is_specific_dish_request(text) -> bool:
             continue
         if _TASTE_COMPLAINT_PATTERN.search(name):
             continue
-        if all(char in _PURE_INGREDIENT_CHARS for char in name):
+        if _is_pure_ingredient_subject(name):
             continue
         if _DISH_NAME_NOISE.search(name):
             continue
@@ -985,34 +1072,30 @@ def _has_delivered_card(messages) -> bool:
 def _is_candidate_turn(messages) -> bool:
     """本轮是否走「候选清单」阶段（只给编号候选，不出卡片不配图）。"""
     intent = _classify_turn_intent(messages)
-    if intent not in ("recommend", "other"):
+    if intent not in ("recommend", "change_one", "other"):
         return False
     raw = _latest_user_text(messages, strip_internal=False)
     text = _current_request_text(raw)
     if not text or _is_specific_dish_request(text):
         return False
-    # 路由层已经解析出「就第2个 → 具体菜名」并注入时，本轮是**选定落地轮**，
-    # 绝不是新一轮泛推荐。没有这道闸门，「选第 2 个，但不要放青椒…」会因
-    # 单消息快照判不出序号意图而漏进候选阶段，把刚选定的菜退回成新候选清单。
-    if _extract_selected_candidate(raw):
+    # 路由层或 checkpoint 已经把候选序号解析成一道确定菜品时，本轮是选定轮，
+    # 不能被“换成/改成”等词重新判回候选轮。
+    if _extract_selected_candidate(raw) or resolve_candidate_pick(messages):
         return False
-    # 上一轮已经交付了卡片、本轮又是「就按这个方案执行」这类确认语时，
-    # 保持卡片链路，不要再退回候选清单（否则刚交付的卡片和配图会被收走）。
+    if is_non_recipe_information_request(text):
+        return False
     if _has_delivered_card(messages) and any(
         marker in text for marker in _CONFIRM_EXECUTION_MARKERS
     ):
         return False
-    # 路由已经注入配图开关时，正文若是“番茄炒蛋”这类裸菜名，说明本菜已选定，
-    # 不能再把菜名本身误当泛推荐。只有开关外仍是“推荐几道菜”这类泛意图才保留候选阶段。
     if (
         any(marker in raw for marker in _INTERNAL_REQUEST_MARKERS)
         and not _is_generic_dish_name(text)
     ):
         return False
-    # 健康问答（能不能吃 / 适合吗）不是点菜需求，保持原对话链路
     if re.search(r"(能不能吃|可不可以吃|能吃|能喝|适合吃|该不该吃|要不要吃|可以吃吗)", text):
         return False
-    # 闲聊（intent=other）只有真的点了食材才算点菜需求，避免「你好」也被列一顿候选
+    # intent=other 时，只有明确给了食材才允许进入推荐流程，避免把闲聊列成菜单。
     if intent == "other" and not _mentions_food_ingredients(text):
         return False
     return True
@@ -1415,6 +1498,8 @@ def _classify_turn_intent(messages) -> str:
     ):
         return "confirm_one"
 
+    if _RECOMMENDATION_COUNT_PATTERN.search(current):
+        return "recommend"
     if _is_specific_dish_request(current) or _looks_like_dining_request(current):
         return "recommend"
     return "other"
@@ -2106,7 +2191,7 @@ def _family_conflict_guardrails(dish_matrix) -> list:
     这是安全表达问题而不只是 UI 问题：矩阵已判定某成员不可吃，
     右栏却显示「未触发额外健康约束」，等于当着用户的面自相矛盾。
     """
-    from allergen_rules import UNRESOLVED_ALLERGEN_ADVICE
+    from domain.allergen_rules import UNRESOLVED_ALLERGEN_ADVICE
 
     items = []
     for row in dish_matrix or []:
@@ -2239,6 +2324,11 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         return {"messages": []}
     if _is_non_food_followup(latest_text):
         return {"messages": []}
+    if (
+        is_non_recipe_information_request(latest_text)
+        and not _is_dish_pick_turn(messages)
+    ):
+        return {"messages": []}
     # 询问/澄清轮次不出卡片：正文整段是一条追问时保持纯文本，
     # 否则「先问用户想法」和「直接给卡片」会同时发生（语义自相矛盾）。
     # 例外：「已经选定了一道菜，只是顺带问一句」不算追问——否则用户确认完却拿不到卡片和图。
@@ -2246,7 +2336,7 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         return {"messages": []}
     # 两阶段点菜第一阶段标记：泛推荐轮只出候选清单，不出卡片、不配图。
     # 但判定结果要等到「结构化过敏原复核」之后才生效——安全拦截优先于产品形态。
-    is_candidate_turn = _is_candidate_turn(messages) or _is_candidate_revision_turn(messages)
+    is_candidate_turn = _is_candidate_turn(messages)
     wants_images = _wants_recipe_images(messages)
     is_new_image_request = (
         _latest_user_has_image(messages)
@@ -2262,20 +2352,6 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     # 候选正文已经成形时，候选锚点不应依赖后续菜谱结构化链是否解析成功。
     # 实测结构化链连续 parse-fail 会把用户已经看到的编号清单一起吞掉，下一轮
     # 「选第2个」便没有锚点。这里先做确定性快速路径，且照旧经过过敏原过滤。
-    if is_candidate_turn:
-        visible_candidate_names = _filter_candidate_names(
-            _extract_candidate_names(_candidate_source_text(messages) or opening),
-            state.get("session_id"),
-        )
-        visible_candidate_payload = _candidate_list_payload(
-            opening, visible_candidate_names, latest_text, state
-        )
-        if visible_candidate_payload is not None:
-            return {
-                "messages": [
-                    AIMessage(content=json.dumps(visible_candidate_payload, ensure_ascii=False))
-                ]
-            }
     # 候选锚点只约束 chef_think 生成本轮结论，不能在结构化阶段再次覆盖结论。
     # `_build_structure_context` 已明确要求菜名和食材以本轮 Agent 回答为准；若用户同时
     # 补充了新条件，Agent 可能据此调整菜品，recipes 必须跟随这个最终结论，不能被旧锚点拉回。
@@ -2373,13 +2449,17 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         if is_candidate_turn:
             candidate_names = _filter_candidate_names(
                 _extract_candidate_names(_candidate_source_text(messages) or opening),
-                state.get("session_id"),
+                session_id=state.get("session_id"),
             )
             if len(candidate_names) < 2:
-                candidate_names = _filter_candidate_names([
-                    str(recipe.name).strip() for recipe in answer.recipes
-                    if str(recipe.name).strip()
-                ], state.get("session_id"))
+                candidate_names = _filter_candidate_names(
+                    [
+                        str(recipe.name).strip()
+                        for recipe in answer.recipes
+                        if str(recipe.name).strip()
+                    ],
+                    session_id=state.get("session_id"),
+                )
             candidate_payload = _candidate_list_payload(
                 opening, candidate_names, latest_text, state
             )
@@ -2462,7 +2542,21 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
                 AIMessage(content=json.dumps(payload, ensure_ascii=False))#ai结构化完的消息加进 messages
             ]
         }
-    except Exception:#降级：不追加任何消息，前端按旧 markdown 渲染 opening
+    except Exception:#降级：候选轮保留已经流式展示的候选清单
+        if is_candidate_turn:
+            candidate_names = _filter_candidate_names(
+                _extract_candidate_names(_candidate_source_text(messages) or opening),
+                session_id=state.get("session_id"),
+            )
+            candidate_payload = _candidate_list_payload(
+                opening, candidate_names, latest_text, state
+            )
+            if candidate_payload is not None:
+                return {
+                    "messages": [
+                        AIMessage(content=json.dumps(candidate_payload, ensure_ascii=False))
+                    ]
+                }
         return {"messages": []}#不变成节构卡片了
 
 # --------------------------------------------------------------------------- #
@@ -2645,10 +2739,10 @@ def profile_memory_node(state: ChefState):
     if not text:
         return {}
     try:
-        from memory_candidates import extract_candidates, remember_candidates
+        from storage.memory_candidates import extract_candidates, remember_candidates
 
         family = {}
-        path = Path(__file__).resolve().parent / "data" / "profile.json"
+        path = _profile_path()
         if path.exists():
             family = json.loads(path.read_text(encoding="utf-8"))
         candidates = extract_candidates(text, family.get("members") or [])
@@ -2675,6 +2769,15 @@ def verify_route(state: ChefState) -> str:
     # 安全相关的两个终态优先返回，不被下面的追问短路影响（retry 必须回炉重生成）
     if status in ("blocked", "retry"):
         return status
+    if (
+        is_non_recipe_information_request(
+            _current_request_text(
+                _latest_user_text(state.get("messages", []), strip_internal=False)
+            )
+        )
+        and not _is_dish_pick_turn(state.get("messages", []))
+    ):
+        return "plain"
     if state.get("tool_budget_exhausted") and not (
         _is_dish_pick_turn(state.get("messages", []))
         or _wants_recipe_images(state.get("messages", []))

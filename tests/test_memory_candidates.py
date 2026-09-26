@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.routes import preferences_route as pr
-import memory_candidates
+from storage import memory_candidates
 
 
 class MemoryCandidateTest(unittest.TestCase):

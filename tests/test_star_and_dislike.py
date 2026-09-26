@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import sessions_store
+from storage import sessions as sessions_store
 import api.routes.preferences_route as pr
 import api.routes.session_route as sr
 

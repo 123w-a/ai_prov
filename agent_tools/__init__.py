@@ -13,7 +13,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from allergen_rules import audit_allergens
+from domain.allergen_rules import audit_allergens
 from rag.query_transform import hyde_transform, multi_query_transform
 from rag.retriever import search as search_knowledge_base
 
@@ -47,7 +47,7 @@ def _build_transform():#返回一个可以直接用的涵数造出一台打印�
 
 
 def _load_legacy_tools():#简化导入包要取的名字，即可用旧导入也可以用新导入法
-    legacy_path = Path(__file__).resolve().parent.parent / "agent_tools.py"
+    legacy_path = Path(__file__).resolve().parent / "legacy.py"
     spec = importlib.util.spec_from_file_location(
         "_legacy_agent_tools",
         legacy_path,

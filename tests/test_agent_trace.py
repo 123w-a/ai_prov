@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_trace
+from agent import trace as agent_trace
 
 
 class AgentTraceTest(unittest.TestCase):

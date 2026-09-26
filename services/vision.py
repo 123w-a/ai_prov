@@ -2,7 +2,7 @@
 
 from langchain_core.messages import HumanMessage
 
-from model_name import get_vision_llm
+from infrastructure.model_name import get_vision_llm
 
 
 def _content_to_text(content) -> str:

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ChefAnswer, DishMatrixItem, GuardrailItem, Recipe, SourceRef } from '../types'
+import type { ChefAnswer, DishMatrixItem, GuardrailItem, HealthLight, Recipe, SourceRef } from '../types'
 import { formatSourceSection } from '../utils/sourceFormat'
 import { renderRichText } from '../utils/richText'
 import { submitMealFeedback } from '../api/client'
@@ -348,21 +348,86 @@ function FamilyDiningAdjustments({
   )
 }
 
-function cleanExplainText(source?: string): string {
-  return (source || '')
+function cleanExplainText(source?: unknown): string {
+  return (typeof source === 'string' ? source : source == null ? '' : String(source))
     .replace(/\*\*/g, '')
     .trim()
 }
 
+function normalizeAnswerForRender(answer: ChefAnswer): ChefAnswer {
+  const raw = (answer && typeof answer === 'object' ? answer : {}) as Partial<ChefAnswer>
+  const rawRecipes = Array.isArray(raw.recipes) ? raw.recipes : []
+  const recipes: Recipe[] = rawRecipes
+    .filter((recipe): recipe is Recipe => Boolean(recipe && typeof recipe === 'object'))
+    .map((recipe) => ({
+      ...recipe,
+      name: cleanExplainText(recipe.name),
+      intro: cleanExplainText(recipe.intro),
+      difficulty: Number.isFinite(Number(recipe.difficulty)) ? Number(recipe.difficulty) : 1,
+      nutrition: Number.isFinite(Number(recipe.nutrition)) ? Number(recipe.nutrition) : 1,
+      seasonings: (Array.isArray(recipe.seasonings) ? recipe.seasonings : [])
+        .filter((seasoning) => Boolean(seasoning && typeof seasoning === 'object'))
+        .map((seasoning) => ({
+          name: cleanExplainText(seasoning.name),
+          amount: cleanExplainText(seasoning.amount),
+        })),
+      steps: (Array.isArray(recipe.steps) ? recipe.steps : [])
+        .map((step) => cleanExplainText(step))
+        .filter(Boolean),
+      image_url: typeof recipe.image_url === 'string' ? recipe.image_url : null,
+      image_ai_generated: Boolean(recipe.image_ai_generated),
+      image_note: cleanExplainText(recipe.image_note),
+    }))
+  const guards = (Array.isArray(raw.guardrails) ? raw.guardrails : [])
+    .filter((guard): guard is GuardrailItem => Boolean(guard && typeof guard === 'object'))
+  const sources = (Array.isArray(raw.sources) ? raw.sources : [])
+    .filter((source): source is SourceRef => Boolean(source && typeof source === 'object'))
+  const lights = (Array.isArray(raw.health_lights) ? raw.health_lights : [])
+    .filter((light): light is HealthLight => Boolean(light && typeof light === 'object'))
+  const matrix = (Array.isArray(raw.dish_matrix) ? raw.dish_matrix : [])
+    .filter((row): row is DishMatrixItem => Boolean(row && typeof row === 'object'))
+  const adjustments = (Array.isArray(raw.member_adjustments) ? raw.member_adjustments : [])
+    .map((line) => cleanExplainText(line))
+    .filter(Boolean)
+
+  return {
+    ...raw,
+    opening: cleanExplainText(raw.opening),
+    recipes,
+    image_url: typeof raw.image_url === 'string' ? raw.image_url : null,
+    image_ai_generated: Boolean(raw.image_ai_generated),
+    image_requested: Boolean(raw.image_requested),
+    image_note: cleanExplainText(raw.image_note),
+    chef_tip: cleanExplainText(raw.chef_tip),
+    sources,
+    guardrails: guards,
+    health_lights: lights,
+    member_adjustments: adjustments,
+    dish_matrix: matrix,
+    primary_member: cleanExplainText(raw.primary_member),
+  }
+}
+
+function buildExplainText(answer: ChefAnswer): string {
+  const opening = cleanExplainText(answer.opening)
+  const chefTip = cleanExplainText(answer.chef_tip)
+  if (!opening) return chefTip
+  if (!chefTip || opening.includes(chefTip) || chefTip.includes(opening)) return opening
+  return `${opening}\n\n${chefTip}`
+}
+
 export function RecipeCard({ answer }: { answer: ChefAnswer }) {
   const [view, setView] = useState<'card' | 'explain'>('card')
-  const recipes = answer.recipes ?? []
-  const guards = answer.guardrails ?? []
-  const sources = answer.sources ?? []
-  const lights = answer.health_lights ?? []
+  const safeAnswer = normalizeAnswerForRender(answer)
+  const recipes = safeAnswer.recipes
+  const guards = safeAnswer.guardrails ?? []
+  const sources = safeAnswer.sources ?? []
+  const lights = safeAnswer.health_lights ?? []
+  const adjustments = safeAnswer.member_adjustments ?? []
+  const matrix = safeAnswer.dish_matrix ?? []
   const LIGHT_ICON: Record<string, string> = { green: '🟢', yellow: '🟡', red: '🔴' }
   if (recipes.length === 0) return null
-  const explainText = cleanExplainText(answer.opening)
+  const explainText = buildExplainText(safeAnswer)
 
   return (
     <div className="recipe-stack">
@@ -414,29 +479,29 @@ export function RecipeCard({ answer }: { answer: ChefAnswer }) {
               key={`${recipe.name}-${index}`}
               recipe={recipe}
               index={index}
-              fallbackImage={index === 0 ? answer.image_url : undefined}
-              fallbackAiImage={index === 0 ? answer.image_ai_generated : undefined}
-              imageNote={recipe.image_note || (index === 0 ? answer.image_note : undefined)}
-              imageRequested={answer.image_requested}
+              fallbackImage={index === 0 ? safeAnswer.image_url : undefined}
+              fallbackAiImage={index === 0 ? safeAnswer.image_ai_generated : undefined}
+              imageNote={recipe.image_note || (index === 0 ? safeAnswer.image_note : undefined)}
+              imageRequested={safeAnswer.image_requested}
             />
           ))}
 
-          {answer.chef_tip && (
+          {safeAnswer.chef_tip && (
             <aside className="chef-note">
               <span className="chef-note-icon">
                 <Icon name="chef" size={22} />
               </span>
               <div>
                 <strong>管家叮嘱</strong>
-                <p>{answer.chef_tip}</p>
+                <p>{safeAnswer.chef_tip}</p>
               </div>
             </aside>
           )}
 
           <FamilyDiningAdjustments
-            matrix={answer.dish_matrix ?? []}
-            adjustments={answer.member_adjustments ?? []}
-            primaryMember={answer.primary_member}
+            matrix={matrix}
+            adjustments={adjustments}
+            primaryMember={safeAnswer.primary_member}
           />
 
           <InlineEvidence guards={guards} sources={sources} />

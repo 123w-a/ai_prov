@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import api.routes.preferences_route as pr
-from taste_store import detect_tastes, record_signals, suggest
+from storage.taste import detect_tastes, record_signals, suggest
 
 
 class DetectTest(unittest.TestCase):
@@ -25,7 +25,7 @@ class SuggestTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "taste_signals.json"
 
     def test_threshold_and_window(self):
-        with patch("taste_store._LOG", self.log):
+        with patch("storage.taste._LOG", self.log):
             self.assertIsNone(suggest())
             record_signals(["辣"], "s1", 1)   # 1 次 → 不够阈值
             self.assertIsNone(suggest(min_count=2))

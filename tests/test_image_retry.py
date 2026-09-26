@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import image_retry_queue as q
-import sessions_store
+from services import image_retry_queue as q
+from storage import sessions as sessions_store
 
 
 def _session(sid, messages):

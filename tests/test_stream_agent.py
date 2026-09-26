@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -91,6 +92,29 @@ class TestToolBudgetStream(unittest.TestCase):
             events = list(main._stream_agent(HumanMessage(content="推荐一道番茄炒蛋"), "test-thread"))
 
         self.assertIn(("token", "已基于当前检索结果完成收口。"), events)
+
+    def test_finalize_structured_payload_is_forwarded_as_answer(self):
+        payload = {
+            "opening": "已完成安全收口。",
+            "recipes": [],
+            "guardrails": [],
+        }
+
+        def fake_stream(*args, **kwargs):
+            yield (
+                "updates",
+                {
+                    "tool_budget_finalize": {
+                        "messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False))]
+                    }
+                },
+            )
+
+        with patch.object(main.agent, "stream", side_effect=fake_stream):
+            events = list(main._stream_agent(HumanMessage(content="推荐一道菜"), "test-thread"))
+
+        self.assertIn(("answer", payload), events)
+        self.assertNotIn(("token", json.dumps(payload, ensure_ascii=False)), events)
 
 
 class TestImageTextProxy(unittest.TestCase):

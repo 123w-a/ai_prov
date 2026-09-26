@@ -11,8 +11,8 @@ import base64
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from api.routes.service_route import _split_inventory_text
-from storage_utils import atomic_write_json
-from upload_guard import validate_image_upload
+from storage.utils import atomic_write_json
+from infrastructure.upload_guard import validate_image_upload
 
 router = APIRouter()
 _FILE = Path(__file__).resolve().parents[2] / "data" / "fridge.json"
@@ -46,7 +46,7 @@ def _parse_vision_json(text: str):
 def _vision_extract_items(image_bytes: bytes, content_type: str) -> list[dict]:
     """调用视觉模型把冰箱/食材照片转成结构化食材清单。"""
     from langchain_core.messages import HumanMessage
-    from model_name import get_vision_llm
+    from infrastructure.model_name import get_vision_llm
 
     llm = get_vision_llm(temperature=0, max_tokens=600, timeout=45)
     image_url = "data:{};base64,{}".format(content_type, base64.b64encode(image_bytes).decode("ascii"))

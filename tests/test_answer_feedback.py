@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import api.routes.session_route as sr
-from sessions_store import _read_session, _write_session, patch_message_feedback
+from storage.sessions import _read_session, _write_session, patch_message_feedback
 
 
 def _client():
@@ -40,9 +40,9 @@ class AnswerFeedbackTest(unittest.TestCase):
                 }, ensure_ascii=False)},
             ],
         }
-        patcher_r = patch("sessions_store._read_session", lambda sid: self.session)
+        patcher_r = patch("storage.sessions._read_session", lambda sid: self.session)
         patcher_sr = patch.object(sr, "_read_session", lambda sid: self.session)
-        patcher_w = patch("sessions_store._write_session", lambda data: None)
+        patcher_w = patch("storage.sessions._write_session", lambda data: None)
         for p in (patcher_r, patcher_sr, patcher_w):
             p.start()
             self.addCleanup(p.stop)
