@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from langchain_core.messages import HumanMessage
 from starlette.datastructures import Headers, UploadFile
 
 import agent.graph as agent_graph
@@ -342,6 +343,10 @@ class HomeServiceIntentTest(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertNotEqual(chat_route._classify_turn_intent(text), "home_service")
+                self.assertNotEqual(
+                    agent_graph._classify_turn_intent([HumanMessage(content=text)]),
+                    "home_service",
+                )
 
     def test_real_private_chef_request_still_detected(self):
         for text in (
@@ -352,11 +357,21 @@ class HomeServiceIntentTest(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertEqual(chat_route._classify_turn_intent(text), "home_service")
+                self.assertEqual(
+                    agent_graph._classify_turn_intent([HumanMessage(content=text)]),
+                    "home_service",
+                )
 
     def test_plain_private_chef_dish_is_no_longer_redirected(self):
         """「想吃私厨菜」是口味需求，不该被罐头文案接管。"""
         self.assertNotEqual(
             chat_route._classify_turn_intent("我想吃私厨菜"), "home_service"
+        )
+        self.assertNotEqual(
+            agent_graph._classify_turn_intent(
+                [HumanMessage(content="我想吃私厨菜")]
+            ),
+            "home_service",
         )
 
 

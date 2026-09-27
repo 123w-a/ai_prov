@@ -34,7 +34,7 @@ class VisionParseTest(unittest.TestCase):
 class VisionEndpointTest(unittest.TestCase):
     # 上传层现在会嗅探真实文件头（只信内容、不信客户端声明的 content-type），
     # 所以夹具必须是真图片头，否则会被 400 挡在业务逻辑之前。
-    # 上传校验本身由 tests/test_safety_regressions.py 的 UploadGuardTest 覆盖。
+    # 上传校验本身由 tests/domain/test_safety_regressions.py 的 UploadGuardTest 覆盖。
     _JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
     def setUp(self):

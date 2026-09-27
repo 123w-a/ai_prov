@@ -7,12 +7,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
 
-from infrastructure.paths import DATA_DIR
+from infrastructure.paths import LOG_DIR
 
 
 _CONFIG_LOCK = Lock()
 _CONFIGURED = False
-LOG_PATH = DATA_DIR / "app.log"
+# 日志写到项目之外的用户级目录（见 infrastructure/paths.py 的 LOG_DIR 说明）
+LOG_PATH = LOG_DIR / "app.log"
 MAX_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 5
 

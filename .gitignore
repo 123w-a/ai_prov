@@ -128,6 +128,7 @@ data/profile.json
 
 # 配图分流判断门测试（AI 临时验证测试，按用户要求不入库）
 tests/test_image_gating.py
+tests/**/test_image_gating.py
 
 # 前端构建缓存（之前误提交，应忽略，可重建）
 frontend/web/.vite-cache/

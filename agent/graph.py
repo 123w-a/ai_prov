@@ -30,6 +30,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver#持久化短期记忆（断�
 
 from .trace import trace_node
 from .prompts import SYSTEM_PROMPT#最上层的提示词从这里输出ai的最先回复
+from .turn_decision import (
+    classify_turn_intent as _classify_turn_intent_shared,
+    is_recipe_change_request as _is_recipe_change_request,
+    is_restaurant_ordering_scene as _is_restaurant_ordering_scene,
+    looks_like_dining_request as _looks_like_dining_request,
+    looks_like_home_service_request as _looks_like_home_service_request,
+)
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from .chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
 from .schemas import DishMatrixItem, GuardrailItem  # 结构化输出的确定性注入字段
@@ -1241,7 +1248,7 @@ def _older_candidates(messages, limit=8):
 
     ⚠️ 只用于「用户提的序号已经指不到东西了 → 回问一句并把清单重新登记」这类兜底，
     **绝不**用它把旧序号直接当成本轮选定 —— 那会破坏
-    `tests/test_candidate_flow.py::test_stale_candidates_after_newer_turn_are_not_confirm`
+    `tests/agent/test_candidate_flow.py::test_stale_candidates_after_newer_turn_are_not_confirm`
     冻结的产品语义（候选之后隔了别的对话轮，旧序号就不再算选定）。
     简言之：这里只回答「上一份清单长什么样」，不回答「用户这次选了哪道」。
     """
@@ -1427,82 +1434,31 @@ def _filter_candidate_names(names, session_id: str | None = None) -> list:
     return kept
 
 
-def _looks_like_home_service_request(text: str) -> bool:
-    text = str(text or "")
-    markers = ("上门", "到家服务", "私厨", "厨师到家", "请厨师", "预约厨师", "上门做")
-    return any(marker in text for marker in markers)
-
-
 def _classify_turn_intent(messages) -> str:
     """确定性意图门：recommend | confirm_one | change_one | followup | restaurant | home_service | other。"""
     text = _latest_user_text(messages)
     if not text:
         return "other"
     current = _current_request_text(text)
-    if _looks_like_home_service_request(current):
-        return "home_service"
-    if _is_restaurant_ordering_scene(current):
-        return "restaurant"
-
     recipe_names = _recent_recipe_names(messages)
     candidates = _recent_candidates(messages)
     has_prior_recipe = bool(recipe_names)
     has_prior_candidates = bool(candidates)
-
-    if has_prior_candidates and _is_candidate_revision_turn(messages):
-        return "recommend"
-
-    change_words = (
-        "没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的",
-        "换成", "改成", "做成", "换做", "改做", "改为", "变成", "没食欲",
+    return _classify_turn_intent_shared(
+        current,
+        is_specific_dish=_is_specific_dish_request(current),
+        execute_plan=is_execute_plan_request(current),
+        candidate_index=parse_candidate_index(current),
+        has_prior_recipe=has_prior_recipe,
+        has_prior_candidates=has_prior_candidates,
+        is_candidate_revision=(
+            has_prior_candidates and _is_candidate_revision_turn(messages)
+        ),
+        has_recipe_index_ref=_has_recipe_index_ref(current),
+        mentions_recent_recipe=_mentions_recent_recipe(current, recipe_names),
+        mentions_recent_candidate=_mentions_recent_recipe(current, candidates),
+        recommendation_count=bool(_RECOMMENDATION_COUNT_PATTERN.search(current)),
     )
-    recipe_replacement_words = ("面", "汤", "菜", "饭", "粥", "粉", "肉", "鱼", "鸡", "牛", "虾", "豆腐")
-    broad_change_words = ("没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的", "没食欲")
-    if any(word in current for word in broad_change_words) or (
-        any(word in current for word in change_words)
-        and any(word in current for word in recipe_replacement_words)
-    ):
-        return "change_one"
-
-    if is_execute_plan_request(current):
-        return "confirm_one"
-
-    # 从候选列表里选（「就第2个」「第二个」）必须真有候选锚点才算确认，
-    # 避免「第2个问题」这类无关序号被当成点菜。
-    if has_prior_candidates and parse_candidate_index(current):
-        return "confirm_one"
-
-    confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道")
-    if any(word in current for word in confirm_words) or (
-        _has_recipe_index_ref(current)
-        and (has_prior_recipe or has_prior_candidates)
-        and (
-            _mentions_recent_recipe(current, recipe_names)
-            or _mentions_recent_recipe(current, candidates)
-        )
-    ):
-        return "confirm_one"
-
-    followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪", "怎么吃")
-    if (has_prior_recipe or has_prior_candidates) and not _mentions_recent_recipe(current, recipe_names) and any(word in current for word in followup_words):
-        return "followup"
-
-    # 直接点名候选里的一道菜（「就要青菜豆腐汤」）同样是选定，但必须排在追问之后：
-    # 带健康调整语气的（「青菜豆腐汤少放点盐」）算追问，不算选定。
-    adjust_words = ("清淡", "少", "淡", "不要", "别", "盐", "油", "热量", "钠", "糖", "脂肪", "能不能", "可以吗", "适合吗", "怎么吃")
-    if (
-        has_prior_candidates
-        and _mentions_recent_recipe(current, candidates)
-        and len(current) <= 14
-        and not any(word in current for word in adjust_words)
-    ):
-        return "confirm_one"
-
-    if _RECOMMENDATION_COUNT_PATTERN.search(current):
-        return "recommend"
-    if _is_specific_dish_request(current) or _looks_like_dining_request(current):
-        return "recommend"
-    return "other"
 
 
 def _is_new_ingredient_image_request(text):
@@ -2078,22 +2034,6 @@ def _is_dining_scene(text: str) -> bool:
     return bool(_re.search(r"食堂|外卖|外吃|外出就餐|点餐|吃饭|省钱吃|怎么吃|餐厅|档口|套餐|就餐", text))
 
 
-def _looks_like_dining_request(text: str) -> bool:
-    """识别做菜、点餐、饮食建议等饮食相关请求。"""
-    text = str(text or "").strip()
-    if not text:
-        return False
-    markers = (
-        "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
-        "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
-        "推荐", "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
-        "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
-        "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
-        "痛风", "尿酸", "健康饮食", "附近吃什么",
-    )
-    return any(marker in text for marker in markers)
-
-
 def _is_non_food_followup(text: str) -> bool:
     """识别“锂电池怎么没有用上”这类非食材追问，避免再附一张菜谱卡片。"""
     raw = str(text or "").strip()
@@ -2103,30 +2043,6 @@ def _is_non_food_followup(text: str) -> bool:
         r"(?:怎么|为什么|咋)?(?:没有|没|未).{0,4}(?:用上|用|算上|放进去|考虑)",
         raw,
     ))
-
-
-def _is_restaurant_ordering_scene(text: str) -> bool:
-    """餐厅/外食点餐请求只保留纯文本，不进入菜谱卡片结构化。"""
-    text = str(text or "").strip()
-    if not text:
-        return False
-    restaurant_markers = (
-        "餐厅", "饭店", "饭馆", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
-        "出去吃", "出去吃饭", "在外吃", "在外面吃", "下馆子", "聚餐",
-        "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
-    )
-    restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
-    signature_words = ("招牌", "推荐几道菜", "推荐几个菜", "点什么菜")
-    cooking_markers = (
-        "做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅",
-        "食材", "冰箱", "在家做", "自己做",
-    )
-    if any(marker in text for marker in cooking_markers):
-        return False
-    return any(marker in text for marker in restaurant_markers) or (
-        any(word in text for word in signature_words)
-        and any(ctx in text for ctx in restaurant_context)
-    )
 
 
 def _latest_user_text(messages, *, strip_internal=True):
@@ -2420,7 +2336,7 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
         # 声明式「约束纠正」轮：用户是在纠正成员/慢病的归属或有效性（「并没有说弟弟要减重，
         # 这个到后面都不需要管」），不是在改菜。这种情况下重跑结构化链只会让模型顺手把菜名
         # 换掉、再弹一张卡片，与用户意图完全相反，所以直接回纯文本、原卡片原地不动。
-        # 位置是硬规则：产品形态短路必须排在结构化过敏原复核之后（见 tests/test_allergen_guardrail.py）。
+        # 位置是硬规则：产品形态短路必须排在结构化过敏原复核之后（见 tests/domain/test_allergen_guardrail.py）。
         if _is_constraint_correction_turn(latest_text):
             return {"messages": []}
         # 序号指代已失效（清单跨轮过期 / 序号越界）：不许把这一轮当「换菜」交给模型自由发挥

@@ -11,7 +11,11 @@ if ROOT not in sys.path:
 
 if __name__ == "__main__":
     loader = unittest.TestLoader()
-    suite = loader.discover(os.path.join(ROOT, "tests"), pattern="test_*.py")
+    suite = loader.discover(
+        os.path.join(ROOT, "tests"),
+        pattern="test_*.py",
+        top_level_dir=ROOT,
+    )
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     # 失败则非零退出，便于 CI / 批处理判断

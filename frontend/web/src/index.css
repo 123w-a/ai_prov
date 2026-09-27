@@ -1320,11 +1320,16 @@ img {
 
 .recipe-visual {
   position: relative;
+  display: grid;
+  width: 100%;
   min-width: 0;
   min-height: 245px;
+  aspect-ratio: 3 / 2;
   margin: 0;
   overflow: hidden;
   background: #d9dfd2;
+  contain: layout paint;
+  place-items: stretch;
 }
 
 .recipe-visual::after {
@@ -1336,10 +1341,18 @@ img {
 }
 
 .recipe-visual img {
+  display: block;
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   min-height: 245px;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.recipe-visual img.loaded {
+  opacity: 1;
 }
 
 .recipe-visual figcaption {
@@ -1367,6 +1380,8 @@ img {
 
 .image-placeholder {
   display: grid;
+  z-index: 1;
+  grid-area: 1 / 1;
   gap: 9px;
   place-items: center;
   color: rgba(33, 49, 39, 0.45);

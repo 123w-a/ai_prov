@@ -1,4 +1,4 @@
-# tests/test_candidate_flow.py
+# tests/agent/test_candidate_flow.py
 # 两阶段点菜交互测试（全部确定性，不调 LLM / 不联网）：
 #   第一阶段 泛推荐 → 候选清单（不出卡片不配图）
 #   第二阶段 「就第2个」 → 解析到具体菜名 → 单卡片 + 配图

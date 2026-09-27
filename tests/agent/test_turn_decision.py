@@ -7,7 +7,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "agent" / "turn_decision.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "agent" / "turn_decision.py"
 _SPEC = importlib.util.spec_from_file_location("turn_decision_under_test", _MODULE_PATH)
 _MODULE = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None

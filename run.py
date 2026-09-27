@@ -17,6 +17,7 @@ import uvicorn
 
 from api.main_app import app
 from agent import turn_decision as _turn_decision_module
+from infrastructure.paths import LOG_DIR
 
 HOST = "127.0.0.1"  # 只监听本机，避免暴露到局域网
 PORT = 8010  # 与前端 DEFAULT_API_URL 保持一致，别随便改
@@ -40,6 +41,8 @@ print(
     f"turn_decision={_turn_decision_module.__file__}",
     flush=True,
 )
+# 日志在项目外，启动时打印一次，省得每次都要去翻代码找路径
+print(f"[startup] logs -> {LOG_DIR}", flush=True)
 
 
 def port_in_use(host=HOST, port=PORT):

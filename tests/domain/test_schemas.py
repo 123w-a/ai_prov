@@ -1,4 +1,4 @@
-# tests/test_schemas.py
+# tests/domain/test_schemas.py
 # 结构化输出数据形状校验（pydantic）+ 透明标注约束
 import unittest
 

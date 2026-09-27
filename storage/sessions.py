@@ -594,7 +594,7 @@ def find_recent_candidates(sid, limit=8):
     """取会话「紧邻本轮之前那一轮」登记的候选菜名，供「就第2个」这类序号指代解析。
 
     ⚠️ 只认最后一条记录，**故意不做倒序回溯**：候选清单之后只要又发生过别的对话轮次，
-    旧序号就不再被当作本轮选定。这条产品规则由 `tests/test_candidate_flow.py`
+    旧序号就不再被当作本轮选定。这条产品规则由 `tests/agent/test_candidate_flow.py`
     的 `test_stale_candidates_after_newer_turn_are_not_confirm` 冻结，且必须与
     `agent_graph._recent_candidates` 同源——路由层若放宽到回溯，就会出现
     「后端开了配图开关、前端却没有卡片」的空转（见 chat_route._should_enable_image_pipeline）。

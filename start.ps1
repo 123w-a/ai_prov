@@ -8,10 +8,21 @@ $BackendPort = 8010
 $FrontendStartPort = 5178
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $FrontendDir = Join-Path $Root "frontend\web"
-$BackendOut = Join-Path $Root ".backend.stdout.log"
-$BackendErr = Join-Path $Root ".backend.stderr.log"
-$FrontendOut = Join-Path $Root ".frontend.stdout.log"
-$FrontendErr = Join-Path $Root ".frontend.stderr.log"
+
+# 日志统一写到项目之外，别让仓库里长出 .log（可被 CHEF_LOG_DIR 覆盖）
+if ($env:CHEF_LOG_DIR) {
+    $LogDir = $env:CHEF_LOG_DIR
+} elseif ($env:LOCALAPPDATA) {
+    $LogDir = Join-Path $env:LOCALAPPDATA "XiaoShanGuanJia\logs"
+} else {
+    $LogDir = Join-Path $env:USERPROFILE ".xiaoshanguanjia\logs"
+}
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+$BackendOut = Join-Path $LogDir "backend.stdout.log"
+$BackendErr = Join-Path $LogDir "backend.stderr.log"
+$FrontendOut = Join-Path $LogDir "frontend.stdout.log"
+$FrontendErr = Join-Path $LogDir "frontend.stderr.log"
 
 function Fail([string]$Message) {
     Write-Host "[ERROR] $Message" -ForegroundColor Red
@@ -91,8 +102,8 @@ if (-not $BackendRunning) {
     } catch {
         # 旧后端仍持有固定日志文件时，使用本次启动专属日志，避免日志锁阻断启动。
         $RunTag = Get-Date -Format "yyyyMMdd-HHmmss"
-        $BackendOut = Join-Path $Root ".backend.$RunTag.stdout.log"
-        $BackendErr = Join-Path $Root ".backend.$RunTag.stderr.log"
+        $BackendOut = Join-Path $LogDir "backend.$RunTag.stdout.log"
+        $BackendErr = Join-Path $LogDir "backend.$RunTag.stderr.log"
         [System.IO.File]::WriteAllText($BackendOut, "", $Utf8NoBom)
         [System.IO.File]::WriteAllText($BackendErr, "", $Utf8NoBom)
     }

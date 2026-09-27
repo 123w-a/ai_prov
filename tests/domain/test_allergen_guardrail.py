@@ -1,4 +1,4 @@
-# tests/test_allergen_guardrail.py
+# tests/domain/test_allergen_guardrail.py
 # 过敏原硬护栏回归：规则优先级、图节点阻断、结构化复核、流式转发。
 
 import json
@@ -217,12 +217,13 @@ class TestNormalization(unittest.TestCase):
     def test_unresolved_is_logged_not_silent(self):
         allergen_rules._UNRESOLVED_ALREADY_LOGGED.clear()
         with tempfile.TemporaryDirectory() as temp_dir:
-            data_dir = Path(temp_dir) / "data"
-            with patch.object(runtime_paths, "DATA_DIR", data_dir):
+            # 日志已从项目内 data/ 迁到项目外，patch 目标随之改为 LOG_DIR
+            log_dir = Path(temp_dir) / "logs"
+            with patch.object(runtime_paths, "LOG_DIR", log_dir):
                 with warnings.catch_warnings(record=True) as caught:
                     warnings.simplefilter("always")
                     result = allergen_rules.normalize_allergen("完全未知的忌口")
-                log_path = data_dir / "allergen_unresolved.log"
+                log_path = log_dir / "allergen_unresolved.log"
                 self.assertIsNone(result)
                 self.assertTrue(caught)
                 self.assertIn("完全未知的忌口", log_path.read_text(encoding="utf-8"))

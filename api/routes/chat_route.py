@@ -21,6 +21,13 @@ from agent.graph import (
     is_specific_dish_request,
     parse_candidate_index,
 )
+from agent.turn_decision import (
+    classify_turn_intent as _classify_turn_intent_shared,
+    is_recipe_change_request as _is_recipe_change_request,
+    is_restaurant_ordering_scene as _is_restaurant_ordering_scene,
+    looks_like_dining_request as _looks_like_dining_request,
+    looks_like_home_service_request as _looks_like_home_service_request,
+)
 from agent_tools import find_recipe_image
 from infrastructure.model_name import is_provider_failure
 from infrastructure.upload_guard import validate_image_upload
@@ -423,17 +430,6 @@ def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
         return None
 
 
-def _is_recipe_change_request(message: str) -> bool:
-    """用户在追问里要求换一道/改做法时，应走完整对话，不当作给上一道补图。"""
-    text = str(message or "")
-    broad_change_words = ("没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的", "没食欲")
-    if any(word in text for word in broad_change_words):
-        return True
-    change_words = ("换成", "改成", "做成", "换做", "改做", "改为", "变成")
-    recipe_words = ("面", "汤", "菜", "饭", "粥", "粉", "肉", "鱼", "鸡", "牛", "虾", "豆腐")
-    return any(word in text for word in change_words) and any(word in text for word in recipe_words)
-
-
 def _is_image_revision_request(message: str, want_image: str | None) -> bool:
     if not _wants_image(message, None):
         return False
@@ -461,96 +457,14 @@ def _is_visual_dish_lookup_request(message: str, want_image: str | None) -> bool
     return any(phrase in text for phrase in visual_phrases) and bool(_extract_requested_dish(text))
 
 
-def _looks_like_dining_request(message: str) -> bool:
-    """只有菜谱/饮食/点餐类请求才允许进入配图链路。"""
-    text = str(message or "").strip()
-    if not text:
-        return False
-    if is_specific_dish_request(text):
-        return True
-    markers = (
-        "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
-        "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
-        "推荐", "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
-        "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
-        "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
-        "痛风", "尿酸", "健康饮食", "附近吃什么",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _is_restaurant_ordering_scene(text: str) -> bool:
-    text = str(text or "").strip()
-    if not text:
-        return False
-    restaurant_markers = (
-        "餐厅", "饭店", "饭馆", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
-        "出去吃", "出去吃饭", "在外吃", "在外面吃", "下馆子", "聚餐",
-        "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
-    )
-    restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
-    signature_words = ("招牌", "推荐几道菜", "推荐几个菜", "点什么菜")
-    cooking_markers = ("做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅", "食材", "冰箱", "在家做", "自己做")
-    if any(marker in text for marker in cooking_markers):
-        return False
-    return any(marker in text for marker in restaurant_markers) or (
-        any(word in text for word in signature_words)
-        and any(ctx in text for ctx in restaurant_context)
-    )
-
-
-# 只修高概率误判：以前裸匹配「上门」，于是「上门维修/上门取件」也会被当成私厨上门，
-# 整轮被罐头文案接管（实测：「上周上门维修的师傅说我家冰箱该换了」）。
-_HOME_SERVICE_STRONG = (
-    "到家服务", "厨师到家", "私厨到家", "上门私厨", "私厨上门",
-    "请厨师", "预约厨师", "请个厨师", "找个厨师", "上门做菜", "上门做饭",
-)
-# 「上门」只有和做饭语境同现才算私厨需求
-_HOME_SERVICE_COOKING = (
-    "做饭", "做菜", "烧菜", "下厨", "厨师", "私厨", "煮饭", "做顿饭", "做一桌", "上门服务",
-)
-# 这些语境里的「上门」是别的服务，明确排除
-_NON_CATERING_UPSTREAM = (
-    "维修", "安装", "取件", "送货", "快递", "拜访", "体检", "保修", "售后",
-    "保洁", "清洗", "家政", "搬家", "测量", "拍照",
-)
-
-
-def _looks_like_home_service_request(text: str) -> bool:
-    raw = str(text or "")
-    if not raw:
-        return False
-    if any(marker in raw for marker in _HOME_SERVICE_STRONG):
-        return True
-    if "上门" not in raw:
-        return False
-    has_cooking = any(word in raw for word in _HOME_SERVICE_COOKING)
-    if any(word in raw for word in _NON_CATERING_UPSTREAM) and not has_cooking:
-        return False
-    return has_cooking
-
-
 def _classify_turn_intent(message: str) -> str:
     text = str(message or "").strip()
-    if not text:
-        return "other"
-    if _looks_like_home_service_request(text):
-        return "home_service"
-    if _is_restaurant_ordering_scene(text):
-        return "restaurant"
-    if _is_recipe_change_request(text):
-        return "change_one"
-    if is_execute_plan_request(text):
-        return "confirm_one"
-    confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道", "第一道", "第二道", "第三道")
-    if any(word in text for word in confirm_words):
-        return "confirm_one"
-    followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪")
-    if any(word in text for word in followup_words) and not _looks_like_dining_request(text):
-        return "followup"
-    if _looks_like_dining_request(text) or is_specific_dish_request(text):
-        return "recommend"
-    return "other"
+    return _classify_turn_intent_shared(
+        text,
+        is_specific_dish=is_specific_dish_request(text),
+        execute_plan=is_execute_plan_request(text),
+        allow_ordinal_confirmation=True,
+    )
 
 
 def _home_service_redirect_text() -> str:

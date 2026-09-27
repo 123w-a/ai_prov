@@ -14,7 +14,7 @@ from rag.ingest import _load_pdf
 from rag.store import ChromaStore
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TARGET_PDF = ROOT / "kb" / "1_慢病食养指南" / "成人高血压食养指南（2023年版）.pdf"
 
 

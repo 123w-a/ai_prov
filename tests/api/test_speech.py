@@ -1,4 +1,4 @@
-# tests/test_speech.py：语音识别接口测试（unittest，无需 pytest）
+# tests/api/test_speech.py：语音识别接口测试（unittest，无需 pytest）
 #
 # 覆盖四类：
 #   1) 未配置 DASHSCOPE_API_KEY → available=false（返回 503 信封）
@@ -6,7 +6,7 @@
 #   3) 音频超过大小限制        → 413
 #   4) 模拟 DashScope 返回文字 → 正确 text（返回 200 信封）
 #
-# 运行：uv run python tests/test_speech.py
+# 运行：uv run python tests/api/test_speech.py
 import os
 import sys
 import unittest
@@ -14,7 +14,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 # 把项目根目录加入 sys.path，确保 `import api.main_app` 等能找到
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 

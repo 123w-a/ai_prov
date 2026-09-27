@@ -17,7 +17,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from infrastructure.paths import DATA_DIR, PROJECT_ROOT, SESSIONS_DIR
+from infrastructure.paths import DATA_DIR, LOG_DIR, PROJECT_ROOT, SESSIONS_DIR
 from storage.dish_assets import _normalize_name
 from storage.utils import atomic_write_json
 
@@ -32,13 +32,15 @@ SOURCE_DIRS = (
     PROJECT_ROOT / "domain" / "data",
     PROJECT_ROOT / "infrastructure" / "data",
 )
+# 注意：日志类目标已从 DATA_DIR 改为 LOG_DIR —— 日志现在写在项目外的日志目录，
+# 若仍往 DATA_DIR 续接，会把历史日志重新拉回仓库里。
 JSONL_MERGES = (
-    (PROJECT_ROOT / "agent" / "data" / "agent_trace.jsonl", DATA_DIR / "agent_trace.jsonl"),
-    (PROJECT_ROOT / "agent" / "data" / "usage.jsonl", DATA_DIR / "usage.jsonl"),
-    (PROJECT_ROOT / "infrastructure" / "data" / "app.log", DATA_DIR / "app.log"),
+    (PROJECT_ROOT / "agent" / "data" / "agent_trace.jsonl", LOG_DIR / "agent_trace.jsonl"),
+    (PROJECT_ROOT / "agent" / "data" / "usage.jsonl", LOG_DIR / "usage.jsonl"),
+    (PROJECT_ROOT / "infrastructure" / "data" / "app.log", LOG_DIR / "app.log"),
     (
         PROJECT_ROOT / "domain" / "data" / "allergen_unresolved.log",
-        DATA_DIR / "allergen_unresolved.log",
+        LOG_DIR / "allergen_unresolved.log",
     ),
 )
 

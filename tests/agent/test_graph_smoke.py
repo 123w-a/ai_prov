@@ -1,4 +1,4 @@
-# tests/test_graph_smoke.py
+# tests/agent/test_graph_smoke.py
 # 冒烟测试：确认 LangGraph 整图能编译、关键节点/边齐全（导入即触发 compile）
 import unittest
 

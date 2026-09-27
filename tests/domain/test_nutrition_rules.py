@@ -1,4 +1,4 @@
-# tests/test_nutrition_rules.py
+# tests/domain/test_nutrition_rules.py
 # 硬护栏规则引擎单测：验证 L3 确定性审计（不依赖 LLM）
 import unittest
 from domain.nutrition_rules import detect_conditions, audit, describe, RULES, SODIUM_SENSITIVE

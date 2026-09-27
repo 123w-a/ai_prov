@@ -206,9 +206,9 @@ def _log_unresolved(text: object) -> None:
         return
     _UNRESOLVED_ALREADY_LOGGED.add(raw)
     try:
-        from infrastructure.paths import DATA_DIR
+        from infrastructure.paths import LOG_DIR
 
-        path = DATA_DIR / "allergen_unresolved.log"
+        path = LOG_DIR / "allergen_unresolved.log"
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(
@@ -230,7 +230,7 @@ def normalize_allergens(text: object, log_unresolved: bool = True) -> List[str]:
     """自由文本过敏原 → 一个或多个八大类 code。
 
     建档字段保持自由文本，归一在读取和审计时进行，兼容存量档案。
-    无法归一时记录告警与 data/allergen_unresolved.log，同时由调用方继续
+    无法归一时记录告警与 allergen_unresolved.log（在项目外的日志目录），同时由调用方继续
     保留原提示词约束，不能静默失效。
     """
     compact = _clean(text)

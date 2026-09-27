@@ -36,7 +36,7 @@ frontend/web
 2. 安装前端依赖：`npm install`
 3. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
 4. 生产构建：`npm run build`
-5. 最小回归：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest tests/test_fridge_shopping.py tests/test_fridge_http.py -v`（在仓库根目录运行）。
+5. 最小回归：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest tests/storage/test_fridge_shopping.py tests/api/test_fridge_http.py -v`（在仓库根目录运行）。
    本仓库用标准库 unittest（非 pytest），请勿用 `python -m pytest`。全量跑可用：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest discover tests -v`。
 
 开发时应分别确认前端 `http://localhost:5178/` 和后端 `http://127.0.0.1:8010/docs` 均返回 `200`。

@@ -1,4 +1,4 @@
-# tests/test_tool_result_compaction.py
+# tests/agent/test_tool_result_compaction.py
 # 工具结果压缩（「三旋钮」的第三只：结果体积）——全部确定性，不调 LLM / 不联网。
 #
 # 背景：省 token 的真杠杆在结果体积，不在调用次数。一次 tool_call 的 JSON 只有

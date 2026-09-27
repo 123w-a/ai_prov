@@ -137,6 +137,8 @@ function RecipeSheet({
   const aiImage = recipe.image_ai_generated || fallbackAiImage
   const showVisual = Boolean(imageRequested)
   const loadingVisual = showVisual && !imageUrl && !imageNote
+  const [loadedImageUrl, setLoadedImageUrl] = useState<string | null>(null)
+  const imageLoaded = Boolean(imageUrl && loadedImageUrl === imageUrl)
 
   return (
     <article className="recipe-sheet">
@@ -155,9 +157,24 @@ function RecipeSheet({
         </div>
 
         {showVisual && (
-          <figure className={imageUrl ? 'recipe-visual' : 'recipe-visual no-image'}>
+          <figure className={imageUrl ? `recipe-visual${imageLoaded ? ' image-ready' : ' image-loading'}` : 'recipe-visual no-image'}>
             {imageUrl ? (
-              <img src={imageUrl} alt={`${recipe.name}成品图`} />
+              <>
+                <img
+                  src={imageUrl}
+                  alt={`${recipe.name}成品图`}
+                  className={imageLoaded ? 'loaded' : 'loading'}
+                  loading="eager"
+                  decoding="async"
+                  onLoad={() => setLoadedImageUrl(imageUrl)}
+                />
+                {!imageLoaded && (
+                  <div className="image-placeholder loading" role="status" aria-live="polite">
+                    <Icon name="image" size={28} />
+                    <span>图片已生成，正在载入</span>
+                  </div>
+                )}
+              </>
             ) : loadingVisual ? (
               <div className="image-placeholder loading" role="status" aria-live="polite">
                 <Icon name="image" size={28} />
