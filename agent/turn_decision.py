@@ -31,13 +31,22 @@ def looks_like_dining_request(text: str) -> bool:
     return any(marker in text for marker in markers)
 
 
-def is_restaurant_ordering_scene(text: str) -> bool:
-    """餐厅/外食点餐请求只保留纯文本，不进入菜谱卡片结构化。"""
+def is_restaurant_ordering_scene(
+    text: str,
+    *,
+    has_prior_restaurant: bool = False,
+) -> bool:
+    """餐厅/外食点餐请求只保留纯文本，不进入菜谱卡片结构化。
+
+    ``has_prior_restaurant`` 只用于「换一家」这类没有地点词的延续指令。
+    默认 False，确保路由层单独看一句话时不会把无上下文的换店词误判成外食。
+    """
     text = str(text or "").strip()
     if not text:
         return False
     restaurant_markers = (
-        "餐厅", "饭店", "饭馆", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
+        "餐厅", "饭店", "饭馆", "餐馆", "菜馆", "酒馆", "酒吧", "大排档",
+        "夜宵店", "宵夜店", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
         "出去吃", "出去吃饭", "在外吃", "在外面吃", "下馆子", "聚餐",
         "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
     )
@@ -47,12 +56,33 @@ def is_restaurant_ordering_scene(text: str) -> bool:
         "做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅",
         "食材", "冰箱", "在家做", "自己做",
     )
+    occasion_words = (
+        "夜宵", "宵夜", "配酒", "喝酒", "酒局", "下酒", "聚餐",
+    )
+    place_words = (
+        "哪一家店", "哪家店", "哪一家餐厅", "哪家餐厅", "哪家馆子", "哪家好吃",
+        "去哪一家", "去哪家", "去哪里吃", "去哪儿吃", "去哪吃",
+        "推荐一家店", "推荐一家餐厅", "找一家店", "去一家店", "附近", "店",
+    )
+    switch_words = (
+        "换一家", "换一家店", "换家店", "换店", "换一批", "下一家",
+        "再来一家", "重新找一家", "再换一家",
+    )
     if any(marker in text for marker in cooking_markers):
         return False
-    return any(marker in text for marker in restaurant_markers) or (
-        any(word in text for word in signature_words)
-        and any(ctx in text for ctx in restaurant_context)
-    )
+    if any(marker in text for marker in restaurant_markers):
+        return True
+    if any(word in text for word in signature_words) and any(
+        ctx in text for ctx in restaurant_context
+    ):
+        return True
+    if any(word in text for word in occasion_words) and any(
+        word in text for word in place_words
+    ):
+        return True
+    if has_prior_restaurant and any(word in text for word in switch_words):
+        return True
+    return False
 
 
 _HOME_SERVICE_STRONG = (
@@ -106,6 +136,7 @@ def classify_turn_intent(
     candidate_index: int | None = None,
     has_prior_recipe: bool = False,
     has_prior_candidates: bool = False,
+    has_prior_restaurant: bool = False,
     is_candidate_revision: bool = False,
     has_recipe_index_ref: bool = False,
     mentions_recent_recipe: bool = False,
@@ -123,7 +154,10 @@ def classify_turn_intent(
         return "other"
     if looks_like_home_service_request(current):
         return "home_service"
-    if is_restaurant_ordering_scene(current):
+    if is_restaurant_ordering_scene(
+        current,
+        has_prior_restaurant=has_prior_restaurant,
+    ):
         return "restaurant"
     if is_candidate_revision:
         return "recommend"

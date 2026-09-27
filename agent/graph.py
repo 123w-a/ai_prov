@@ -264,6 +264,18 @@ SINGLE_RECIPE_RULE = (
     "\n\n【默认单菜规则】用户没有明确要求多个选择时，"
     "每次最终只回答最合适的一道菜，不要列出第二道、备选菜或并列方案。"
 )
+# 外食找店规则：只在确定性意图判成 restaurant 时追加。
+# 它与「单菜/候选清单」规则互斥，避免夜宵配酒找店被模型带回菜谱模板。
+RESTAURANT_SCENE_RULE = (
+    "\n\n【外食找店规则·本轮最高优先级】"
+    "本轮是外食/到店找店需求，不是居家做菜。"
+    "必须先调用 nearby_food 查询餐厅，再只输出店名、菜系、人均、距离或地址、"
+    "适合本轮场景的点单建议和健康提醒。"
+    "禁止输出任何菜谱、食材用量、烹饪步骤、结构化卡片或配图内容。"
+    "用户说“换一家”或“换一批”时，沿用上一轮的城市、位置、人数、用途和预算条件，"
+    "重新推荐未出现过的店。"
+    "没有城市且消息中没有 [当前位置] 时先追问城市，不要猜测或使用默认城市。"
+)
 # 两阶段点菜第一阶段规则：泛推荐只出编号候选清单，不出做法、不出卡片。
 # 编号是「用户说第 N 道」的唯一锚点，格式必须固定，后端靠编号解析做确定性映射。
 # ⚠️ 「推荐理由」的维度必须在这里显式声明。实测：只写「20 字以内的推荐理由」时，
@@ -1444,6 +1456,7 @@ def _classify_turn_intent(messages) -> str:
     candidates = _recent_candidates(messages)
     has_prior_recipe = bool(recipe_names)
     has_prior_candidates = bool(candidates)
+    has_prior_restaurant = _has_prior_restaurant_context(messages)
     return _classify_turn_intent_shared(
         current,
         is_specific_dish=_is_specific_dish_request(current),
@@ -1451,6 +1464,7 @@ def _classify_turn_intent(messages) -> str:
         candidate_index=parse_candidate_index(current),
         has_prior_recipe=has_prior_recipe,
         has_prior_candidates=has_prior_candidates,
+        has_prior_restaurant=has_prior_restaurant,
         is_candidate_revision=(
             has_prior_candidates and _is_candidate_revision_turn(messages)
         ),
@@ -1459,6 +1473,31 @@ def _classify_turn_intent(messages) -> str:
         mentions_recent_candidate=_mentions_recent_recipe(current, candidates),
         recommendation_count=bool(_RECOMMENDATION_COUNT_PATTERN.search(current)),
     )
+
+
+def _has_prior_restaurant_context(messages) -> bool:
+    """只看当前轮之前最近的餐厅轮，并允许连续的“换一家”继续沿用。
+
+    中间出现任何普通用户轮就立即停止回溯，避免旧的外食场景在后面无关话题里
+    把“换一家”永久解释成餐厅。内部历史摘要/护栏消息不算用户轮。
+    """
+    latest = _latest_user_index(messages)
+    if latest is None:
+        return False
+    for index in range(latest - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, HumanMessage) or _is_internal_user_turn(message):
+            continue
+        text = _current_request_text(_message_text(message))
+        if _is_restaurant_ordering_scene(text):
+            return True
+        if _is_restaurant_ordering_scene(
+            text,
+            has_prior_restaurant=True,
+        ):
+            continue
+        return False
+    return False
 
 
 def _is_new_ingredient_image_request(text):
@@ -1544,8 +1583,12 @@ def chef_agent_node(state: MessagesState):
         latest_has_image and _is_new_ingredient_image_request(latest_text)
     )
     prompt_content = SYSTEM_PROMPT
+    # 外食找店与居家做菜必须互斥：同一轮只给一种产品形态。
+    turn_intent = _classify_turn_intent(messages)
+    if turn_intent == "restaurant":
+        prompt_content += RESTAURANT_SCENE_RULE
     # 两阶段点菜：泛推荐轮出候选清单（不出卡片），其余轮次保持单菜规则。
-    if _is_candidate_turn(messages):
+    elif _is_candidate_turn(messages):
         prompt_content += _candidate_list_rule(messages)
         # 用途锚定：把用户本轮的用途/场合（下酒/宵夜/带饭…）钉成硬规则。
         # 字符串模板里已给了维度优先级与写法示例，这里再补一道确定性兜底 ——

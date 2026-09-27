@@ -676,6 +676,87 @@ class RestaurantSceneTest(unittest.TestCase):
     def test_home_cooking_not_restaurant(self):
         self.assertFalse(g._is_restaurant_ordering_scene("不想出去吃，在家做个番茄炒蛋"))
 
+    def test_night_snack_drinks_shop_choice_is_restaurant(self):
+        text = "那如果我要去吃夜宵并且再配酒的话，并且4个人，推荐去哪一家店"
+        self.assertTrue(g._is_restaurant_ordering_scene(text))
+        self.assertTrue(chat_route._is_restaurant_ordering_scene(text))
+        self.assertEqual(
+            g._classify_turn_intent([HumanMessage(content=text)]),
+            "restaurant",
+        )
+        self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+        self.assertFalse(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_food_occasion_without_place_stays_recipe_recommendation(self):
+        for text in ["夜宵推荐几道菜", "配酒推荐几道菜"]:
+            with self.subTest(text=text):
+                self.assertFalse(g._is_restaurant_ordering_scene(text))
+                self.assertNotEqual(
+                    g._classify_turn_intent([HumanMessage(content=text)]),
+                    "restaurant",
+                )
+
+    def test_restaurant_switch_requires_prior_restaurant_turn(self):
+        text = "还是换一家吧"
+        self.assertFalse(g._is_restaurant_ordering_scene(text))
+        self.assertNotEqual(
+            g._classify_turn_intent([HumanMessage(content=text)]),
+            "restaurant",
+        )
+        messages = [
+            HumanMessage(
+                content="那如果我要去吃夜宵并且再配酒的话，并且4个人，推荐去哪一家店"
+            ),
+            AIMessage(content="可以，我来帮你找附近的夜宵店。"),
+            HumanMessage(content=text),
+        ]
+        self.assertTrue(g._has_prior_restaurant_context(messages))
+        self.assertEqual(g._classify_turn_intent(messages), "restaurant")
+
+    def test_consecutive_restaurant_switches_keep_scene(self):
+        messages = [
+            HumanMessage(
+                content="那如果我要去吃夜宵并且再配酒的话，并且4个人，推荐去哪一家店"
+            ),
+            AIMessage(content="可以，我来帮你找附近的夜宵店。"),
+            HumanMessage(content="换一家"),
+            AIMessage(content="好，我再换一批店。"),
+            HumanMessage(content="还是换一家吧"),
+        ]
+        self.assertTrue(g._has_prior_restaurant_context(messages))
+        self.assertEqual(g._classify_turn_intent(messages), "restaurant")
+
+    def test_change_one_is_not_restaurant_switch(self):
+        self.assertEqual(
+            g._classify_turn_intent([HumanMessage(content="换一道")]),
+            "change_one",
+        )
+
+    def test_restaurant_turn_skips_structured_card(self):
+        state = {
+            "messages": [
+                HumanMessage(
+                    content="那如果我要去吃夜宵并且再配酒的话，并且4个人，推荐去哪一家店"
+                ),
+                AIMessage(content="可以，我来帮你找附近的夜宵店。"),
+            ],
+            "verify_status": "ok",
+            "verify_violated": [],
+        }
+        with patch.object(g, "build_structured_answer") as mocked:
+            self.assertEqual(g.structure_answer_node(state), {"messages": []})
+        mocked.assert_not_called()
+
+    def test_restaurant_turn_gets_external_dining_prompt(self):
+        text = "那如果我要去吃夜宵并且再配酒的话，并且4个人，推荐去哪一家店"
+        with patch("agent.graph.llm_with_tools") as mocked_llm:
+            g.chef_agent_node({"messages": [HumanMessage(content=text)]})
+        payload = mocked_llm.invoke.call_args.args[0]
+        system_text = str(payload[0].content)
+        self.assertIn("外食找店规则", system_text)
+        self.assertIn("nearby_food", system_text)
+        self.assertNotIn("默认单菜规则", system_text)
+
 
 class ImagePipelineGateTest(unittest.TestCase):
     """配图门两层同源：候选阶段不烧图"""
