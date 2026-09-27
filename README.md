@@ -27,10 +27,12 @@ D:\ai_prvo\.venv\Scripts\python.exe run.py
 
 ```powershell
 cd D:\ai_prvo\frontend\web
+Copy-Item .env.example .env
 npm run dev
 ```
 
 后端默认 `127.0.0.1:8010`，前端通常为 `localhost:5178`。如果前端端口被占用，以 Vite 终端输出为准。
+前端 env 只放在 `frontend/web/.env`；`VITE_API_BASE` 留空时走 Vite 代理，附近餐厅地图需要配置 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
 
 ## 主要目录
 
@@ -50,5 +52,5 @@ docs/            项目文档和代码导航
 ## 重要说明
 
 - `.env`、家庭画像、会话、日志、数据库和模型缓存属于本地运行数据，不要提交。
-- 后端高德 POI 使用根目录 `AMAP_KEY`；前端地图使用 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
+- 后端高德 POI 使用根目录 `.env` 的 `AMAP_KEY`；前端地图使用 `frontend/web/.env` 的 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
 - 当前没有可复现的文字输出异常时，不修改 `max_tokens`、流式 token 转发、收口、兜底和截断逻辑。
