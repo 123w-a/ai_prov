@@ -285,9 +285,18 @@ export interface MemoryCandidate {
   status: 'pending' | 'once' | 'confirmed' | 'dismissed'
 }
 
-export async function fetchPendingMemoryCandidates(sessionId: string): Promise<MemoryCandidate[]> {
+/**
+ * 拉取待确认的偏好候选。
+ *
+ * sessionId 改为**可选**（2026-09-28）：首屏 IA 骨架要展示的是「全局有哪些待确认事项」，
+ * 不属于任何一次会话——带上 session_id 会把它过滤掉，那条 2026-09-22 的候选在全新
+ * 会话里就看不见了。实测该端点**不带参数即返回全部 pending**（200 / 400B）。
+ * 现有两处调用（App.tsx L726、L1002）都传了 sessionId，行为不变。
+ */
+export async function fetchPendingMemoryCandidates(sessionId?: string): Promise<MemoryCandidate[]> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
   const result = await jsonRequest<ApiEnvelope<{ candidates: MemoryCandidate[] }>>(
-    `/api/preferences/candidates/pending?session_id=${encodeURIComponent(sessionId)}`,
+    `/api/preferences/candidates/pending${query}`,
   )
   return result.data.candidates ?? []
 }
@@ -496,6 +505,15 @@ export async function recognizeFridgePhoto(file: File): Promise<FridgeVisionItem
     '/api/fridge/vision',
     { method: 'POST', body },
   )
+  return result.items ?? []
+}
+
+/**
+ * 冰箱现有食材。注意这个端点**不包 ApiEnvelope**，直接返回 {items:[...]}。
+ * 等待页只用它做一行"已知输入"的证据，不参与任何加工。
+ */
+export async function fetchFridge(): Promise<string[]> {
+  const result = await jsonRequest<{ items?: string[] }>('/api/fridge')
   return result.items ?? []
 }
 

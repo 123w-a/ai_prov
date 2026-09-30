@@ -1009,8 +1009,16 @@ def _is_candidate_turn(messages) -> bool:
         and not _is_generic_dish_name(text)
     ):
         return False
-    # 健康问答（能不能吃 / 适合吗）不是点菜需求，保持原对话链路
-    if re.search(r"(能不能吃|可不可以吃|能吃|能喝|适合吃|该不该吃|要不要吃|可以吃吗)", text):
+    # 健康问答（能不能吃 / 适合吗）不是点菜需求，保持原对话链路。
+    # 注意：裸「能吃」「能喝」会误伤点菜句——「做个我们俩都能吃的」「能喝汤的菜」都是
+    # 点菜需求，不是健康提问。2026-09-22 实测：这条误判会把 _is_candidate_turn 打成
+    # False，导致「先推荐候选」这条零成本通道被关闭，每一轮都直撞完整的结构化生成
+    # （实测 structure_answer 均 61.7s、最长 148.9s，占单轮总耗时 41%）。
+    # 因此这两个词必须紧跟疑问标记才算健康提问；其余各项本身已含疑问词，保持原样。
+    if re.search(
+        r"(能不能吃|可不可以吃|适合吃|该不该吃|要不要吃|可以吃吗|能吃[吗嘛么？?]|能喝[吗嘛么？?])",
+        text,
+    ):
         return False
     # 闲聊（intent=other）只有真的点了食材才算点菜需求，避免「你好」也被列一顿候选
     if intent == "other" and not _mentions_food_ingredients(text):
@@ -1944,13 +1952,22 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
             parts.append("用户需求：" + text)
             break
     # 把本轮 Agent 已经确认的自然语言回答交给结构化模型。
-    # 这样卡片使用同一轮已经识别出的菜名，不会根据旧搜索结果重新猜一道菜。
+    # 2026-09-22 起：这段正文是结构化链的**唯一菜谱来源**——它已经是流式发给用户、
+    # 用户已经看到的那份答案，结构化只做提取，不再照着搜索结果重写一遍。
+    # 所以这里不能再用 800 字截断：一份带步骤和调料的菜谱常超过 800 字，
+    # 截断会把 steps 砍掉，反而逼模型去"补"，正好退回重新生成。
+    _OPENING_EXCERPT_LIMIT = 3000
     for m in reversed(context_messages):
         if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
             ai_text = str(m.content).strip()
             if ai_text and not ai_text.startswith('{"opening"'):
-                _excerpt = ai_text[:800] + ("…（正文已截断）" if len(ai_text) > 800 else "")
-                parts.append("本轮 Agent 已确认的回答（菜名和食材以此为准）：\n" + _excerpt)
+                _excerpt = ai_text[:_OPENING_EXCERPT_LIMIT] + (
+                    "…（正文已截断）" if len(ai_text) > _OPENING_EXCERPT_LIMIT else ""
+                )
+                parts.append(
+                    "本轮 Agent 已确认的回答（已发给用户的正文；"
+                    "菜名/做法/调料以本段为准，不得引入本段之外的做法或食材）：\n" + _excerpt
+                )
             break
     # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []#2.有连坐删除，删的时候会把工具的返回结果也会删除不搞混
@@ -1971,7 +1988,9 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
     if search_blocks:
         parts.append(
             "搜索结果（每条是 JSON：text 为搜索文本、image_url 为成品图链接或 null、"
-            "image_source 为图源 real/ai）：\n"
+            "image_source 为图源 real/ai）。"
+            "注意：此段只供判断难度/营养星级与取配图，禁止据此新增或改写菜谱正文"
+            "（正文以上面『本轮 Agent 已确认的回答』为准）：\n"
             + "\n\n".join(search_blocks[-2:])#最多取最近2次搜索（单条已按结果预算压缩）
         )
     # 本轮所有 nutrition_kb_search 工具返回（权威健康依据，JSON 含 source 文件名与命中片段 text）
