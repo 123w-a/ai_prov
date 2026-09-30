@@ -5,13 +5,13 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-import feedback_store
-from feedback_store import (
+from storage import feedback as feedback_store
+from storage.feedback import (
     read_events as _read_feedback_events,
     write_events as _write_feedback_events,
     forget_dish as _forget_dish,
 )
-from sessions_store import (
+from storage.sessions import (
     create_session,
     list_sessions,
     delete_session,
@@ -25,7 +25,7 @@ from sessions_store import (
     _read_session,
 )
 from main import image_bytes_to_oss_url
-from upload_guard import validate_image_upload
+from infrastructure.upload_guard import validate_image_upload
 
 router = APIRouter()
 
@@ -102,7 +102,7 @@ def api_message_feedback(sid: str, rec_id: int, payload: FeedbackPayload):
             dish = None
         if current == "down":  # 口味信号采集：被踩的菜名+原话里扫口味词典（失败不阻塞）
             try:
-                from taste_store import detect_tastes, record_signals
+                from storage.taste import detect_tastes, record_signals
                 tastes = detect_tastes((dish or "") + " " + (rec.get("user_text") or ""))
                 record_signals(tastes, sid, rec_id)
             except Exception:

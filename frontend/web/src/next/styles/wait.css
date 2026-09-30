@@ -1,0 +1,397 @@
+/* ── 等待：请求确认卡 ─────────────────────────────────
+ *
+ * 这一版把时间卷带整个删掉了。删的理由不是审美，是表达对象错了：
+ * 卷带 + 密集心跳脉冲的语义是地震仪与心电监护仪，而这个产品是做饭给一家人吃的，
+ * 档案里还有一位孕妇。用户的原话就是「像心电图」「完全没有食欲」。
+ *
+ * 现在这里只做三件事：请求是什么、后端最近一次真实动作是什么、连接还活着吗。
+ * 页面在绝大多数时间里**完全静止**。
+ * 静止不是没做设计——静止是这一版最重要的那个设计决定。
+ */
+
+/* 版面按「参数表」排：标签列 + 数值列 + 发丝分隔线，占满内容列。
+   这是静态数据，不是跳动波形——它和"心电图"在语义上正好相反。
+   上一版把内容塞进一张 560px 小卡居中，结果是一张孤零零的盒子漂在大空白里，
+   既不像仪表也不像菜单；宽度必须由内容结构来挣，不是靠留白凑。 */
+
+/* 等待区不再是"一张大白卡"。设计稿（2026-09-22 Web 版）把唯一有边框的容器留给了
+   "事实"那一块，标题、按钮、状态行都直接落在页面背景上。
+   理由是：整页只留一处"盒子"，它就必须是信息量最大的那处；把标题也装进盒子，
+   盒子就从容器变成了包装。上一版正好相反——一个大白卡把所有东西裹住，
+   读起来像"漂在空白里的孤盒"，这正是用户反馈"视觉真的不是很好"的来源之一。 */
+.wait {
+  margin: 0;
+}
+
+.wait-card {
+  /* 保留这个语义容器，但不再有卡片外观——外观交给 .wait-facts。 */
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  /**
+   * 620px 是为了「边框不圈住死白」。
+   *
+   * 外壳定到 1010 之后可用宽度是 954px，而等待页的事实框里全是短行
+   * （冰箱现有 / 家庭档案 / 共同忌口），实测内容只占左侧约 380px。
+   * 边框照旧撑满 950px 的话，就是"边框在、内容不在"。
+   *
+   * 为什么不居中：起手页与结果页的内容都从外壳左边界起（x=207）。
+   * 一居中就把等待页的边界推到 x≈374，一次运行里内容先右跳再左跳。
+   *
+   * 为什么是 620 而不是别的数：结果页正文栏实测 636px，
+   * 620 与它几乎同宽 ⇒ 三个视图共用一个左侧内容边界，这才是一致的。
+   *
+   * 不写媒体查询：外壳本身封顶 1010，视口从约 676px 往上一律触发这条上限；
+   * 更窄时外壳自然小于 620，上限自动失效，不会挤坏手机端。
+   */
+  max-width: 620px;
+}
+
+.wait-req {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+.wait-req b {
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.wait-sub {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}
+
+/* 活动凭证：放在卡片最底部，12.5px 灰字，不占版面、不抢焦点。
+   它回答"它还在动吗"，不回答"做到哪一步了"——后者后端根本没有这个数据。
+   上一版把它放在版面中段、15px 加粗，读起来像进度条标题，是"像心电图"的入口。
+   两行竖排（不是并排一行）：并排会被读成一句话「正在核对连接正常」，
+   而它们说的是两件事——后端在做什么、连接还活着吗。 */
+.wait-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 26px;
+}
+
+/* ── 当前工位 ─────────────────────────────────────────
+ *
+ * 这里取代了原来的 .wait-live（底部 12.5px 灰字的"活动凭证"）。
+ * 推翻的详细理由写在 WaitCard.tsx 那段 JSX 上方，一句话版：
+ *   旧结论只否掉了"把它做成仪表"，没有解决用户提的"页面是死的"。
+ *   20px 的「正在 + 阶段字面含义」不是进度条标题——它没有分母；
+ *   而下面那行痕迹会原样保留重复（查证 · 核对 · 查证），真流水线不会退回上一步。
+ *
+ * 一根发丝线把它和上面的说明分开，不用边框、不用底色：它是一行排印，不是一个盒子。 */
+.bench {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* 等待页唯一会随真实事件改口的一行。
+ * 320ms 一次性入场：不位移过多、不缩放、不弹跳、不光晕、不循环。
+ * 用 rise(8px) 对一行字来说太大了，所以单独一个 bench-in（3px）。 */
+.bench-now {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ink-soft);
+  animation: bench-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 沉默超时后的改口。降成 --ink-faint 是刻意的：这一行说的是"没有新消息"，
+ * 不该和"正在做事"看起来一样重。 */
+.bench-now.is-quiet {
+  color: var(--ink-faint);
+}
+
+/* 真实到达过的工位。原样保留重复，不合并、不编号、不显示总数。 */
+.bench-trail {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}
+
+.bench-trail-label {
+  margin-right: 4px;
+}
+
+.bench-chip {
+  display: inline-block;
+  color: var(--ink-soft);
+  animation: bench-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 项之间用发丝色的间隔号，不用小边框——加边框就多出一排盒子，
+ * 与"整页只留一处盒子"冲突。
+ * 间隔号必须带左右外边距：只写 content: ' · ' 的话两侧空格会被折叠成一个，
+ * 12.5px 下五个词会连成一串没有分组的长条（截图已复现）。 */
+.bench-chip + .bench-chip::before {
+  content: '·';
+  margin: 0 6px;
+  color: var(--ink-faint);
+}
+
+/* 连接状态：静态圆点。不闪、不呼吸、不扩散——它只是状态，不是仪表。 */
+.wait-conn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  transition: color 0.16s linear;
+}
+
+.wait-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok-dot);
+  transition: background-color 0.16s linear;
+}
+
+.tone-quiet .wait-dot {
+  background: var(--warn);
+}
+
+.tone-warn {
+  color: var(--warn);
+}
+
+.tone-warn .wait-dot {
+  background: var(--warn);
+}
+
+/* 事实框的**版式节奏**只剩这一条：盒子本身（补白／发丝线／圆角／底色）已搬进
+   styles/primitives.css 的 .p-panel[data-variant='outline']，两页共用同一份。
+   这里保留的是等待页的节奏——离上一块 30px，那是这一页的版式，不是原语的属性。 */
+.wait-facts {
+  margin-top: 30px;
+}
+
+.wait-fact + .wait-fact {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.wait-fact-label {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+/* 冰箱食材：可扫读的块，不是逗号串。
+   等待页要让人 2 秒确认"它知道我家有什么"——逗号串必须逐字读，块可以一眼扫。
+   纯文字、无图标、无插画：画一个鸡蛋或一棵西兰花就等于预告了菜单要用它。 */
+.wait-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wait-chips li {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+/* 家庭成员一人一行：原来压成一条逗号串，就分不清哪句属于谁。 */
+.wait-fact-row {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.wait-fact-shared {
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--accent-ink);
+}
+
+.wait-caveat {
+  margin: 20px 0 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* 终态说明不该是页面上最响的东西。去掉色块，只留一根细竖线。 */
+.wait-orphan,
+.wait-error {
+  margin: 20px 0 0;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--line-strong);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}
+
+.wait-error {
+  border-left-color: var(--bad);
+  color: var(--bad);
+}
+
+/* 操作行。取消键做成"安静的整宽描边"，不做红色大主按钮——
+   等着这件事不该紧张，红色主按钮会把它变成一个"有风险的操作"。 */
+.wait-actions {
+  display: grid;
+  justify-items: start;
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.act {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 15px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+  transition: border-color 0.16s linear, color 0.16s linear, background-color 0.16s linear;
+}
+
+.act-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+/* 取消键：整宽、无填充、1px 陶土描边。设计稿要求它是全屏唯一的主色描边元素，
+   且不能看起来像主行动按钮、不能是红色——取消在等待页是"退路"，不是"操作重点"。 */
+.act-quiet {
+  justify-self: stretch;
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+  font-size: 14px;
+}
+
+.act-quiet:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 处理详情：真实事件账本被降级放在这里。
+   它只回答"系统是不是卡住了"，绝不要求普通用户在等待期间阅读它。 */
+.wait-detail {
+  width: 100%;
+}
+
+.wait-detail > summary {
+  font-size: 13px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.wait-detail > summary:hover {
+  color: var(--accent-ink);
+}
+
+.wait-detail-time {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.wait-detail-none,
+.wait-detail-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-faint);
+}
+
+.wait-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.wait-log li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.wait-log-nth {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* 正在写出的正文：半截 markdown 边收边重排会一直跳，所以过程稿按纯文本渲染。 */
+.wait-body-wrap {
+  margin-top: 34px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.wait-body-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.wait-body-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+
+.wait-body {
+  white-space: pre-wrap;
+  font-size: 14.5px;
+  line-height: 1.85;
+  color: var(--ink-soft);
+}
+
+.wait-body-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}

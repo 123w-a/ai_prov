@@ -15,6 +15,22 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Python 测试/类型检查/构建缓存
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+build/
+
+# pytest 缓存（可重建，不入库；且本机该目录 ACL 异常会导致 git/IDE 枚举报 Permission denied）
+.pytest_cache/
+pytest_cache/
+
 # 日志文件
 *.log
 streamlit*.log
@@ -75,6 +91,8 @@ resources/cleaned_preview/
 # RAG 原始语料 PDF（官方食养指南/国标，体积大且可外部获取，本地保留、不入库）
 kb/**/*.pdf
 kb_corpus/
+# 尚未整理入库的本地附件，可能包含个人文件或外部受版权约束的原始材料
+kb/_未入库/
 
 # 前端依赖与构建产物
 node_modules/
@@ -88,6 +106,9 @@ dist/
 
 # 本地模型缓存（bge / reranker，体积大可重建）
 models/
+
+# Agent 运行期追踪文件（本地调试数据，不是源码）
+agent/data/agent_trace.jsonl
 
 # 会话内临时探针脚本与产物
 .tmp-*
@@ -107,6 +128,7 @@ data/profile.json
 
 # 配图分流判断门测试（AI 临时验证测试，按用户要求不入库）
 tests/test_image_gating.py
+tests/**/test_image_gating.py
 
 # 前端构建缓存（之前误提交，应忽略，可重建）
 frontend/web/.vite-cache/
@@ -138,3 +160,36 @@ data/memory_candidates.json
 
 # 本地调试启动脚本（写死本机路径/端口，协作者无意义，不入库）
 start_deepseek_harness.cmd
+
+# 浏览器自动化和测试运行产物
+playwright-report/
+test-results/
+
+# 实验/基准运行生成的结果文件；实验脚本和可复现的输入数据仍保留
+experiments/*_result.csv
+benchmarks/*comparison*.csv
+benchmarks/*comparison*.json
+benchmarks/recall.latest.json
+
+# 编辑器、补丁和临时交换文件
+*.swp
+*.swo
+*.orig
+*.rej
+*.tmp
+
+# --------------------------------------------------------------------------- #
+# ⚠️ 目录重构后的运行数据路径（2026-09-23 补）
+# 起因：项目做了分层重构（agent/ domain/ infrastructure/ services/ storage/ scripts/），
+# 运行数据目录随之搬家。上面那些 data/xxx.json 规则是「相对仓库根目录」的精确路径
+# （gitignore 中带斜杠的模式不跨层级匹配），因此**匹配不到** storage/data/、agent/data/
+# 等新位置 —— 实测 storage/data/memory_candidates.json（含真实过敏原隐私）
+# 与 agent/data/usage.jsonl 仍会被 git 提交。
+#
+# 注意：`sessions/`（结尾带斜杠、中间无斜杠）会跨层级匹配，所以 storage/sessions/ 已被拦住；
+# `*.log` / `*.bak` / `__pycache__/` 同理，均已安全。
+# --------------------------------------------------------------------------- #
+storage/data/
+agent/data/
+domain/data/
+infrastructure/data/

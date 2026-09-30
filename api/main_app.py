@@ -3,14 +3,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
-from sessions_store import init_db
+from storage.sessions import init_db
 import os
 import threading
 import logging
 import time
 import uuid
 
-from runtime_logging import configure_logging
+from infrastructure.runtime_logging import configure_logging
 
 configure_logging()
 
@@ -56,7 +56,7 @@ threading.Thread(target=_warmup_knowledge_base, name="kb-warmup", daemon=True).s
 
 
 # —— 失败图自动补图队列：网络抖动期没能出图的菜，后台每 10 分钟扫一轮补上 ——
-from image_retry_queue import start_retry_daemon
+from services.image_retry_queue import start_retry_daemon
 
 start_retry_daemon()
 

@@ -1,0 +1,738 @@
+/* ── 结果头部：两种结局共用同一套协议 ───────────────── */
+
+.result {
+  animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.result-head {
+  border-top: 2px solid var(--ink);
+  padding-top: 16px;
+  margin-bottom: 34px;
+}
+
+.result-headline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* 完成标记：发丝线描边，不用色块填。
+   强调色一旦填充就变成"最亮的一块"，而这里只是"事情结束了"，
+   它不该比菜名和正文更抢眼。 */
+.result-tick {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+  border: 1px solid var(--accent-line);
+  border-radius: 5px;
+  padding: 2px 10px;
+}
+
+/* 一行元信息。原来是四格网格（用时/过程/依据/呈现形式），
+   占了版面最贵的位置却全是系统内部账目；而且"呈现形式"把
+   "这次给卡片还是给散文"暴露成了产品等级——那正是 lave 明令不许的。 */
+.result-meta-line {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+
+.result-form {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.result-form.is-prose {
+  /* 文字方案不是降级：同样的字号、同样的重量、同样的位置。 */
+  color: var(--ink);
+}
+
+.result-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 18px 28px;
+}
+
+.result-meta dt {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  margin-bottom: 3px;
+}
+
+.result-meta dd {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 2026-09-22 重排新增 ─────────────────────────────── */
+
+.result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 主菜（首屏 hero）：图是食欲入口，正文给不了。
+   这里刻意完全扁平——不留边框、不留底色、不留阴影。
+   整页只允许一处"盒子"（等待页是 .wait-facts），首屏的视觉重量由配图承担，
+   再套一层卡片就变成"给卡片加装饰"，而 lave 对抗席明令不许卡片靠装饰显得更高级。 */
+.recipe.is-lead {
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  margin-bottom: 34px;
+}
+
+.recipe.is-lead .recipe-head {
+  margin-bottom: 14px;
+}
+
+.recipe.is-lead .recipe-name {
+  font-size: 25px;
+}
+
+.recipe-figure.is-lead {
+  margin: 0 0 18px;
+}
+
+.recipe-figure.is-lead img {
+  width: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  border-radius: var(--radius-lg);
+}
+
+/* 首屏主菜的图注落在图下方，不做图上浮标。
+   注意必须把基础规则那套浮层属性逐条重置：position/right/bottom/background/color
+   只写 font-size 和 color 是"部分覆盖"，浮层会原样留在图上。 */
+.recipe-figure.is-lead figcaption {
+  position: static;
+  right: auto;
+  bottom: auto;
+  background: none;
+  color: var(--ink-faint);
+  padding: 0;
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 安全提醒：只在真的存在红色项时出现，所以它可以有重量。
+   但它靠左侧一条陶土竖线，不靠底色填充——填充会变成"一大块警告面板"，
+   而对抗评审席明确说了不要那种东西。 */
+.alerts {
+  list-style: none;
+  margin: 0 0 30px;
+  padding: 0 0 0 16px;
+  border-left: 2px solid var(--accent-line);
+}
+
+.alerts li {
+  display: flex;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.alerts li b {
+  flex: none;
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+/* 折叠区：默认收起的内容统一走这里。
+   标题行要像个"入口"，不像个章节标题——否则折叠本身又变成一层等重章节。 */
+.fold {
+  border-top: 1px solid var(--line);
+  padding: 2px 0;
+}
+
+.fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 2px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  list-style: none;
+}
+
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold > summary::before {
+  content: '›';
+  display: inline-block;
+  color: var(--ink-faint);
+  transition: transform 0.18s ease;
+}
+
+.fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.fold > summary:hover {
+  color: var(--ink);
+}
+
+.fold-count {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.fold-body {
+  padding: 4px 2px 24px;
+}
+
+/* 折叠区里的调料/做法不再叠一层卡片边框，否则一打开就是"盒子里套盒子"。 */
+.fold-body .recipe-block h4 {
+  margin-top: 18px;
+}
+
+
+/* ── 结果块 ─────────────────────────────────────────── */
+
+.block {
+  margin-bottom: 40px;
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.block:nth-child(2) { animation-delay: 0.04s; }
+.block:nth-child(3) { animation-delay: 0.08s; }
+.block:nth-child(4) { animation-delay: 0.12s; }
+.block:nth-child(5) { animation-delay: 0.16s; }
+
+.block-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.block-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.primary-note {
+  margin: 0 0 22px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 12px 16px;
+}
+
+.primary-note b {
+  color: var(--accent-ink);
+}
+
+.opening {
+  margin: 0 0 30px;
+  font-size: 17px;
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+/* 菜谱 */
+
+.recipes {
+  display: grid;
+  gap: 20px;
+}
+
+.recipe {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raise);
+  padding: 22px 24px 24px;
+}
+
+.recipe-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.recipe-index {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.recipe-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.recipe-meters {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.recipe-meters b {
+  font-family: var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.recipe-figure {
+  margin: 18px 0 0;
+  position: relative;
+}
+
+.recipe-figure img {
+  width: 100%;
+  border-radius: 10px;
+  display: block;
+}
+
+.recipe-figure figcaption {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  font-size: 11px;
+  color: var(--white);
+  background: var(--scrim);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.recipe-imgnote {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.recipe-intro {
+  margin: 14px 0 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+.recipe-block {
+  margin-top: 20px;
+}
+
+.recipe-block h4 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.seasonings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seasonings li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-raise);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.seasonings b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--ink-soft);
+}
+
+.steps li {
+  margin-bottom: 6px;
+}
+
+/* 红绿灯 */
+
+.lights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.light {
+  display: grid;
+  grid-template-columns: 14px 130px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  background: var(--bg-raise);
+  padding: 11px 16px;
+}
+
+.light-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  align-self: center;
+}
+
+.light.is-green .light-dot { background: var(--green); }
+.light.is-yellow .light-dot { background: var(--yellow); }
+.light.is-red .light-dot { background: var(--red); }
+
+.light-label {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.light-reason {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* 家人矩阵 */
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  padding: 0 12px 9px 0;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.matrix td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: baseline;
+}
+
+.matrix td.muted {
+  color: var(--ink-faint);
+}
+
+.verdict {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.v-可吃 { background: var(--green-soft); color: var(--green); }
+.v-需调整 { background: var(--warn-soft); color: var(--warn); }
+.v-待确认 { background: var(--pending-soft); color: var(--pending); }
+.v-不可吃 { background: var(--bad-soft); color: var(--red); }
+
+/* 调整 / 护栏 / 依据 */
+
+.adjustments,
+.guardrails,
+.sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.adjustments li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 9px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+.adjustments li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.guardrails li {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.gr-cond {
+  font-weight: 600;
+}
+
+.gr-status {
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 4px;
+  padding: 1px 8px;
+  justify-self: end;
+}
+
+.gr-reason {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.sources li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.src-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.src-section {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.src-snippet {
+  display: block;
+  margin: 7px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent-line);
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+/* 小窍门：一句话，不需要底纹块。
+   底纹块会让它看起来像"另一个章节首屏"，而它只是正文之外的一句提醒。
+   全页的"注记"统一成一种形态：左侧一条陶土竖线（安全提醒用的是同一套语法）。 */
+.chef-tip {
+  margin: 0 0 34px;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--accent-line);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+/* 散文：与卡片同一条阅读宽度、同一套排版细节 */
+
+.prose {
+  font-size: 15.5px;
+  line-height: 1.9;
+  color: var(--ink);
+}
+
+.prose p {
+  margin: 0 0 16px;
+}
+
+.prose .rt-heading {
+  margin: 28px 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.prose ul,
+.prose ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.prose li {
+  margin-bottom: 7px;
+}
+
+.prose strong {
+  font-weight: 650;
+}
+
+.prose blockquote {
+  margin: 0 0 16px;
+  padding: 4px 0 4px 16px;
+  border-left: 2px solid var(--accent-line);
+  color: var(--ink-soft);
+}
+
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 26px 0;
+}
+
+.prose-empty {
+  font-size: 14px;
+  color: var(--ink-faint);
+  padding: 20px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+}
+
+/* 过程折叠 */
+
+.process {
+  margin: 40px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  font-size: 13px;
+}
+
+/* 和 .fold 用同一种折叠标记。
+   同一页里"原生三角"和"自绘箭头"混用，会让人以为它们是两种不同的东西。 */
+.process summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-weight: 600;
+  list-style: none;
+}
+
+.process summary::-webkit-details-marker {
+  display: none;
+}
+
+.process summary::before {
+  content: '›';
+  display: inline-block;
+  color: var(--ink-faint);
+  transition: transform 0.18s ease;
+}
+
+.process[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.process-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.process-list li {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.process-list li span:first-child {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.process-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.again {
+  margin-top: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-raise);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px 26px;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+
+.again:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+

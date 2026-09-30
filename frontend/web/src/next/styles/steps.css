@@ -1,0 +1,131 @@
+/* ── 做法 ─────────────────────────────────────────────
+   大号陶土编号是全页唯一"重"的装饰，它承载的是动作顺序，不是奖励。
+   步数按后端给的真实条数渲染（实测 3~8 条），绝不截成"三步"。 */
+
+.steps-block {
+  margin-bottom: 34px;
+}
+
+/* 调料。实测一条答案最多 8 条，且 amount 常常是整句话
+   （`约3小颗单晶冰糖, 只用于炒色`），单行 flex 会挤成一整段密集小字，
+   成为全页最难看的一块。两列网格把高度和密度都压下来。 */
+.seasoning-line {
+  margin: 0 0 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 7px 28px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.seasoning {
+  min-width: 0;
+}
+
+.seasoning b {
+  margin-left: 5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0;
+}
+
+.steps li:last-child {
+  border-bottom: none;
+}
+
+.step-no {
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.step-text {
+  min-width: 0;
+}
+
+/* 折叠区里的做法收一档，避免"盒子里套盒子"的视觉噪声。 */
+.steps.is-compact {
+  font-size: 14px;
+}
+
+.steps.is-compact .step-no {
+  font-size: 17px;
+}
+
+.steps.is-compact li {
+  border-bottom: none;
+  padding: 5px 0;
+}
+
+/* ── 折叠区内部 ───────────────────────────────────── */
+
+.fold-heading {
+  margin: 22px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.recipe-extra {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.recipe-extra:last-child {
+  border-bottom: none;
+}
+
+.recipe-extra h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.recipe-extra p {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+/* ── 散文结局的空结果 ─────────────────────────────── */
+
+.prose-empty {
+  margin: 0 0 30px;
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+}
+
+/* ── 过程折叠里的一行事实 ─────────────────────────── */
+
+.process-facts {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+

@@ -1,0 +1,225 @@
+/* ── 收藏房间（2026-09-29 户型图第 4 步） ──────────────────────────────
+ *
+ * 为什么单独成片而不是接在 base.css 后面：base.css 拆分后是 875 行，
+ * 追加这 150 行会越过 checkScale 的 1000 行上限——上限是给"该拆没拆"的
+ * 警告，不该靠无视它过关。
+ *
+ * 导入顺序（main.tsx 末尾、primitives.css 之后）与那七片同理：
+ * 只定义 .fv-* / .fv-restored-note 这几个新类名，与前面任何选择器都不相交，
+ * 所以放末层不会挪动已有层叠。
+ *
+ * 版式跟周报房同源（同栏宽、同标题规格），差别只在条目形态：
+ * 每条 = 可点回今晚的主体 + 一排动作（赞/踩/忘掉/取消）。
+ * 语义色照周报的规矩：只用在点与文字上，绝不铺底。
+ */
+.fv {
+  max-width: 1010px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+.fv-h {
+  font-family: var(--serif);
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 6px;
+  -webkit-text-stroke: var(--stroke-h2);
+}
+
+.fv-sub {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0 0 8px;
+}
+
+.fv-empty, .fv-loading {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15.5px;
+  line-height: 1.8;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.fv-err {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--red);
+  margin: 0;
+}
+
+.fv-retry {
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 6px 16px;
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+.fv-retry:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 提示条：ok=成功动作回执，warn=失败/无变化。色只落在文字上。 */
+.fv-note {
+  font-size: 14.5px;
+  line-height: 1.7;
+  margin: 4px 0 10px;
+}
+.fv-note[data-tone='ok'] { color: var(--accent); }
+.fv-note[data-tone='warn'] { color: var(--red); }
+
+.fv-undo {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: 1px dashed currentColor;
+  border-radius: 3px;
+  padding: 1px 10px;
+  margin-left: 6px;
+  cursor: pointer;
+}
+
+.fv-hint {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+  margin: 0 0 12px;
+}
+
+.fv-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.fv-item {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* 主体整块可点：一整条是一个目标，不用先瞄准右边的小箭头。 */
+.fv-open {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fv-thumb {
+  width: 96px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex: none;
+}
+
+.fv-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fv-dish {
+  font-family: var(--serif);
+  font-size: 17px;
+  color: var(--ink);
+}
+
+.fv-open:hover .fv-dish { color: var(--accent); }
+
+.fv-from {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.fv-ask {
+  font-size: 14px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fv-go {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.fv-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fv-btn {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.fv-btn:hover { border-color: var(--accent); color: var(--accent); }
+.fv-btn[data-on='true'] { border-color: var(--accent); color: var(--accent); }
+.fv-btn:disabled { opacity: 0.5; cursor: default; }
+.fv-btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+/* 恢复态的过程说明挂在结果页里：跟 process 同字号，但不做成可折叠块。 */
+.fv-restored-note {
+  max-width: 42em;
+  margin: 14px 0;
+}
+
+/* ── 结果页动作条（第 4 步下半场：★收藏 / 赞 / 踩） ──────────────────────
+ * 按钮直接复用 .fv-btn（同一套收藏房动作语义，同一套 ghost 描边风格），
+ * 这里只管容器排布与状态小字。位置在页底「再做一顿」上方（与 lave 商定的 A2）：
+ * 页眉的 tick 只管「这页是什么状态」，动作不进页眉，也不进 dish-hero 指标区。 */
+.rs-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 24px;
+}
+
+.rs-state {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.rs-state[data-tone='warn'] { color: var(--red); }
+
+@media (max-width: 720px) {
+  .fv-open { flex-wrap: wrap; }
+  .fv-go { flex: none; margin-left: auto; }
+}

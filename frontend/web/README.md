@@ -33,13 +33,24 @@ frontend/web
 ## 快速开始
 
 1. 启动后端（仓库根目录）：`D:\ai_prvo\.venv\Scripts\python.exe run.py`，后端监听 `http://127.0.0.1:8010`。`run.py` 仅会回收确认属于本项目的旧后端进程。
-2. 安装前端依赖：`npm install`
-3. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
-4. 生产构建：`npm run build`
-5. 最小回归：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest tests/test_fridge_shopping.py tests/test_fridge_http.py -v`（在仓库根目录运行）。
+2. 首次运行配置前端环境变量：`Copy-Item .env.example .env`。`VITE_API_BASE` 留空时走 Vite 代理；使用附近餐厅地图时，再填写 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
+3. 安装前端依赖：`npm install`
+4. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
+5. 生产构建：`npm run build`
+6. 最小回归：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest tests/storage/test_fridge_shopping.py tests/api/test_fridge_http.py -v`（在仓库根目录运行）。
    本仓库用标准库 unittest（非 pytest），请勿用 `python -m pytest`。全量跑可用：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest discover tests -v`。
 
 开发时应分别确认前端 `http://localhost:5178/` 和后端 `http://127.0.0.1:8010/docs` 均返回 `200`。
+
+附近餐厅地图需要在 `frontend/web/.env` 配置高德开放平台的 Web 端 JS API 凭证：
+
+```dotenv
+VITE_API_BASE=
+VITE_AMAP_JS_KEY=你的Web端JS API Key
+VITE_AMAP_SECURITY_CODE=对应的安全密钥
+```
+
+`VITE_API_BASE` 留空时走 Vite 代理；两个高德 JS 值用于浏览器地图展示。仓库根目录 `.env` 的 `AMAP_KEY` 用于后端 POI 检索，不能相互替代。
 
 ## 已对接接口
 

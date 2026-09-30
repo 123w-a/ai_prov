@@ -1,0 +1,790 @@
+/* ══ 结果页 v3（2026-09-22，按用户挑定的设计稿 B2 重排）═══════════════════
+
+   为什么整段重写而不是继续叠覆盖：第二版翻车的直接原因就是"部分覆盖"——
+   `.recipe-figure figcaption` 的基础规则里有 position/right/bottom/background 四个浮层属性，
+   我只覆盖了 font-size 和 color，于是深色浮层原样压在图上。
+   所以这里对**每一个复用的类名都写完整定义**（`.result-head` / `.result-tick` /
+   `.alerts` / `.lights` / `.steps`），一条不留半截。
+
+   上面那些 `.recipe*` / `.matrix` / `.verdict` / `.guardrails` / `.adjustments` /
+   `.chef-tip` / `.block*` 规则已经全部没有对应元素了（v3 不再使用这些类名），
+   留着是死字节，但不影响渲染；要清就得整文件重写，风险大于收益，暂不动。 */
+
+/* ── 页眉：极简一行，系统账目一律不在这里 ───────────────── */
+
+.result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line-strong);
+  padding-top: 12px;
+  margin-bottom: 26px;
+}
+
+/* 品牌名由外层 .tn-head 提供，结果区不再重复。这条规则留着只为防止误用。 */
+.result-brand {
+  display: none;
+}
+
+/* 完成标记：纯文字。第二版是个陶土描边小药丸，它在页眉里比菜名还显眼，
+   而"事情结束了"是这页上最不重要的一条信息。 */
+.result-tick {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* ── 首屏：图 → 菜名 → 回声 → 指标 → 一句形态说明 ─────────── */
+
+/* 主菜图。
+ *
+ * ── 为什么不再强制 16:9（2026-09-22 用户反馈「有种截图没截完整的感觉」）──────
+ * 量了 22 张真实菜品图的原始尺寸，比例根本不统一：
+ *     13x 1024x1024 (1.000，全是 AI 生成图) / 3x 640x520 (1.231)
+ *     1x 900x230 (3.913 极扁横幅) / 1x 680x781 (0.871 竖图)
+ *     1x 1200x899 (1.335) / 2x 16:9 (1.778)
+ * 强制 16:9 再 object-fit: cover，等于把 59% 的正方形图**只留中间 56% 的高度**，
+ * 上下全切掉——那正是"截图没截全"的成因；极扁横幅被切掉 55% 的宽度，竖图更狠。
+ *
+ * ── 为什么不是 "width:100% + object-fit:contain"（我的第一版改法，错）────────
+ * 那样 img 盒子仍是整列宽（880），照片被 contain 缩到 440x440 居中，
+ * 于是我给盒子加的 background + border-radius 就在左右露出两块浅色底，
+ * **整块看起来像把照片贴到一张浅灰卡片上——那就是一个盒子**，
+ * 而「整页只允许一处盒子」是冻结约束。根因：圆角和底色加在了盒子上，不是照片上。
+ *
+ * ── 现在的规则：让 img 盒子就等于照片本身 ────────────────────────────
+ * width/height 都 auto + 只给 max-width/max-height ⇒ 浏览器按原比例缩放到装得下为止，
+ * 盒子尺寸 = 照片尺寸，所以 border-radius 圆的是**照片本身**，没有背景可露，不会出现盒子。
+ * 任何一张都不会被裁，也不会被拉伸。
+ *
+ * 代价（如实说明）：高图（正方形/竖图）被限高到 440，因而比内容列窄、居中显示；
+ * 小图（640 宽）保持原始尺寸不放大（放大只会糊）。所以每道菜的照片宽度会不一样——
+ * 这是"按原比例完整显示"的必然结果，不是没对齐。首屏也从"通栏大图"变成"一张居中的菜照"。
+ *
+ * 另外：23 条里只有 9 条配了真实照片，14 条是 AI 补的，22/23 的 note 自己就承认了。
+ * 所以不做"显示/不显示"的分档——那等于把后端的不确定性做成产品等级。
+ */
+/* ── 首屏两栏：左图右文 ────────────────────────────────
+ * 改这里的原因（2026-09-23 用户「图片放最上面，感觉留白太多了」）：
+ * 菜品图受 max-height 限制，1:1 方图只能到 440px 宽，而正文栏 706px——
+ * 两侧各空 131px，一张居中小图被 260px 空白包着。
+ * 又不能把图放大：13/22 张是 1:1，撑满就是 706px 高，菜名会被推出首屏。
+ * 所以改构图：图占定宽左栏（不裁切、高度天然有界），文字填右栏吃掉侧向空白。
+ *
+ * 图片列 260px 是算过的：一栏 706px 减去 40px 栏距 = 406px 文字栏，
+ * 32px 的菜名在这宽度里一行约 12 个汉字，最长菜名（现炸带骨鸡腿/鸡翅减损吃法）
+ * 折两行，不会碎成三行以上。 */
+.dish-top {
+  display: grid;
+  /* 图在右、且图是主视觉。左栏 331px 与照片 285px 是量出来的，不是估的：
+   * 设计稿内容区 x44..1424（1380px）里，文字栏 44..560（516px）、照片 580..991（412px）、
+   * 栏距 20px。按 636px 主栏等比折算 ⇒ 文字 346 / 栏距 16 / 照片 285。
+   * 改成这个比例的原因：原实现是「图在左 260px + 文字 406px」，把主次弄反了——
+   * 用户看到的是一张小缩略图配一大块字，而设计稿里照片是这一屏的主语。 */
+  grid-template-columns: minmax(0, 1fr) 285px;
+  gap: var(--s3) var(--s2);
+  align-items: start;
+  margin-bottom: var(--s4);
+}
+
+/* 显式指定栅格位：DOM 里 figure 在前，但视觉上要落在右列。 */
+.dish-top .dish-figure {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+}
+
+.dish-top .dish-hero {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.dish-top .dish-figure img {
+  width: 100%;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  /* 设计稿的照片是圆角 + 柔和投影（用户已撤销"禁阴影/禁渐变"两条私设红线）。 */
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-paper);
+}
+
+/* 图注跟图左对齐：图不再居中，图注居中会跟照片脱开。 */
+.dish-top .dish-figure figcaption {
+  text-align: left;
+}
+
+/* 首屏文字左对齐——居中文字在窄栏里会失去阅读方向，读起来像海报。 */
+.dish-top .dish-name,
+.dish-top .dish-echo,
+.dish-top .dish-intro {
+  text-align: left;
+}
+
+.dish-top .dish-metrics {
+  justify-content: flex-start;
+  /* 栏变窄后指标行会折行，所以用稍大的水平间距分组。
+   * （这里原来还有一条 `.metric + .metric::before` 的例外规则，专门用来关掉分隔线——
+   *   2026-09-26 照设计稿把分隔线整个撤了，那条例外规则一并删除。） */
+  gap: 4px 18px;
+}
+
+/* 文字栏收窄到 331px（原 406px），菜名必须跟着降一档：
+ * 32px 在 331px 栏里一行只放得下约 10 个字，长菜名会碎成三行以上。
+ * text-wrap: balance 是必需的，不是修饰：截图里「现炸带骨鸡腿/鸡翅（减损吃法）」
+ * 原本断成「…（减损吃」/「法）」，第二行只剩两个字加一个全角括号。
+ * balance 让两行长度接近，消掉这个孤字。 */
+.dish-top .dish-name {
+  font-size: 28px;
+  text-wrap: balance;
+}
+
+/* 窄屏落回竖排：两栏在手机上会把图和字都挤扁。 */
+@media (max-width: 720px) {
+  .dish-top {
+    grid-template-columns: 1fr;
+    gap: var(--s3);
+  }
+
+  /* 竖排时必须撤掉显式栅格位，否则图仍被钉在第二列、整块塌掉。 */
+  .dish-top .dish-figure,
+  .dish-top .dish-hero {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .dish-top .dish-name {
+    font-size: 28px;
+  }
+
+  /* 竖排时图注回到居中，与图本身居中的观感一致。 */
+  .dish-top .dish-figure figcaption {
+    text-align: center;
+  }
+}
+
+/* ── 上菜：结果页的入场编排 ─────────────────────────────
+ *
+ * 它**由真实信号驱动**，这是它不违反"不许伪造进度"的原因：
+ * TonightApp 在 status 从 running 切到 succeeded 时才把整棵子树换成 RunResult，
+ * 所以下面每个节点都是新挂载的，入场只在"结果真的到了"那一刻播一次。
+ * 不是由计时器启动，也不是由心跳启动；动画时长表达的是界面的展示节奏，
+ * 不表达后端还剩多少——页面在这 0.9 秒里没有说过任何关于"还差多少"的话。
+ *
+ * 次序照"标题—结论—细节"：图先落位，再菜名、回声、指标、图注、一句话介绍，
+ * 最后才是安全项。总时长压在 0.9 秒内是硬要求：
+ * 红色安全项必须在首屏且不许被拖延（对抗红线），延迟太久就等于把它推出了首屏。
+ *
+ * 为什么给 .dish-hero 关掉它自己的动画：.dish-hero 上原本有 rise 0.5s both，
+ * 而这里要给它的子元素各自错开延迟。父子的延迟会叠加，
+ * 结果是菜名实际等到 0.07+0.5 才开始动、并且和父容器同时淡入两次——
+ * 看着是"抖了一下"，不是"上菜"。 */
+.dish-top .dish-hero {
+  animation: none;
+}
+
+.dish-top .dish-figure {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.dish-top .dish-name {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.07s;
+}
+
+.dish-top .dish-echo {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.13s;
+}
+
+.dish-top .dish-metrics {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.19s;
+}
+
+.dish-top .dish-figure figcaption {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.21s;
+}
+
+/* 安全项排在"一句话介绍"**之前**。
+ * 起因是 t=350ms 的冻结帧取证：初版把 alerts 放在 0.34s、dish-intro 放在 0.31s，
+ * 于是最不重要的那句"外酥里嫩…"比「脂肪偏高」「钠不低」先到。
+ * 对一个档案里有孕妇的用户，"哪个先到"不该由重要性的倒序决定。
+ * 现在次序是 图 → 菜名 → 回声 → 指标 → 图注 → 安全项 → 介绍。 */
+.alerts {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.27s;
+}
+
+.dish-top .dish-intro {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.33s;
+}
+
+.dish-figure {
+  margin: 0 0 26px;
+}
+
+.dish-figure img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 440px;
+  margin: 0 auto;
+  border-radius: var(--radius-lg);
+}
+
+/* 图注跟着照片居中。图是居中的，图注若左对齐到列边就会和照片脱开。 */
+.dish-figure figcaption {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.dish-hero {
+  margin-bottom: 30px;
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 全页最大的一号字。它是这一页的主语，其它一切都只是它的注脚。
+ *
+ * 2026-09-26 改：换衬线（设计稿的菜名是宋体），并用 -webkit-text-stroke 加粗。
+ *
+ * 为什么用 stroke 而不是 font-weight:800：Windows 上 SimSun 只有 400 一档，
+ * 浏览器遇到 700/800 会做**合成粗体**——把同一套字形向右下偏移重绘一遍。
+ * 它在非整数缩放下会发虚、边缘糊，且笔画交叠处变脏。stroke 是沿轮廓向外描一圈，
+ * 不产生第二份字形，因此不依赖任何字重档位。
+ *
+ * font-synthesis:none 是前提条件：不关掉它，浏览器照样会对 400 做合成，stroke 就白加了。
+ * 这条是用户 2026-09-26 明确要求试的，按 100%/125%/150% 三档缩放截图比对后再定去留；
+ * 若发虚，退路是 400 字重 + 字号/颜色拉层级，数字与拉丁字母交给 Georgia。 */
+.dish-name {
+  margin: 0 0 12px;
+  font-family: var(--serif);
+  font-size: 40px;
+  line-height: 1.18;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.5px currentColor;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  text-align: center;
+}
+
+/* 回声：把用户自己的原话引回来。没有这一行，这页就跟"今晚"没关系，
+   读起来像是系统随便生成的一篇文档——那正是第二版被否决的根因。 */
+.dish-echo {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* 指标一行：三项之间只用一根发丝竖线，字号压到最小，整体不抢视线。 */
+.dish-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+
+/* 指标：图标 + 标签 + 值。
+ *
+ * 2026-09-26 照设计稿改：三项各配一个细线图标，**三项之间不再有分隔线**
+ * （设计稿那一行只有间距）。原来那根发丝竖线撤掉了，连带它的例外规则。 */
+.metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 图标是"引子"，比标签深一档，眼睛先落在图形上。
+ * 尺寸写死 17px 而不是跟着 1em：指标行字号被压到 12px 上下，
+ * 跟着字号走会得到一个 12px 的图标——比旁边的字还小，起不到分辨作用。 */
+.metric .icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: var(--ink-soft);
+}
+
+/* 叶子用语义绿（设计稿原版如此）。只有它上色，另外两个保持墨色——
+ * "全都上色"会变成装饰，"只给有语义的那片上色"才是信息。 */
+.metric .icon-leaf {
+  color: var(--ok-mark);
+}
+
+.metric-label {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+
+.metric-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.dish-intro {
+  margin: 16px auto 0;
+  max-width: 620px;
+  font-size: 15.5px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* ── 安全提醒 ─────────────────────────────────────────
+   红色项必须进首屏，且**绝不默认折叠**（对抗评审席红线一/二）。
+   它靠左侧一根竖线建立重量，不靠大色块填充——填充会变成"一大块警告面板"。 */
+
+.alerts {
+  list-style: none;
+  margin: 0 0 26px;
+  padding: 0;
+  border: none;
+}
+
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink);
+  padding: 11px 16px;
+  margin-bottom: 8px;
+  border-left: 2px solid var(--line-strong);
+  background: none;
+}
+
+.alert b {
+  flex: none;
+  font-weight: 650;
+}
+
+/* 红色：唯一被允许"更重"的一行，但**不再带淡色底填充**。
+ *
+ * 原来是 border-left 2px + background: var(--bad-soft) 的粉色块。
+ * 粉底是"彩色卡片"思路，也是整页最后一块填充色——而填充一旦出现，
+ * 页面就有了"最亮的一块"，它的重要性未必最高（这正是用户冻结的「强调色绝不填充」）。
+ * 现在改成：3px 红竖线 + 红色标签，重心全压在这根线上。
+ * **安全性没有被削弱**：红仍然是红、仍然在首屏、仍然绝不默认折叠（对抗席红线一/二）。 */
+.alert.is-red {
+  border-left-width: 3px;
+  border-left-color: var(--red);
+  background: none;
+  padding-left: 15px;
+}
+
+.alert.is-red b {
+  color: var(--red);
+}
+
+/* 黄灯：不填充，只换竖线颜色。黄灯多起来是常态（实测 12 条），
+   如果每条都带底色，整页会变成一片警告色，红的那条也就不红了。 */
+.alert.is-yellow {
+  border-left-color: var(--warn);
+}
+
+.alert.is-yellow b {
+  color: var(--warn);
+}
+
+.alert.is-guard {
+  border-left-color: var(--accent-line);
+}
+
+.alert.is-guard b {
+  color: var(--accent-ink);
+}
+
+/* ── 「这一碗的重点」= chef_tip ────────────────────────
+   实测 23/23 都有这个字段，是"为什么适合我们这两个人"最密集的载体。
+   2026-09-26：从"一根陶土竖线、不做底纹"改成设计稿那样的暖色块。
+   底色用 --accent-soft（#f4ece5），是底色往陶土方向走一档，
+   仍然远低于正文对比度，不会变成"一大块警告色"。 */
+
+.focus {
+  margin: 0 0 30px;
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.focus-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+}
+
+.focus-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+/* ── 家人两列 ─────────────────────────────────────────
+   只在真有数据时渲染（实测 1/23）。有数据时它就该是最该被看见的一块：
+   这个产品存在的理由就是"一张菜谱同时照顾孕期和增肌两个人"。
+   但它**不套盒子**——两列之间只用一条发丝竖线。
+   盒子一旦出现在这里就变成"给卡片加装饰"，而对抗席明令不许卡片靠装饰更高级。 */
+
+.members {
+  margin: 0 0 34px;
+}
+
+.members-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0;
+}
+
+.member-col {
+  padding: 0 26px 0 0;
+}
+
+.member-col + .member-col {
+  padding-left: 26px;
+  border-left: 1px solid var(--line);
+}
+
+.member-name {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.member-line {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+/* 引子就是 dish_matrix 的 verdict（可吃 / 需调整 / …），固定宽度让两列对齐可扫。 */
+.member-verdict {
+  flex: none;
+  min-width: 3.4em;
+  font-weight: 650;
+  color: var(--accent-ink);
+}
+
+.member-dish {
+  color: var(--ink);
+}
+
+.member-reason {
+  color: var(--ink-soft);
+}
+
+/* ── 滚动区段落标题 ───────────────────────────────── */
+
+.section-title {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── 营养小灯 ─────────────────────────────────────────
+   覆盖第二版那套「圆角边框 + 逐行底色 + 1px 缝隙」的表格盒。
+   现在是纯发丝线清单：颜色只用来点一个小圆点，绝不做填充色块。 */
+
+.lights-block {
+  margin-bottom: 34px;
+}
+
+.lights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: block;
+  gap: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.light {
+  display: grid;
+  /* 第一列是彩色细条，第二列是标签，第三列是理由。
+   * 第二列原来固定 116px，但实测 health_lights[].label 基本只有一两个字
+   * （钠 / 糖 / 脂肪 / 嘌呤），116px 会在标签和理由之间空出一大截，
+   * 整行读起来是散的。收到 52px（两轮截图对照：116 → 72 → 52）：
+   * 最长的「高血压」三个字约 40px，52px 放得下并留 12px 呼吸。
+   * 注意不能用 auto —— .lights 是 display:block，每一行都是独立 grid，
+   * auto 会让各行的标签各按自己的宽度起点对齐，反而更乱。
+   *
+   * 2026-09-26：第一列（12px 彩色细线）去掉，改由标签药丸承载颜色，
+   * 所以列定义从 12px 52px 1fr 收成 52px 1fr。细线的问题是在 278px 的右栏里
+   * 太不显眼，安全信号被削弱；药丸是设计稿实际采用的形式。 */
+  grid-template-columns: 52px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  background: none;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.light:last-child {
+  border-bottom: none;
+}
+
+/* 健康灯：圆点与细线都不用了，颜色改由 .light-label 的药丸承载。
+ * 颜色编码本身一个字没变（绿=好 / 黄=注意 / 红=警示），只换了承载形状。 */
+.light-dot {
+  display: none;
+}
+
+/* 标签做成"浅底药丸 + 深字"——设计稿里红黄绿的承载形式。
+ *
+ * 用的是 --ok-fill/--warn-fill/--risk-fill 这套**填充专用**色，
+ * 与当文字用的 --green/--yellow/--red 分开：浅底必须配深字才读得清，
+ * 直接拿深绿当底再压深字会糊成一片。 */
+.light-label {
+  justify-self: start;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+  color: var(--ink);
+}
+
+.light.is-green .light-label {
+  background: var(--ok-fill);
+  color: var(--ok-ink);
+}
+
+.light.is-yellow .light-label {
+  background: var(--warn-fill);
+  color: var(--warn-ink);
+}
+
+.light.is-red .light-label {
+  background: var(--risk-fill);
+  color: var(--risk-ink);
+}
+
+.light-reason {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+/* ── 结果页两栏：正文 + 常驻右栏 ───────────────────────
+ * 这个结构来自设计稿第一版（用户从三版里选中的那一版）。
+ * 它不是排版微调：设计方把"这顿有没有要注意的"做成一条**常驻右栏**，
+ * 而不是在首屏塞一条警告。好处是往下翻做法时，红/黄判据一直在视野里。
+ *
+ * 右栏在 DOM 里排在正文**前面**：窄屏落回单列时它自然落在最上面，
+ * 红色项因此不会掉出首屏（对抗席红线一）。
+ *
+ * 右栏不做填充底、不加圆角：整页保持"零盒子"，那根发丝竖线只用来分组，
+ * 不制造面板。这是它与设计稿的**故意偏离**——设计稿给右栏套了描边框，
+ * 而"整页只留一处盒子"是用户冻结的规矩；这里先只用一根竖线，
+ * 要不要给它盒子，留给用户看一眼再定。
+ */
+.result-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
+  gap: 0 40px;
+  align-items: start;
+}
+
+.result-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  /* 正文行宽上限 = 42em ≈ 672px ≈ 一行 42 个汉字。
+   *
+   * 外壳定在 1010 时这条**不生效**：1fr 轨宽只有 636px，本来就小于 672。
+   * 留着它是护栏——外壳宽度是个变量，一旦调宽，没有它正文会一行拉到 50 多字。
+   * 也就是说：1010 是"两侧空白最多"和"中缝最窄"的交点，放宽哪一头都会坏另一边。 */
+  max-width: 42em;
+}
+
+/* 散文形态（实测 14/35 是这种）没有右栏，整段会直接铺满外壳。
+ * 外壳 760 时它是 704px ≈ 44 字，尚可；外壳定到 1010 之后就是 954px ≈ 59 字，
+ * 已经越界了。所以这条在本轮**是真生效的**，不是护栏。 */
+.result.is-prose > * {
+  max-width: 42em;
+}
+
+/* 2026-09-27（第 4 步）：这个元素不再自己画盒子。
+ *
+ * 它原来同时干两件事：栅格放置 + 自己当面板。现在**盒子**（padding 22px 20px、
+ * --radius-lg、--panel 底、--panel-line 描边）搬进了 styles/primitives.css 的
+ * .p-panel[data-variant='filled']，与等待页的事实框共用同一个原语。
+ * 这里只留下它真正独有的两件事：落在哪一列，以及常驻不动。
+ *
+ * 盒子样式**必须**从这条规则里拿掉，而不是留着——留着就会在 Panel 外面再套一层
+ * 同样的底与圆角，两个圆角一叠就露边。下面那套 `.result-rail .light…` 后代规则
+ * 是挂在**类名**上的，Panel 套在里面，它们一字符都不用改。
+ *
+ * 历史（2026-09-26，用户撤销「整页只准一个盒子」之后给它加盒子）：
+ * 底色用 --panel（#F4F0E8，设计稿实测填充色）而不是白，因为它比页面底 #F8F4F0
+ * **更深**一点，是"压在纸面上的一块浅底"，不是浮起来的白卡——白卡正是被否决的玻璃感。
+ * 而光有底色不够（两者只差 4/4/8，截图里看不出是面板，已复现），所以描边是必需的。 */
+.result-rail {
+  grid-column: 2;
+  grid-row: 1;
+  /* 常驻是这一版设计稿的全部意思所在。没有 sticky，它就只是一条
+   * 跟着滚走的侧栏，"一直在视野里"这件事根本不成立。 */
+  position: sticky;
+  top: 24px;
+}
+
+.rail-title {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.lights + .rail-title {
+  margin-top: 26px;
+}
+
+/* 右栏只有 278px，判据和警告都要按这个宽度重新收紧。
+ * 原来的三列（细线 12px / 标签 52px / 理由 1fr）在这里会把理由压到 180px 以下，
+ * 而真实理由最长实测 21 个汉字（「炸鸡腌制和椒盐干碟合计钠不低，需注意量。」）。
+ * 改成两列、标签与理由上下叠。 */
+.result-rail .alerts {
+  margin: 0;
+}
+
+.result-rail .alert {
+  display: block;
+  padding: 0 0 0 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.result-rail .alert b {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.result-rail .lights {
+  margin: 0;
+}
+
+/* 红/黄/绿合成一张表之后，严重度靠**左侧竖线**承载，不再另立警告块。
+ * 圆点在窄栏里和这根竖线是同一件事的两种画法，去掉圆点、只留竖线。 */
+.result-rail .light {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 9px 0 9px 12px;
+  border-left: 2px solid var(--line);
+}
+
+.result-rail .light-dot {
+  display: none;
+}
+
+.result-rail .light.is-yellow {
+  border-left-color: var(--warn);
+}
+
+.result-rail .light.is-red {
+  border-left-color: var(--red);
+  border-left-width: 3px;
+  padding-left: 11px;
+}
+
+/* 药丸的文字色必须用 -ink 令牌，不能再用 --warn / --red。
+ *
+ * 2026-09-26 修正（真实页面计算值实测）：这两条原来是 `color: var(--warn)` /
+ * `color: var(--red)`，那是**药丸还是浅底、文字配深色**时候的写法。
+ * 后来药丸改成实心填充（底色换成 --warn-fill / --risk-fill），背景换了、
+ * 这两条没跟着换 ⇒ 红色那颗变成 **红字印红底**（文字 rgb(176,48,48) / 底色 rgb(184,48,40)），
+ * 肉眼看就是一个空心红块、标签消失。绿色之所以没坏，是因为 rail 里没有 .is-green 的覆盖规则，
+ * 它落在基础规则的 color: var(--ok-ink) 上——那不是"绿色做对了"，是"绿色漏了才侥幸对"。
+ *
+ * 教训：核对配色要核对**配对**（文字色 + 底色一起读计算值）。
+ * 只读底色就宣布生效，等于只检查了一半，上面这个洞就是这么漏过去的。 */
+.result-rail .light.is-yellow .light-label {
+  color: var(--warn-ink);
+}
+
+.result-rail .light.is-red .light-label {
+  color: var(--risk-ink);
+}
+
+.result-rail .light-reason {
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.rail-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-faint);
+}
+
+.rail-sources li {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-sources li:last-child {
+  border-bottom: none;
+}
+
+.rail-sources .src-name {
+  color: var(--ink-soft);
+}
+
+/* 窄屏：右栏先于正文出现，红色项绝不掉出首屏。 */
+@media (max-width: 900px) {
+  .result-body {
+    display: block;
+  }
+
+  .result-rail {
+    position: static;
+    padding-left: 0;
+    border-left: none;
+    margin-bottom: 34px;
+  }
+
+  /* 宽屏落回单列时，理由重新和标签同排，用原来的两列结构。 */
+  .result-rail .light {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 4px 12px;
+  }
+
+  .result-rail .light-label,
+  .result-rail .light-reason {
+    grid-column: auto;
+  }
+}
+

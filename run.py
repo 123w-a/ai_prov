@@ -16,11 +16,33 @@ import urllib.request
 import uvicorn
 
 from api.main_app import app
+from agent import turn_decision as _turn_decision_module
+from infrastructure.paths import LOG_DIR
 
 HOST = "127.0.0.1"  # 只监听本机，避免暴露到局域网
 PORT = 8010  # 与前端 DEFAULT_API_URL 保持一致，别随便改
 RELOAD = os.getenv("API_RELOAD", "0") == "1"  # 改代码自动重启，开发时可 set API_RELOAD=1
 WORKERS = 1  # 会话/JSON 存储使用进程内锁，必须固定单 worker。
+
+
+def configure_utf8_stdio():
+    """让 Windows 后台重定向日志与 IDE 的 UTF-8 读取保持一致。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+configure_utf8_stdio()
+print(
+    "[startup] loaded "
+    f"api={__import__('api.main_app', fromlist=['app']).__file__} "
+    f"turn_decision={_turn_decision_module.__file__}",
+    flush=True,
+)
+# 日志在项目外，启动时打印一次，省得每次都要去翻代码找路径
+print(f"[startup] logs -> {LOG_DIR}", flush=True)
 
 
 def port_in_use(host=HOST, port=PORT):

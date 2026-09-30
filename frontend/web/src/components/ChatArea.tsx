@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { fetchNearby, resolveLocation, sendMessageFeedback } from '../api/client'
 import type { MemoryCandidate } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult, ResolvedLocation } from '../types'
@@ -7,7 +8,9 @@ import html2canvas from 'html2canvas'
 import { starMessage as starMessageApi, addDislike, fetchTasteSuggestion, addTasteNote } from '../api/client'
 import type { TasteSuggestion } from '../api/client'
 import { RecipeCard } from './RecipeCard'
+import { NearbyRestaurantMap } from './NearbyRestaurantMap'
 import { renderRichText } from '../utils/richText'
+import { buildAmapNavigationUrl, wgs84ToGcj02 } from '../utils/nearbyNavigation'
 
 interface Props {
   activeTitle: string
@@ -245,7 +248,7 @@ export function ChatArea({
     window.localStorage.setItem('xiaoshan-coords', value)
     window.dispatchEvent(new CustomEvent('xiaoshan-coords-change', { detail: value }))
     try {
-      const resolved = await resolveLocation(value)
+      const resolved = await resolveLocation(wgs84ToGcj02(value))
       setLocationInfo(resolved)
       if (announce) {
         setNotice(
@@ -510,6 +513,7 @@ export function ChatArea({
 
   const loadNearby = async (page = 1, budget = nearbyBudget, locationValue?: string, radiusValue = nearbyRadius) => {
     const activeLocation = locationValue || coords || undefined
+    const amapLocation = activeLocation ? wgs84ToGcj02(activeLocation) : undefined
     lastNearbyKeyRef.current = buildNearbyKey(activeLocation, budget, radiusValue)
     setNearbyLoading(true)
     setNearbyError('')
@@ -518,7 +522,7 @@ export function ChatArea({
         city: locationInfo?.city || undefined,
         district: locationInfo?.district || undefined,
         budget,
-        location: activeLocation,
+        location: amapLocation,
         radius: radiusValue,
         page,
       })
@@ -792,7 +796,7 @@ export function ChatArea({
                     {message.text && (message.streaming || message.imagePending || !message.answer || message.error) && (
                       <div className="message-text">{renderRichText(message.text)}</div>
                     )}
-                    {message.answer && !message.imagePending && <RecipeCard answer={message.answer} />}
+                    {message.answer && <RecipeCard answer={message.answer} />}
                     {(message.streaming || message.imagePending) && (
                       <div className="stream-state" role="status" aria-live="polite">
                         <span className="stream-dots" aria-hidden="true">
@@ -902,7 +906,7 @@ export function ChatArea({
           </section>
         )}
 
-        {panelOpen && (
+        {panelOpen && createPortal(
           <section className="nearby-panel" aria-label="附近餐厅建议">
             <header className="nearby-panel-head">
               <div>
@@ -991,6 +995,10 @@ export function ChatArea({
                       ? '已拿到 GPS 坐标，正在等待城市解析'
                       : '先定位后再搜附近餐厅，结果会更准'}
                 </p>
+                <NearbyRestaurantMap
+                  restaurants={nearbyResult.restaurants}
+                  origin={coords}
+                />
                 <div className="nearby-list">
                   {nearbyResult.restaurants.map((restaurant) => (
                     <article key={restaurant.name} className="nearby-card">
@@ -1004,6 +1012,16 @@ export function ChatArea({
                         {restaurant.address && <span>{restaurant.address}</span>}
                       </div>
                       {restaurant.guardrail && <p>{restaurant.guardrail}</p>}
+                      {buildAmapNavigationUrl(restaurant, coords) && (
+                        <a
+                          className="nearby-navigation-link"
+                          href={buildAmapNavigationUrl(restaurant, coords) ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          导航去这家
+                        </a>
+                      )}
                     </article>
                   ))}
                 </div>
@@ -1022,7 +1040,8 @@ export function ChatArea({
                 </div>
               </>
             )}
-          </section>
+          </section>,
+          document.body,
         )}
 
         {preview && (

@@ -1,0 +1,19 @@
+{
+ "before": {
+  "passed": 8,
+  "total": 9
+ },
+ "after": {
+  "passed": 9,
+  "total": 9
+ },
+ "green": [
+  {
+   "id": "anemia-dates-typo",
+   "pass": true
+  }
+ ],
+ "red": [],
+ "budgetUsed": 1,
+ "verdict": "promote"
+}

@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>小膳管家 · 前端户型图</title>
+<style>
+  :root{
+    --bg:#f8f4f0; --panel:#fdfaf7; --sunken:#f1ebe4;
+    --ink:#3d2a18; --ink-soft:#6b5442; --line:#e4dcd0; --line-strong:#cfc4b4;
+    --accent:#a96f4e;
+    --green:#2f7d4f; --yellow:#b8860b; --red:#b03030;
+    --serif:Georgia,"Songti SC","SimSun",serif;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.75 var(--serif);
+    font-synthesis:none;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1010px;margin:0 auto;padding:40px 24px 96px}
+  h1{font-size:26px;font-weight:400;margin:0 0 6px;letter-spacing:.5px}
+  h2{font-size:19px;font-weight:400;margin:52px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;font-weight:400;margin:0 0 8px}
+  h4{font-size:16px;font-weight:400;margin:0 0 4px}
+  p{margin:0 0 10px}
+  .meta{font:12px/1.6 var(--mono);color:var(--ink-soft);font-variant-numeric:tabular-nums}
+  .sub{color:var(--ink-soft);font-size:14px;margin:0 0 4px}
+  .lead{font-size:15.5px;color:var(--ink);margin:14px 0 0}
+  code{font:12.5px/1 var(--mono);background:var(--sunken);border:1px solid var(--line);padding:1px 5px;white-space:nowrap}
+  .tnum{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ── 站点地图线框 ────────────────────────────── */
+  .map{border:1px solid var(--line-strong);background:var(--panel);padding:16px}
+  .map-cap{font:11.5px/1.6 var(--mono);color:var(--ink-soft);margin:0 0 10px;font-variant-numeric:tabular-nums}
+  .navbar{display:flex;border:1px solid var(--line-strong);background:var(--sunken)}
+  .navbar button{
+    flex:1;padding:11px 6px;background:none;border:0;border-right:1px solid var(--line);
+    font:15px var(--serif);color:var(--ink-soft);cursor:pointer;transition:background .12s
+  }
+  .navbar button:last-child{border-right:0}
+  .navbar button:hover{background:#eae2d8;color:var(--ink)}
+  .navbar button.on{background:var(--panel);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+  .navbar .drawer{
+    flex:0 0 auto;padding:11px 14px;border-left:1px dashed var(--line-strong);
+    font:13px var(--serif);color:var(--ink-soft);background:#f6f1ea
+  }
+  .rooms{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .room{border:1px solid var(--line-strong);background:var(--panel);padding:13px 15px;cursor:pointer;transition:border-color .12s}
+  .room:hover{border-color:var(--accent)}
+  .room.on{border-color:var(--accent);box-shadow:-3px 0 0 var(--accent)}
+  .room .tag{font:11px var(--mono);color:var(--ink-soft);font-variant-numeric:tabular-nums}
+  .room ul{margin:7px 0 0;padding-left:18px;font-size:13.5px;color:var(--ink-soft)}
+  .room ul li{margin:2px 0}
+  .room .state{display:inline-block;margin-top:8px;font:11px var(--mono);padding:0 6px;border:1px solid currentColor;border-radius:2px}
+  .st-build{color:var(--green)} .st-plan{color:var(--yellow)}
+
+  .detail{display:none;border:1px solid var(--accent);background:var(--panel);margin-top:14px}
+  .detail.on{display:block}
+  .detail .dh{background:var(--sunken);border-bottom:1px solid var(--accent);padding:9px 16px;font-size:15.5px}
+  .detail .db{padding:14px 16px 16px}
+  .detail .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
+  .detail .k{font:11.5px var(--mono);color:var(--ink-soft);margin-bottom:3px}
+  .detail ul{margin:0;padding-left:18px;font-size:14px}
+  .detail ul li{margin:2px 0}
+
+  .aside-note{border-left:2px solid var(--accent);padding:4px 0 4px 14px;margin:16px 0;font-size:14.5px;color:var(--ink-soft)}
+  .aside-note b{font-weight:400;color:var(--ink)}
+
+  /* ── 表格 ────────────────────────────── */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--sunken);font-weight:400;color:var(--ink-soft);font-size:12.5px}
+  td.c{text-align:center}
+  .badge{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:2px;font:11.5px var(--mono);white-space:nowrap}
+  .b-ok{color:var(--green)} .b-no{color:var(--red)} .b-part{color:var(--yellow)}
+  .cap{font-size:12.5px;color:var(--ink-soft);margin-top:8px}
+
+  ol.plan{margin:8px 0 0;padding-left:22px;font-size:14.5px}
+  ol.plan li{margin:7px 0}
+  ol.plan b{font-weight:400;color:var(--accent)}
+  .foot{margin-top:56px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-soft)}
+  @media (max-width:820px){
+    .rooms,.detail .grid{grid-template-columns:1fr}
+    .navbar{flex-wrap:wrap}
+    .navbar button{flex:1 0 40%}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>小膳管家 · 前端户型图</h1>
+  <p class="meta">版本 1 · 2026-09-29 · 依据 lave 裁决 + 本机代码实读 · 只覆盖 Web 端</p>
+  <p class="sub">整站 <span class="tnum">4</span> 个房间。旧前端的「决策」视图不再单独存在，由「今晚」承载。家庭成员切换是全局抽屉、多会话历史是「今晚」房内侧栏——<b style="font-weight:400;color:var(--ink)">都不算房间</b>。不引入路由库，用现有状态 + 浏览器前进后退。</p>
+
+  <h2>一、站点地图（点房间看详情）</h2>
+  <div class="map">
+    <p class="map-cap">全局导航条 · 任一房间一次点击可达 · 刷新与前进后退不丢当前房间</p>
+    <div class="navbar">
+      <button class="on" data-go="tonight">今晚</button>
+      <button data-go="weekly">周报</button>
+      <button data-go="fav">收藏</button>
+      <button data-go="svc">服务</button>
+      <span class="drawer">家庭成员切换 · 全局抽屉（不是房间）</span>
+    </div>
+
+    <div class="rooms">
+      <div class="room on" data-go="tonight">
+        <h4>① 今晚 <span class="tag">主面</span></h4>
+        <div class="tag">旧 decision 视图的重建版</div>
+        <ul>
+          <li>提问 → 等待 → 结果 → 再问 / 换菜</li>
+          <li>会话历史（房内侧栏）、安全提示、成员上下文</li>
+        </ul>
+        <span class="state st-build">骨架已成 · 待加导航壳</span>
+      </div>
+      <div class="room" data-go="weekly">
+        <h4>② 周报</h4>
+        <div class="tag">本周餐次 · 趋势 · 数据不足就明说</div>
+        <ul>
+          <li>不画假趋势线（后端实测全给 insufficient）</li>
+          <li>点某一顿 → 回今晚并带上上下文</li>
+        </ul>
+        <span class="state st-plan">未建</span>
+      </div>
+      <div class="room" data-go="fav">
+        <h4>③ 收藏</h4>
+        <div class="tag">收藏的菜谱 · 取消收藏 · 重新开始</div>
+        <ul>
+          <li>点条目 → 回今晚结果详情</li>
+          <li>与点赞 / 点踩、忘掉这道菜同房</li>
+        </ul>
+        <span class="state st-plan">未建</span>
+      </div>
+      <div class="room" data-go="svc">
+        <h4>④ 服务</h4>
+        <div class="tag">服务推荐 · 预览 · 适用条件</div>
+        <ul>
+          <li>附近门店、位置解析</li>
+          <li>无服务时给解释性空态，不给假数据</li>
+        </ul>
+        <span class="state st-plan">未建</span>
+      </div>
+    </div>
+
+    <!-- 详情面板 -->
+    <div class="detail on" id="d-tonight">
+      <div class="dh">① 今晚 · 主面</div>
+      <div class="db">
+        <div class="grid">
+          <div>
+            <div class="k">装什么</div>
+            <ul>
+              <li>提问态：输入 + 右栏四块（待确认 / 档案 / 本周 / 冰箱）</li>
+              <li>等待态：阶段叙事 + 可取消</li>
+              <li>结果态：卡片与散文平级呈现，8 个板块</li>
+              <li>房内侧栏：会话历史（进某条会话）</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">从哪进</div>
+            <ul>
+              <li>默认首页（<code>next.html</code>）</li>
+              <li>导航条「今晚」</li>
+              <li>会话侧栏点某条历史</li>
+              <li>另外三个房间的「回今晚」</li>
+            </ul>
+            <div class="k" style="margin-top:10px">从哪出</div>
+            <ul>
+              <li>结果页 → 周报 / 收藏 / 服务</li>
+              <li>开新问题 → 回提问态</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">用的后端能力</div>
+            <ul>
+              <li><code>/api/chat</code> · <code>/api/sessions</code> · <code>/api/fridge</code> · <code>/api/profile</code></li>
+              <li><code>/api/reports/weekly</code> · <code>/api/preferences/candidates/*</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">这间房的验收</div>
+            <ul>
+              <li>四项导航可见且一次点击可达</li>
+              <li>刷新 / 前进后退不丢当前房间</li>
+              <li>提问→等待→结果可跑通，成员上下文不丢</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail" id="d-weekly">
+      <div class="dh">② 周报</div>
+      <div class="db">
+        <div class="grid">
+          <div>
+            <div class="k">装什么</div>
+            <ul>
+              <li>本周餐次、日期区间、营养灯计数</li>
+              <li>趋势：后端给 insufficient 就写「数据不足」</li>
+              <li>护栏触发次数</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">从哪进 / 从哪出</div>
+            <ul>
+              <li>进：导航条；结果页「看周报」</li>
+              <li>出：点某一顿 → 回今晚带上下文</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">用的后端能力</div>
+            <ul>
+              <li><code>/api/reports/weekly</code></li>
+              <li><code>/api/reports/weekly-summary</code></li>
+              <li><code>/api/feedback/weekly</code> · <code>/api/reports/feedback</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">这间房的验收</div>
+            <ul>
+              <li>真实数据可展示，不足数据有明确空态</li>
+              <li>不出现画出来的假趋势线</li>
+              <li>从周报能回到今晚</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail" id="d-fav">
+      <div class="dh">③ 收藏</div>
+      <div class="db">
+        <div class="grid">
+          <div>
+            <div class="k">装什么</div>
+            <ul>
+              <li>收藏列表、取消收藏</li>
+              <li>点赞 / 点踩、忘掉这道菜</li>
+              <li>打开条目 → 重新开始提问</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">从哪进 / 从哪出</div>
+            <ul>
+              <li>进：导航条；结果页收藏后「去看收藏」</li>
+              <li>出：打开条目 → 今晚结果详情</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">用的后端能力</div>
+            <ul>
+              <li><code>/api/favorites</code></li>
+              <li><code>…/messages/{id}/star</code> · <code>…/feedback</code></li>
+              <li><code>/api/feedback/forget-dish</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">这间房的验收</div>
+            <ul>
+              <li>收藏 → 取消 → 打开 → 回今晚，闭环成立</li>
+              <li>空收藏有明确空态，不给假条目</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail" id="d-svc">
+      <div class="dh">④ 服务</div>
+      <div class="db">
+        <div class="grid">
+          <div>
+            <div class="k">装什么</div>
+            <ul>
+              <li>服务推荐与预览、来源与适用条件</li>
+              <li>附近门店、位置解析</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">从哪进 / 从哪出</div>
+            <ul>
+              <li>进：导航条；结果页的服务入口</li>
+              <li>出：回到来源结果</li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">用的后端能力</div>
+            <ul>
+              <li><code>/api/service/vision</code> · <code>/api/service/preview</code></li>
+              <li><code>/api/nearby</code> · <code>/api/location/resolve</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="k">这间房的验收</div>
+            <ul>
+              <li>入口 → 详情 → 回来源，链路成立</li>
+              <li>无服务时不出现假数据</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="aside-note">
+    <b>两个不算房间的东西：</b>家庭成员切换是<b>全局抽屉</b>——它是「我以谁的身份在用」，属于上下文，做成房间反而每次都要进出门；多会话历史是<b>今晚房内侧栏</b>，不另造工作台。
+  </div>
+
+  <h2>二、导航矩阵（每个按钮从哪来、到哪去）</h2>
+  <table>
+    <thead>
+      <tr><th style="width:22%">从哪里</th><th style="width:26%">动作</th><th style="width:26%">到哪里</th><th>后退键</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>任意房间</td><td>点导航条「今晚 / 周报 / 收藏 / 服务」</td><td>对应房间</td><td>回上一个房间</td></tr>
+      <tr><td>今晚 · 提问态</td><td>点「开始」</td><td>等待态（同一房间内）</td><td>回提问态</td></tr>
+      <tr><td>今晚 · 等待态</td><td>跑完 / 点「取消」</td><td>结果态 / 回提问态</td><td>回等待态</td></tr>
+      <tr><td>今晚 · 结果态</td><td>点「看周报」</td><td>周报房间</td><td>回结果态</td></tr>
+      <tr><td>今晚 · 结果态</td><td>点收藏 / 服务入口</td><td>收藏 / 服务房间</td><td>回结果态</td></tr>
+      <tr><td>今晚 · 房内侧栏</td><td>点某条历史会话</td><td>该会话的结果态</td><td>回当前会话</td></tr>
+      <tr><td>周报</td><td>点某一顿</td><td>今晚 + 带上那顿的上下文</td><td>回周报</td></tr>
+      <tr><td>收藏</td><td>点某个条目</td><td>今晚结果详情</td><td>回收藏</td></tr>
+      <tr><td>任意</td><td>点家庭成员（全局抽屉）</td><td>原地不动，只换上下文</td><td>不变</td></tr>
+      <tr><td>任意</td><td>刷新页面</td><td>回到刷新前所在的房间</td><td>历史保持</td></tr>
+    </tbody>
+  </table>
+  <p class="cap">导航实现：现有 React 状态 + 浏览器 History API，<b style="font-weight:400;color:var(--ink)">不引入路由库</b>（当前架构刻意没有，要引入必须先单独论证成本）。</p>
+
+  <h2>三、能力 → 房间映射（后端能力不能无主）</h2>
+  <p class="sub">后端接口调用点 <span class="tnum">39</span> 项，新前端已接 <span class="tnum">6</span> 项、未接 <span class="tnum">33</span> 项。下表按房间归位，每项都有主。</p>
+  <table>
+    <thead>
+      <tr><th style="width:14%">房间</th><th style="width:48%">能力（后端接口）</th><th style="width:16%">新前端现状</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td rowspan="8">① 今晚</td>
+        <td>会话新建 <code>POST /api/sessions</code></td>
+        <td class="c"><span class="badge b-ok">已接</span></td><td>刷新接回原会话</td>
+      </tr>
+      <tr><td>聊天流式 <code>POST /api/chat</code></td><td class="c"><span class="badge b-ok">已接</span></td><td>阶段事件整轮 5 个</td></tr>
+      <tr><td>家庭档案 <code>GET /api/profile</code></td><td class="c"><span class="badge b-ok">已接</span></td><td>右栏档案块</td></tr>
+      <tr><td>冰箱 <code>GET /api/fridge</code></td><td class="c"><span class="badge b-ok">已接</span></td><td>右栏冰箱块</td></tr>
+      <tr><td>本周报告 <code>GET /api/reports/weekly</code></td><td class="c"><span class="badge b-ok">已接</span></td><td>右栏本周块</td></tr>
+      <tr><td>待办记忆候选 <code>GET …/candidates/pending</code></td><td class="c"><span class="badge b-ok">已接</span></td><td>右栏待确认块</td></tr>
+      <tr><td>会话列表 / 删除 / 清空 / 改名、消息删除</td><td class="c"><span class="badge b-no">未接</span></td><td>房内侧栏要用</td></tr>
+      <tr><td>取消配图、语音转写、候选确认 / 仅此一次 / 忽略</td><td class="c"><span class="badge b-no">未接</span></td><td>结果态与待确认块要用</td></tr>
+      <tr>
+        <td rowspan="5">② 周报</td>
+        <td>周报详情 <code>GET /api/reports/weekly</code></td>
+        <td class="c"><span class="badge b-part">部分</span></td><td>首屏块已用，房间页未建</td>
+      </tr>
+      <tr><td>周报摘要 <code>/api/reports/weekly-summary</code></td><td class="c"><span class="badge b-no">未接</span></td><td>⚠ 后端该接口会把系统提示词原样放进 ai_summary，前端绝不渲染</td></tr>
+      <tr><td>反馈周报 <code>/api/feedback/weekly</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>报告反馈 <code>/api/reports/feedback</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>成员增删改 / 切换活跃 / 档案导入导出</td><td class="c"><span class="badge b-no">未接</span></td><td>属全局抽屉，同时服务今晚</td></tr>
+      <tr>
+        <td rowspan="4">③ 收藏</td>
+        <td>收藏列表 <code>GET /api/favorites</code></td>
+        <td class="c"><span class="badge b-no">未接</span></td><td></td>
+      </tr>
+      <tr><td>星标 <code>…/messages/{id}/star</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>反馈 <code>…/messages/{id}/feedback</code></td><td class="c"><span class="badge b-no">未接</span></td><td>点赞 / 点踩</td></tr>
+      <tr><td>忘掉这道菜 <code>/api/feedback/forget-dish</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr>
+        <td rowspan="4">④ 服务</td>
+        <td>服务视觉 <code>/api/service/vision</code></td>
+        <td class="c"><span class="badge b-no">未接</span></td><td></td>
+      </tr>
+      <tr><td>服务预览 <code>/api/service/preview</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>附近搜索 <code>/api/nearby</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>位置解析 <code>/api/location/resolve</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr>
+        <td rowspan="5">全局抽屉<br />（家庭）</td>
+        <td>偏好读取 / 写入 <code>/api/preferences</code></td>
+        <td class="c"><span class="badge b-no">未接</span></td><td></td>
+      </tr>
+      <tr><td>口味建议 <code>/api/profile/taste-suggestion</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>口味备注 <code>/api/profile/taste-note</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>添加忌口 <code>/api/profile/dislikes/add</code></td><td class="c"><span class="badge b-no">未接</span></td><td></td></tr>
+      <tr><td>冰箱拍照识别 <code>/api/fridge/vision</code></td><td class="c"><span class="badge b-no">未接</span></td><td>属今晚 + 抽屉</td></tr>
+    </tbody>
+  </table>
+  <p class="cap">统计口径：<code>src/api/client.ts</code> 中的调用点，逐条对照 <code>src/next/</code> 的 import 实测（<code>createSession</code> / <code>streamChat</code> / <code>fetchWeeklyReport</code> / <code>fetchPendingMemoryCandidates</code> / <code>fetchFamily</code> / <code>fetchFridge</code> 共 6 项）。</p>
+
+  <h2>四、落地顺序与每步验收</h2>
+  <ol class="plan">
+    <li><b>先交这份户型图</b>——你拍板房间划分，才动代码。（本文档）</li>
+    <li><b>加导航壳 + 打通今晚房间</b>：四项导航可见；提问→等待→结果可跑通；刷新、前进后退稳定；成员上下文不丢。今晚的骨架（<code>AskView → WaitCard → ResultView</code>）已存在，这步是<b>接上导航</b>而不是重建。</li>
+    <li><b>周报房间</b>：真实数据可展示；不足数据有明确空态；能从某顿回到今晚。</li>
+    <li><b>收藏房间</b>：收藏、取消、打开条目、回今晚闭环成立。</li>
+    <li><b>服务房间</b>：入口、详情、回来源链路成立；无服务时不出现假数据。</li>
+  </ol>
+  <p class="cap">每步都必须有：页面级截图 + 导航矩阵实际走查 + 真实数据验收记录。二级房间不阻塞今晚流程。</p>
+
+  <h2>五、现在缺什么（与旧前端对照）</h2>
+  <table>
+    <thead><tr><th style="width:30%">旧前端有</th><th style="width:34%">新前端</th><th>去向</th></tr></thead>
+    <tbody>
+      <tr><td>决策视图（聊天 + 菜谱卡）</td><td><span class="badge b-ok">已重建为「今晚」</span></td><td>主面承载，不再是独立房间</td></tr>
+      <tr><td>侧栏产品导航 4 项</td><td><span class="badge b-no">整条没有</span></td><td>本次要加的导航壳</td></tr>
+      <tr><td>周报页</td><td><span class="badge b-no">没有</span></td><td>房间 ②</td></tr>
+      <tr><td>收藏面板</td><td><span class="badge b-no">没有</span></td><td>房间 ③</td></tr>
+      <tr><td>服务预览</td><td><span class="badge b-no">没有</span></td><td>房间 ④</td></tr>
+      <tr><td>家庭面板（成员切换）</td><td><span class="badge b-part">只读显示</span></td><td>升级为全局抽屉（含增删改）</td></tr>
+      <tr><td>会话列表（增删改名）</td><td><span class="badge b-part">只建不列</span></td><td>今晚房内侧栏</td></tr>
+      <tr><td>洞察面板 / 反馈汇总</td><td><span class="badge b-part">部分在右栏</span></td><td>并入周报房间，不单开</td></tr>
+      <tr><td>语音输入 / 图片食材</td><td><span class="badge b-no">没有</span></td><td>今晚房间后续切片</td></tr>
+    </tbody>
+  </table>
+
+  <div class="foot">
+    本图只描述<b style="font-weight:400;color:var(--ink)">结构</b>，不含视觉定稿；画风沿用已冻结裁决（暖色底 / 衬线 400 伪粗 / 发丝线 / 描边式强调 / 禁卡通玻璃霓虹 / 禁英文装饰标签）。<br />
+    红线：不改 <code>api/</code>、<code>agent_*.py</code>、<code>rag/</code>；不为导航引入路由库；仅 Web 端。
+  </div>
+
+</div>
+
+<script>
+  const rooms = ['tonight', 'weekly', 'fav', 'svc'];
+  function go(id) {
+    rooms.forEach(r => {
+      const d = document.getElementById('d-' + r);
+      if (d) d.classList.toggle('on', r === id);
+    });
+    document.querySelectorAll('.room').forEach(el =>
+      el.classList.toggle('on', el.dataset.go === id));
+    document.querySelectorAll('.navbar button').forEach(el =>
+      el.classList.toggle('on', el.dataset.go === id));
+    if (history.replaceState) history.replaceState(null, '', '#room=' + id);
+  }
+  document.querySelectorAll('[data-go]').forEach(el =>
+    el.addEventListener('click', () => go(el.dataset.go)));
+  const m = location.hash.match(/room=([a-z]+)/);
+  if (m && rooms.includes(m[1])) go(m[1]);
+</script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+# tests/agent/test_agent_graph.py
+# 测试 agent_graph.py 的纯函数与新增 verify_answer 护栏节点（不触发 LLM 实时调用）
+import json
+import unittest
+from unittest.mock import patch
+
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+
+# 导入被测模块（其导入链会初始化 LLM/编译图，但在 .venv 下已验证可安全 import）
+from agent.graph import (
+    MAIN_AGENT_MAX_TOKENS,
+    MAX_VERIFY,
+    _current_request_text,
+    _current_turn_has_tool_result,
+    _wants_multiple_recipes,
+    _wants_recipe_images,
+    _message_has_image,
+    _drop_orphan_tool_messages,
+    _build_structure_context,
+    _latest_user_text,
+    _messages_for_current_turn,
+    maybe_condense,
+    structure_answer_node,
+    _should_force_web_search,
+    tool_budget_finalize_node,
+    verify_answer_node,
+)
+from agent.schemas import ChefAnswer, Recipe
+
+
+class TestMainAgentOutputBudget(unittest.TestCase):
+    """主 Agent 要给 DeepSeek 推理 token 和完整正文都留出空间。"""
+
+    def test_main_llm_uses_extended_output_budget(self):
+        import agent.graph as agent_graph
+
+        self.assertEqual(agent_graph.llm.max_tokens, MAIN_AGENT_MAX_TOKENS)
+        self.assertGreater(MAIN_AGENT_MAX_TOKENS, 1024)
+
+
+class TestWantsMultiple(unittest.TestCase):
+    """多菜模式判定"""
+
+    def test_single_default(self):
+        msgs = [HumanMessage(content="帮我做道番茄炒蛋")]
+        self.assertFalse(_wants_multiple_recipes(msgs))
+
+    def test_multiple_keywords(self):
+        for w in ["多几道", "几道菜", "供我选择", "多推荐几道"]:
+            msgs = [HumanMessage(content=f"帮我{w}")]
+            self.assertTrue(_wants_multiple_recipes(msgs), f"关键词「{w}」应开启多菜")
+
+
+class TestLatestUserText(unittest.TestCase):
+    """内部健康护栏提示不能覆盖本轮真实用户需求。"""
+
+    def test_skips_internal_guardrail_message(self):
+        messages = [
+            HumanMessage(content="今晚做白灼虾作为大家的共同主菜"),
+            HumanMessage(content="[健康护栏审核] 肥胖：命中「酒」"),
+        ]
+        self.assertEqual(
+            _latest_user_text(messages),
+            "今晚做白灼虾作为大家的共同主菜",
+        )
+
+    def test_strips_internal_image_toggle(self):
+        text = "【配图开关：开启】\n番茄炒蛋"
+        self.assertEqual(_current_request_text(text), "番茄炒蛋")
+        self.assertEqual(
+            _latest_user_text([HumanMessage(content=text)]),
+            "番茄炒蛋",
+        )
+
+
+class TestWantsRecipeImages(unittest.TestCase):
+    """具体菜品推荐、确认和更换都允许进入配图链路。"""
+
+    def test_default_false(self):
+        msgs = [HumanMessage(content="你好")]
+        self.assertFalse(_wants_recipe_images(msgs))
+
+    def test_concrete_recipe_requests_trigger(self):
+        # 具体菜品推荐自动配图；独立“看看图”由 chat_route 的补图链路处理，
+        # 不应在结构化 Agent 层凭空启动菜谱卡片图片流程。
+        for text in [
+            "帮我做道番茄炒蛋，配张图",
+            "想吃番茄炒蛋",
+            "推荐一道清蒸鲈鱼",
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(_wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_standalone_visual_request_does_not_trigger_recipe_structuring(self):
+        for text in [
+            "想看看图",
+            "给我看看这个菜长什么样",
+            "想看实拍图",
+            "发张图片看看",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(_wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_explicit_toggle_true(self):
+        self.assertTrue(_wants_recipe_images([HumanMessage(content="【配图开关：开启】\n番茄炒蛋")]))
+
+    def test_plain_concrete_dining_request_triggers(self):
+        self.assertTrue(_wants_recipe_images([HumanMessage(content="想吃个番茄炒蛋")]))
+
+
+class TestForceWebSearch(unittest.TestCase):
+    """联网搜索路由应覆盖明显的网页/菜谱/最新信息请求。"""
+
+    def test_force_for_recipe_search(self):
+        self.assertTrue(_should_force_web_search("帮我查一下这个菜的做法"))
+
+    def test_skip_health_and_dining(self):
+        self.assertFalse(_should_force_web_search("我有高血压，能不能吃火锅"))
+        self.assertFalse(_should_force_web_search("我在外面吃饭，附近有什么推荐"))
+
+    def test_current_turn_tool_result_blocks_duplicate_force(self):
+        messages = [
+            HumanMessage(content="推荐一道番茄炒蛋"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "c1", "name": "web_search", "args": {"query": "番茄炒蛋"}}],
+            ),
+            ToolMessage(content='{"text":"番茄炒蛋做法"}', name="web_search", tool_call_id="c1"),
+        ]
+        self.assertTrue(_current_turn_has_tool_result(messages))
+
+    def test_previous_turn_tool_result_does_not_block_new_turn(self):
+        messages = [
+            HumanMessage(content="推荐一道番茄炒蛋"),
+            ToolMessage(content="旧结果", name="web_search", tool_call_id="old"),
+            AIMessage(content="番茄炒蛋方案"),
+            HumanMessage(content="推荐一道清蒸鲈鱼"),
+        ]
+        self.assertFalse(_current_turn_has_tool_result(messages))
+
+
+class TestMessageHasImage(unittest.TestCase):
+    """图文混合消息识别"""
+
+    def test_text_only(self):
+        self.assertFalse(_message_has_image(HumanMessage(content="文字问题")))
+
+    def test_image_mixed(self):
+        msg = HumanMessage(content=[
+            {"type": "text", "text": "这是什么菜"},
+            {"type": "image_url", "image_url": {"url": "http://x/y.jpg"}},
+        ])
+        self.assertTrue(_message_has_image(msg))
+
+
+class TestDropOrphanToolMessages(unittest.TestCase):
+    """孤儿 ToolMessage（找不到对应 AIMessage tool_calls）应被过滤"""
+
+    def test_orphan_removed(self):
+        msgs = [
+            HumanMessage(content="hi"),
+            # 这条 ToolMessage 的 tool_call_id 在历史里没有对应 AIMessage tool_calls
+            ToolMessage(content="orphan result", name="web_search", tool_call_id="no_such_id"),
+        ]
+        out = _drop_orphan_tool_messages(msgs)
+        self.assertEqual(len(out), 1, "孤儿 ToolMessage 应被剔除")
+        self.assertIsInstance(out[0], HumanMessage)
+
+    def test_paired_kept(self):
+        msgs = [
+            AIMessage(content="", tool_calls=[{"id": "c1", "name": "web_search", "args": {}}]),
+            ToolMessage(content="ok", name="web_search", tool_call_id="c1"),
+        ]
+        out = _drop_orphan_tool_messages(msgs)
+        self.assertEqual(len(out), 2, "配对完整的 ToolMessage 应保留")
+
+
+class TestBuildStructureContext(unittest.TestCase):
+    """结构化前：从消息里正确抽取搜索图链接与来源标记"""
+
+    def test_real_image_extracted(self):
+        msgs = [
+            HumanMessage(content="做道番茄炒蛋"),
+            ToolMessage(
+                content=json.dumps({"text": "菜谱...", "image_url": "http://x/egg.jpg", "image_source": "real"}),
+                name="web_search", tool_call_id="t1",
+            ),
+            AIMessage(content="推荐番茄炒蛋，经典家常菜"),
+        ]
+        ctx, img, ai = _build_structure_context(msgs)
+        self.assertEqual(img, "http://x/egg.jpg")
+        self.assertFalse(ai, "real 来源不应标记为 AI 生成")
+
+    def test_ai_image_flagged(self):
+        msgs = [
+            HumanMessage(content="做道红烧肉"),
+            ToolMessage(
+                content=json.dumps({"text": "菜谱...", "image_url": "http://x/pic.png", "image_source": "ai"}),
+                name="web_search", tool_call_id="t2",
+            ),
+        ]
+        ctx, img, ai = _build_structure_context(msgs)
+        self.assertEqual(img, "http://x/pic.png")
+        self.assertTrue(ai, "ai 来源应标记为 AI 生成（透明标注依据）")
+
+    def test_only_last_two_searches(self):
+        blocks = []
+        for i in range(5):
+            blocks.append(ToolMessage(
+                content=json.dumps({"text": f"r{i}", "image_url": None, "image_source": "real"}),
+                name="web_search", tool_call_id=f"t{i}",
+            ))
+        msgs = [HumanMessage(content="x")] + blocks
+        ctx, img, ai = _build_structure_context(msgs)
+        # 当前实现只取最近 2 次搜索结果（agent_graph.py:593 `search_blocks[-2:]`，性能优化），
+        # 应出现 r3/r4 而不含更早的 r0/r1/r2；若需 3 条，把 `[-2:]` 改回 `[-3:]` 并同步本断言
+        self.assertIn("r3", ctx)
+        self.assertIn("r4", ctx)
+        self.assertNotIn("r0", ctx)
+        self.assertNotIn("r2", ctx)
+
+
+class TestStructureImagePolicy(unittest.TestCase):
+    def _answer_with_image(self):
+        return ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="番茄炒蛋",
+                    intro="酸甜清爽",
+                    difficulty=1,
+                    nutrition=4,
+                    steps=["鸡蛋炒熟盛出", "番茄炒软后合炒"],
+                    image_url="http://x/egg.jpg",
+                    image_ai_generated=True,
+                )
+            ],
+            image_url="http://x/top.jpg",
+            image_ai_generated=True,
+            image_note="AI 生成示意图",
+        )
+
+    def test_concrete_recipe_keeps_recipe_images(self):
+        state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
+        self.assertTrue(payload["image_ai_generated"])
+
+    def test_toggle_keeps_recipe_image(self):
+        state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
+        self.assertTrue(payload["image_ai_generated"])
+
+    def test_explicit_image_phrase_keeps_recipe_image(self):
+        # 具体菜品请求中的“配张图”与自动配图规则一致，保留图片元数据。
+        state = {"messages": [HumanMessage(content="帮我做道番茄炒蛋，配张图"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent.graph.build_structured_answer", return_value=self._answer_with_image()):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertEqual(payload["image_url"], "http://x/egg.jpg")
+
+    def test_toggle_without_image_keeps_loading_state(self):
+        answer = ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="番茄炒蛋",
+                    intro="酸甜清爽",
+                    difficulty=1,
+                    nutrition=4,
+                    steps=["鸡蛋炒熟盛出", "番茄炒软后合炒"],
+                    image_url=None,
+                    image_ai_generated=False,
+                )
+            ],
+            image_url=None,
+            image_ai_generated=False,
+            image_note="",
+        )
+        state = {"messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋"), AIMessage(content="推荐番茄炒蛋")]}
+        with patch("agent.graph.build_structured_answer", return_value=answer):
+            result = structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertTrue(payload["image_requested"])
+        self.assertIsNone(payload["image_url"])
+        self.assertEqual(payload["image_note"], "")
+        self.assertIsNone(payload["recipes"][0]["image_url"])
+
+
+class TestVerifyAnswerNode(unittest.TestCase):
+    """新增 L3 护栏节点：ok / retry / degraded 三态"""
+
+    def _state(self, user_text, ai_text, attempts=0):
+        return {
+            "messages": [
+                HumanMessage(content=user_text),
+                AIMessage(content=ai_text),
+            ],
+            "verify_attempts": attempts,
+        }
+
+    def test_ok_when_clean(self):
+        st = self._state("我有痛风", "推荐清蒸冬瓜，清淡少油")
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "ok")
+        self.assertEqual(res["verify_attempts"], 1)
+
+    def test_retry_when_bad_and_under_limit(self):
+        st = self._state("我有痛风和尿酸高", "推荐老火汤炖猪肝配啤酒", attempts=0)
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "retry")
+        self.assertEqual(res["verify_attempts"], 1)
+        # retry 必须往 state 注入一条反馈消息，驱动 chef_think 重生成
+        self.assertIn("messages", res)
+        self.assertIsInstance(res["messages"][0], HumanMessage)
+        self.assertIn("健康护栏", res["messages"][0].content)
+
+    def test_degraded_when_exhausted(self):
+        st = self._state("痛风", "老火汤炖猪肝", attempts=MAX_VERIFY)
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "degraded")
+        self.assertTrue(res["verify_warning"].startswith("⚠️"),
+                        "超限仍不通过应带安全警示，绝不静默放行")
+
+    def test_uses_latest_ai_text(self):
+        # 历史里有一条合规 AI 回答，但最新一条违规 -> 应判 retry
+        st = {
+            "messages": [
+                HumanMessage(content="痛风"),
+                AIMessage(content="清蒸冬瓜"),          # 旧：合规
+                AIMessage(content="老火汤炖猪肝"),       # 新：违规
+            ],
+            "verify_attempts": 0,
+        }
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "retry")
+
+    def test_clean_retry_keeps_previous_violation_history(self):
+        st = {
+            "messages": [HumanMessage(content="我有痛风"), AIMessage(content="推荐清蒸冬瓜，清淡少油")],
+            "verify_attempts": 1,
+            "verify_violated": ["痛风"],
+        }
+        res = verify_answer_node(st)
+        self.assertEqual(res["verify_status"], "ok")
+        self.assertEqual(res["verify_violated"], ["痛风"],
+                         "重试后合规也不能抹掉本轮曾命中的护栏记录")
+
+
+class TestHistoryIsolation(unittest.TestCase):
+    def test_new_image_excludes_old_recipe_and_tool_result(self):
+        new_image = HumanMessage(content=[
+            {"type": "text", "text": "这些新食材能做什么"},
+            {"type": "image_url", "image_url": {"url": "http://x/new.jpg"}},
+        ])
+        msgs = [
+            HumanMessage(content="做红烧肉"),
+            AIMessage(content="红烧肉方案"),
+            ToolMessage(content="old search", name="web_search", tool_call_id="old"),
+            new_image,
+            AIMessage(content="识别到番茄和鸡蛋"),
+        ]
+        current = _messages_for_current_turn(msgs, isolate_old_context=True)
+        self.assertIs(current[0], new_image)
+        self.assertNotIn("红烧肉方案", [str(m.content) for m in current])
+        self.assertNotIn("old search", [str(m.content) for m in current])
+
+    def test_condense_removes_tool_result_with_deleted_call(self):
+        msgs = [
+            HumanMessage(content="旧问题", id="h-old"),
+            AIMessage(content="", tool_calls=[{"id": "call-old", "name": "web_search", "args": {}}], id="a-old"),
+            ToolMessage(content="old result", name="web_search", tool_call_id="call-old", id="t-old"),
+        ]
+        for i in range(3):
+            msgs.extend([
+                AIMessage(content=f"回答{i}", id=f"a{i}"),
+                HumanMessage(content=f"问题{i}", id=f"h{i}"),
+            ])
+        with patch("agent.graph.summary_llm") as mock_llm:
+            mock_llm.invoke.return_value = AIMessage(content="摘要")
+            result = maybe_condense({"messages": msgs})
+        removed_ids = {m.id for m in result["messages"] if m.__class__.__name__ == "RemoveMessage"}
+        self.assertIn("a-old", removed_ids)
+        self.assertIn("t-old", removed_ids)
+
+
+class TestVerifyBoundary(unittest.TestCase):
+    def test_last_allowed_retry_before_degraded(self):
+        state = {
+            "messages": [HumanMessage(content="我有痛风"), AIMessage(content="老火汤炖猪肝")],
+            "verify_attempts": MAX_VERIFY - 1,
+        }
+        result = verify_answer_node(state)
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertEqual(result["verify_attempts"], MAX_VERIFY)
+
+
+class TestToolBudgetFinalize(unittest.TestCase):
+    def test_returns_non_empty_final_message_and_removes_pending_tool_call(self):
+        pending = AIMessage(
+            content="",
+            tool_calls=[{"id": "c1", "name": "web_search", "args": {"query": "番茄炒蛋"}}],
+            id="pending-ai",
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="推荐一道番茄炒蛋"),
+                pending,
+                ToolMessage(content='{"text":"番茄炒蛋先炒蛋再炒番茄"}', name="web_search", tool_call_id="c1"),
+            ],
+            "tool_calls_in_turn": 4,
+        }
+        fake_llm = unittest.mock.Mock()
+        fake_llm.invoke.return_value = AIMessage(content="推荐番茄炒蛋，先炒鸡蛋，再下番茄合炒。")
+        with patch("agent.graph.llm", fake_llm):
+            result = tool_budget_finalize_node(state)
+        self.assertTrue(result["tool_budget_exhausted"])
+        self.assertEqual(len(result["messages"]), 2)
+        self.assertEqual(result["messages"][0].id, "pending-ai")
+        self.assertIn("番茄炒蛋", result["messages"][-1].content)
+
+    def test_falls_back_to_non_empty_safe_text_when_llm_fails(self):
+        state = {
+            "messages": [HumanMessage(content="推荐一道番茄炒蛋")],
+            "tool_calls_in_turn": 4,
+        }
+        fake_llm = unittest.mock.Mock()
+        fake_llm.invoke.side_effect = RuntimeError("offline")
+        with patch("agent.graph.llm", fake_llm):
+            result = tool_budget_finalize_node(state)
+        content = result["messages"][-1].content
+        self.assertTrue(content.strip())
+        self.assertIn("少油少盐", content)
+
+    def test_fallback_does_not_leak_internal_image_toggle(self):
+        state = {
+            "messages": [HumanMessage(content="【配图开关：开启】\n番茄炒蛋")],
+            "tool_calls_in_turn": 4,
+        }
+        result = tool_budget_finalize_node(state)
+        content = result["messages"][-1].content
+        self.assertIn("番茄炒蛋", content)
+        self.assertNotIn("配图开关", content)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

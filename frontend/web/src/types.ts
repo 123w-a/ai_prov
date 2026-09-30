@@ -184,6 +184,8 @@ export interface NearbyRestaurant {
   cuisine: string
   avg_price: number | null
   distance_km?: number | null
+  lng?: number
+  lat?: number
   address?: string
   guardrail?: string
 }

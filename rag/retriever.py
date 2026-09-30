@@ -43,7 +43,7 @@ RETRIEVAL_CONFIG: dict[str, Any] = {
 def _load_config() -> dict[str, Any]:
     cfg = dict(RETRIEVAL_CONFIG)
     try:
-        from configs import KB_CONFIG
+        from infrastructure.configs import KB_CONFIG
 
         cfg.update({k: v for k, v in KB_CONFIG.items() if k in RETRIEVAL_CONFIG})
     except Exception:
@@ -118,7 +118,7 @@ class KnowledgeBaseRetriever:
         cfg = config or _load_config()
         self.cfg = cfg
         try:
-            from configs import KB_CONFIG
+            from infrastructure.configs import KB_CONFIG
 
             base: dict[str, Any] = dict(KB_CONFIG)
         except Exception:

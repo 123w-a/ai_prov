@@ -415,7 +415,7 @@ def build_index(
 
     if config is None:
         try:
-            from configs import KB_CONFIG
+            from infrastructure.configs import KB_CONFIG
 
             config = dict(KB_CONFIG)
         except Exception:

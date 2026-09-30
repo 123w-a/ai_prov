@@ -1,0 +1,151 @@
+/*
+ * 「今晚这一顿」——新前端的视觉身份。
+ *
+ * 画风：亮底、哑光材质、成熟、简洁、带一点科技感。
+ * 用户明确否决：深色底、幼稚卡通、玻璃感/霓虹发光。
+ *
+ * 两条来之不易的纪律：
+ *
+ *   一、关于动效。用户授权放开表现力，但放开的是**表现力**，不是**事实**。
+ *      所有动效只能由真实信号驱动，没有一条是为了暗示"还剩多少"。
+ *      这一版更进一步：等待页几乎不动。因为"高级的稳定感来自不打扰，
+ *      而不是从每个网络包都做一段动效"。
+ *
+ *   二、关于强调色。上一版主强调色是绿色（#1f6b4a）。绿色在这个产品里是个坏选择——
+ *      它同时是"医疗/健康指示灯"的颜色，而档案里有一位孕妇，页面又刚被用户判决"像心电图"。
+ *      所以主强调色整体换成暖陶土色：它属于厨房、陶器、上色的食物，不属于监护仪。
+ *      体检红绿灯另有独立语义色（--green/--yellow/--red），不受这次改动影响。
+ */
+
+:root {
+  --bg: #f8f4f0;
+  --bg-raise: #fcfaf6;
+  --bg-sunken: #f1ece4;
+
+  --ink: #3d2a18;
+  --ink-soft: #63523c;
+  --ink-faint: #8e8271;
+
+  --line: #e4dcd0;
+  --line-strong: #d4c9b8;
+
+  --accent: #a96f4e;
+  --accent-ink: #7d4e33;
+  --accent-soft: #f4ece5;
+  --accent-line: #ddc7b6;
+
+  --ok-dot: #718c87;
+  --beat: #c9a227;
+  --warn: #a8681a;
+  --warn-soft: #fbf2e2;
+  --bad: #a33232;
+  --bad-soft: #fbeeee;
+
+  --green: #2f7d4f;
+  --yellow: #b8860b;
+  --red: #b03030;
+
+  /* ── 2026-09-27：把散在样式里的色值字面量收进令牌层 ────────────────────
+   * 起因是 check-layers 的 d 条（tokens.css 以外不得出现色值）。
+   * 这些色值**原本各自写死在规则里**，收进来时**一个值都没改**——所以这是
+   * 纯结构重构，9 页逐元素计算值必须一字不差；只要有一个色变了就是我改错了。
+   * 命名沿用旁边那套：-soft 是状态底色，-line 是状态边框，与 --warn-soft/--bad-soft 对仗。
+   * --scrim 与 --white 是图片角标的半透明黑底 + 白字，只此一处使用。 */
+  --bad-line: #eccfcf;
+  --green-soft: #e8f2ec;
+  --pending: #55607a;
+  --pending-soft: #eef0f4;
+  --scrim: rgba(28, 28, 25, 0.6);
+  --white: #fff;
+
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* ── 2026-09-26：用户撤销四条私设红线，令牌层随之回改 ──────────────────
+   * 撤销的是我自己加的「禁阴影／禁渐变／禁强调色填充／整页只准一个盒子」——用户从未裁决过这四条。
+   * 保留的是他真实裁决过的三条：幼稚卡通、玻璃感、霓虹发光。
+   * 于是这里回改三处：
+   *   ① --bg 移回设计稿实测的 #F8F4F0（原 #f4f1eb 偏灰）
+   *   ② 恢复投影令牌，--radius-lg 从 3px 放回 12px
+   *   ③ 新增"可填充"语义色——设计稿的药丸是浅底 + 深字，与当文字用的 --green/--yellow/--red 是两套
+   *
+   * 关于"纸感纹理"：像素统计证明设计稿的底是纯色平的（6×4 网格 24 区里 22 区同一色），
+   * 我据此驳回过它。用户 2026-09-26 明确否决我的驳回：「既然是重设计，肯定有些之前没有的
+   * 也是很正常的」⇒ 采用，见 --paper。**参考不是契约**，这条教训记在这。
+   */
+  --radius: 4px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+
+  --shadow-paper: 0 1px 2px rgba(64, 40, 16, 0.05), 0 10px 24px rgba(64, 40, 16, 0.06);
+  --shadow-lift: 0 2px 4px rgba(64, 40, 16, 0.06), 0 16px 40px rgba(64, 40, 16, 0.09);
+
+  /* ── 2026-09-26 补齐：设计稿实测的填充色与衬线栈 ──────────────────────
+   *
+   * 这批令牌是**先被引用、后才补上**的。教训写在这里，因为它很贵：
+   *
+   * 我给 .result-rail 写了 background: var(--panel)、给 .light-label 写了
+   * background: var(--ok-fill)、给 .dish-name 写了 font-family: var(--serif)，
+   * 但忘了把它们加进 :root。CSS 对**未定义的自定义属性**的处理是整条声明作废
+   * （既不是取默认值，也不报错）——于是 background 悄悄变成 transparent、
+   * border 变成 0px none、font-family 落回继承值。
+   *
+   * 页面能跑、控制台干净、构建通过、lint 通过。而我靠肉眼看缩放后的截图，
+   * 把透明药丸看成了彩色药丸、把系统无衬线看成了宋体，还当成事实报给了用户。
+   * ⇒ 判据只能是 getComputedStyle，它会如实说出 "rgba(0, 0, 0, 0)"。 */
+  --panel: #f4f0e8;
+  --panel-line: #e8e0d3;
+
+  /* 填充专用语义色（浅底 + 深字），与当文字用的 --green/--yellow/--red 是两套：
+   * 直接拿深绿当浅底再压深字会糊成一片。 */
+  --ok-fill: #80ac8c;
+  --ok-ink: #22392b;
+  /* 语义色：只给"这个图标本身就代表这件事"的场合用。
+   * 设计稿原版指标行里，营养那片的叶子是**绿色**，难度和用时是墨色——
+   * 也就是说颜色在那里承载意义（绿=营养），不是给图标上色好看。
+   * 单独立一个令牌，是为了不和 --ok-fill/--ok-ink 混用：那两个是**药丸底色/文字色**，
+   * 在纸上当细线会太浅或太黑，取不到设计稿那种"叶子绿"。 */
+  --ok-mark: #4d7a5a;
+  --warn-fill: #d8b45c;
+  --warn-ink: #4a3710;
+  --risk-fill: #b83028;
+  --risk-ink: #fff4f1;
+
+  /* ── 2026-09-28 字阶令牌（视觉轮次 · quick_wins 1/3/5）─────────────────
+   *
+   * IA 薄切片轮**刻意没加**这批（lave 裁定 IA 先、视觉后），四块先用现有
+   * 字号档把结构立住；IA 交付通过后本条解锁（契约 §9 W5）。
+   * 字号值不是随手取的，是契约 §6.2 已冻结的分级（对比度阈值按它算）：
+   *   19px 区块标题 → 3:1（大字号下界）
+   *   13.5px 数据行 → 4.5:1
+   *   12px 注记 → 4.5:1（不因字小放宽）
+   *   ≥15px 正文 → 4.5:1
+   * 22px 计数不在 §6.2 表内，取自 Claude 方案 quick_win 5；字阶上它归
+   * 「大字号」档，比 19px 更宽，实测时按 3:1 取严。
+   * 命名沿用现状：首屏四块 .fs-* 用它，结果页/等待页是否沿用**属后续单元**
+   * （它们有自己的基线与回退风险，不在本轮一起动）。 */
+  --fs-h2: 19px;
+  --fs-count: 22px;
+  --fs-data: 13.5px;
+  --fs-note: 12px;
+  --fs-body: 15px;
+  /* 19px 衬线标题的逐字粗细微调（Claude 建议 0.35px）——lave 裁定
+   * **experiment-only：截图验证通过前不得当结论用**；失败回退路径见
+   * base.css 的 .fs-title 注释。 */
+  --stroke-h2: 0.35px;
+
+  /* 大标题走衬线：设计稿的菜名是宋体。Windows 没有思源宋体，
+   * SimSun 只有 400 一档 ⇒ 一律 font-weight:400 + font-synthesis:none，
+   * 靠字号与颜色拉层级；数字与拉丁字母优先落到 Georgia。 */
+  --serif: Georgia, 'Songti SC', 'SimSun', 'Noto Serif CJK SC', serif;
+
+  /* 间距走 8 的节奏，避免每个组件各自留 12/18/22px 那种"随手"的感觉 */
+  --s1: 8px;
+  --s2: 16px;
+  --s3: 24px;
+  --s4: 40px;
+  --s5: 64px;
+}
+

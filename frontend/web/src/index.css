@@ -1320,11 +1320,16 @@ img {
 
 .recipe-visual {
   position: relative;
+  display: grid;
+  width: 100%;
   min-width: 0;
   min-height: 245px;
+  aspect-ratio: 3 / 2;
   margin: 0;
   overflow: hidden;
   background: #d9dfd2;
+  contain: layout paint;
+  place-items: stretch;
 }
 
 .recipe-visual::after {
@@ -1336,10 +1341,18 @@ img {
 }
 
 .recipe-visual img {
+  display: block;
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   min-height: 245px;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.recipe-visual img.loaded {
+  opacity: 1;
 }
 
 .recipe-visual figcaption {
@@ -1367,6 +1380,8 @@ img {
 
 .image-placeholder {
   display: grid;
+  z-index: 1;
+  grid-area: 1 / 1;
   gap: 9px;
   place-items: center;
   color: rgba(33, 49, 39, 0.45);
@@ -3786,11 +3801,11 @@ img {
 .nearby-panel {
   /* 出去吃模式：悬浮卡片，脱离文档流——出现与否都不挤压消息区高度 */
   position: fixed;
+  top: 92px;
   right: 26px;
-  bottom: 190px;
+  bottom: 84px;
   z-index: 40;
-  width: min(380px, calc(100vw - 48px));
-  max-height: 46vh;
+  width: min(860px, calc(100vw - 48px));
   overflow-y: auto;
   box-shadow: 0 12px 32px rgba(60, 58, 50, 0.18);
   margin-top: 12px;
@@ -3833,6 +3848,155 @@ img {
 .nearby-error {
   margin: 10px 0 0;
   color: var(--danger);
+}
+
+.nearby-map-shell {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef2ec;
+}
+
+.nearby-map-canvas {
+  position: relative;
+  width: 100%;
+  height: clamp(280px, 42vh, 430px);
+  background: #e8ede7;
+}
+
+.nearby-map-canvas.unavailable {
+  height: 112px;
+}
+
+.nearby-map-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.amap-origin-marker {
+  width: 18px;
+  height: 18px;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: #2477e3;
+  box-shadow: 0 2px 8px rgba(15, 55, 105, 0.4);
+}
+
+.amap-restaurant-marker {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 38px;
+  place-items: center;
+  color: #fff;
+  filter: drop-shadow(0 3px 4px rgba(91, 21, 17, 0.28));
+}
+
+.amap-restaurant-marker::before {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 8px;
+  background: #d43b32;
+  content: '';
+  transform: rotate(-45deg);
+}
+
+.amap-restaurant-marker span {
+  position: relative;
+  z-index: 1;
+  margin-top: -7px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.nearby-map-legend {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 9px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.nearby-map-legend button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  padding: 6px 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper-muted);
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nearby-map-legend button span,
+.nearby-map-number {
+  display: inline-grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #d43b32;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.nearby-map-legend button.active {
+  border-color: #d43b32;
+  color: var(--ink);
+  background: #fff;
+}
+
+.nearby-map-selection {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+.nearby-map-selection div {
+  min-width: 0;
+}
+
+.nearby-map-selection strong,
+.nearby-map-selection small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nearby-map-selection small {
+  margin-top: 2px;
+  color: var(--ink-soft);
+}
+
+.nearby-map-selection a {
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--forest-900);
+  color: #fff;
+  font-size: 12px;
+  text-decoration: none;
 }
 
 .shop-notice {
@@ -3886,7 +4050,46 @@ img {
   line-height: 1.45;
 }
 
+.nearby-navigation-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 5px 10px;
+  color: #fffdf8;
+  border-radius: 7px;
+  background: #1b4131;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.nearby-navigation-link:hover {
+  background: #286044;
+}
+
 @media (max-width: 760px) {
+  .nearby-panel {
+    top: 76px;
+    right: 10px;
+    bottom: 74px;
+    width: calc(100vw - 20px);
+    padding: 12px;
+  }
+
+  .nearby-map-canvas {
+    height: min(44vh, 360px);
+  }
+
+  .nearby-map-selection {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .nearby-map-selection a {
+    grid-column: 1 / -1;
+    text-align: center;
+  }
+
   .nearby-list {
     grid-template-columns: 1fr;
   }

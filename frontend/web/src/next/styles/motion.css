@@ -1,0 +1,169 @@
+/* ── 结果页窄屏 ─────────────────────────────────────
+   手机端布局本轮不是重点，只保证不破版：大标题降号、两列收成一列。 */
+
+@media (max-width: 720px) {
+  .dish-name {
+    font-size: 30px;
+  }
+
+  .dish-echo,
+  .dish-intro {
+    font-size: 14px;
+  }
+
+  .dish-metrics {
+    gap: 6px 12px;
+  }
+
+  .member-col,
+  .member-col + .member-col {
+    padding: 0;
+    border-left: none;
+  }
+
+  .members-grid {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .steps li {
+    grid-template-columns: 26px 1fr;
+    gap: 10px;
+  }
+
+  .step-no {
+    font-size: 18px;
+  }
+}
+
+/* ── 字重收敛（去土气）─────────────────────────────────
+ * 全页同时存在 650 / 700 / 800 三种"重"，再加 400 共四档。
+ * 四档混用读起来是"糊"，不是"有层次"——这是排版上最常见的一种土。
+ * 规则：标签与标题类一律 600；只保留两处**刻意做重**的：
+ *   .dish-name（40px 菜名）与 .step-no（大号陶土步骤号）保持 800，
+ *   它们各自是全页唯一的重音，是有意为之而非随手写重。
+ * 于是全页实际三档：400 正文 / 600 标签与标题 / 800 两处重音。
+ * 放在 v3 结果页块末尾，靠层叠顺序覆盖上面的定义（同特异性，后来者胜）。 */
+.focus-title,
+.member-name,
+.section-title,
+.member-verdict,
+.member-dish,
+.light-label,
+.alert b,
+.fold-heading,
+.recipe-extra h3,
+.wait-fact-label,
+.wait-req,
+.wait-req b,
+.prose-empty,
+.fold-count {
+  font-weight: 600;
+}
+
+/* ── 动效 ───────────────────────────────────────────── */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 比 fade-in 多一点位移，比 rise 少很多（3px 而不是 8px）。
+ * 用于一行文字的"改口"和痕迹里新到的一项：幅度要小到像是"换了字"，
+ * 而不是"有个东西飞进来了"。 */
+@keyframes bench-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes beat-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+
+/* 窄屏：等待卡收窄内边距、标题降一号（手机端布局本轮不是重点，只保证不破版） */
+
+@media (max-width: 720px) {
+  .tn {
+    padding: 22px 16px 64px;
+  }
+
+  .wait-card {
+    padding: 24px;
+  }
+
+  .wait-req {
+    font-size: 18px;
+  }
+
+  .ask-input {
+    font-size: 18px;
+    padding: 18px;
+  }
+
+  .light {
+    grid-template-columns: 14px 1fr;
+  }
+
+  .light-reason {
+    grid-column: 2 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+
+
+
+
+
+
+

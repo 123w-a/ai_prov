@@ -1,0 +1,875 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  /* 纸感纹理叠在底色上：一层 background-image，不新增层、不改定位、不影响任何几何。 */
+  background-color: var(--bg);
+  background-image: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 内容列宽 760px。
+ * 视觉席给的是 680px，我没照抄：结果页的调料区是 repeat(auto-fit, minmax(300px,1fr))
+ * 两列栅格，680 - 56(padding) = 624，两列 300+300 再加 24 间距 = 624，正好卡在崩成
+ * 单列的临界点上。760 留出余量，两列保住，同时比原来的 940 明显收窄——
+ * 收窄本身就是"去土"的一部分（宽栏 + 小字 = 后台面板感）。 */
+.tn {
+  /* 1010px 是用户 2026-09-23 在真实视口上把 1010/1200/1440/100% 四档切着比完
+   * 之后定的（暂定）。
+   *
+   * 结论反直觉，记在这里免得以后又走回头路：**1010 是四档里两侧空白最多的**，
+   * 而用户最初抱怨的正是"两侧空太宽"。让他退回去的是 1200/1440 的代价——
+   * 正文行宽被压在 42em 之后，多出来的宽度只能落在正文与右栏之间，
+   * 形成约 194px 的中缝。在真实视口上，**中缝比两侧留白更难受**。
+   * ⇒ 不要再把"把中间撑开"当作收窄留白的解法。
+   *
+   * 变量入口留着，便于对照台切宽度。 */
+  max-width: var(--content, 1010px);
+  margin: 0 auto;
+  padding: 40px 28px 96px;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+/* ── 页头 ───────────────────────────────────────────── */
+
+/* 原来的分隔符是一颗 4px 灰色圆点（.tn-dot）：小膳管家 · 今晚这一顿。
+ * 灰点在网页里是典型的模板件。改成一根 1px × 12px 的竖向发丝线——
+ * 分隔仍然是分隔，但语汇从"装饰件"变成"排印"。 */
+.tn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--s4);
+}
+
+.tn-brand {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+
+.tn-dot {
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
+  align-self: center;
+}
+
+.tn-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.tn-conn {
+  margin-left: auto;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tn-conn.is-bad {
+  color: var(--bad);
+}
+
+/* ── 起手：输入 ─────────────────────────────────────── */
+
+.starter {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 起手区的主标题。原来这一页根本没有大字——品牌 13 / 标题 15 / 标签 12 / 提示 13 /
+ * 正文 15，全都是同一档小字，所以整页平得像后台。视觉席说的"不是小本身，
+ * 是缺字号跳跃"，这是关键。这里给第一个真跳：40px。
+ * （视觉席建议 clamp(32px,6vw,56px)，我压到 40 封顶：这是一个安静的居家工具，
+ *  56px 会滑向杂志封面，过火。） */
+/* ── 首屏两栏（2026-09-27 用户裁决）────────────────────────
+ * 原来是「标题→输入→按钮→脚注」的纯垂直堆叠，主因是布局不是内容太少。
+ * 网格模板与右栏宽度**逐字复用** .result-body（result-v3.css L610）：
+ *   minmax(0,1fr) var(--rail, 278px) / gap 0 40px
+ * 三视图右栏必须同宽——另造一个 260px 就是新的几何不一致。
+ * 科技感不靠装饰标签（TONIGHT / 01 那类被否决），靠真实数据本身：
+ * .ctx-people 已带 tabular-nums，尺寸与数量在右栏里是等宽可扫读的。 */
+.ask-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
+  gap: 0 40px;
+  align-items: start;
+}
+
+.ask-main {
+  grid-column: 1;
+  min-width: 0;
+  max-width: 42em;
+}
+
+.ask-side {
+  grid-column: 2;
+}
+
+/* 与结果页同一个断点（result-v3.css L767），落回单列。
+ * 不写这条的话窄屏两栏会并排挤——用户主用 Android，测不到不代表不存在。 */
+@media (max-width: 900px) {
+  .ask-layout {
+    display: block;
+  }
+}
+
+.ask-lead {
+  margin: 0 0 var(--s3);
+  /* 字体四件套与结果页 .dish-name 逐字对齐，修的是「同一产品首屏黑体、
+   * 结果页宋体」的断裂——那才是「看着素」的第一来源。
+   * 字重必须是 400、不能沿用原来的 600：Windows 上 SimSun 只有 400 一档，
+   * 给它 600 会触发**合成粗体**（同套字形向右下偏移重绘，发虚糊边），
+   * 而 stroke 是沿轮廓描一圈、不产生第二份字形。font-synthesis:none 是前提，
+   * 不关掉它浏览器照样合成，stroke 就白加了。详见 result-v3.css 的 .dish-name。 */
+  font-family: var(--serif);
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.5px currentColor;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+
+.ask-lead em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.ask {
+  display: block;
+}
+
+.ask-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s1);
+}
+
+/* 输入框：从"漂浮白卡"改成"一条下划线"。
+ * 去掉 18px 圆角、去掉 background、去掉 --shadow、去掉 4px 焦点光晕。
+ * 它现在是页面上的一个书写位，不是一个组件。 */
+.ask-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 10px 0 14px;
+  font-family: inherit;
+  font-size: 21px;
+  line-height: 1.55;
+  color: var(--ink);
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.ask-input::placeholder {
+  color: var(--ink-faint);
+}
+
+/* 焦点只让线变深、变墨色。不再有彩色光圈。 */
+.ask-input:focus {
+  outline: none;
+  border-bottom-color: var(--ink);
+}
+
+.ask-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.ask-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  max-width: 34em;
+}
+
+/* 主行动按钮：从「填充陶土色 + 白字 + 10px 圆角」改成描边。
+ * 棕底白字是最廉价的一组配色，而且直接违反用户冻结的「强调色绝不填充」。
+ * 描边按钮有明确的点击边界，却不制造色块。hover 只加深边框，绝不填色。 */
+.ask-go {
+  margin-left: auto;
+  flex: none;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 26px;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, color 0.18s;
+}
+
+.ask-go:hover:not(:disabled) {
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+.ask-go:disabled {
+  border-color: var(--line);
+  color: var(--ink-faint);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+/* ── 身份确认栏的内容（原首屏脚注）──────────────────────
+ * 2026-09-27 起它住在右栏的 Panel 里（见 TonightApp 的 ask-side），
+ * 不再是页面底部那条排印脚注——所以**原来那个 `.ctx` 容器已删**：
+ * 它自带的 margin-top + border-top 发丝线在有 padding 的面板里会变成
+ * 盒子内顶一条多余的线。下面两条直接作用在 Panel 内部。
+ *
+ * 原注释里「故意不做成面板，避免两块表」的排除理由已经失效：
+ * wait-facts 盒子在等待页，首屏自始至终只有这里这一个盒子。
+ * 推翻记录写在 TonightApp 对应的 JSX 注释里。 */
+/* 一人一列，横向排开；字号压到最小，只在需要时被读到。 */
+.ctx-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 30px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 第二行更淡一档：共同忌口与冰箱。它们比"谁在吃"次要。 */
+.ctx-rest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* ── 失败态：必须长得像失败，不能长得像空 ─────────────── */
+
+.failure {
+  border: 1px solid var(--bad-line);
+  border-left: 3px solid var(--bad);
+  border-radius: var(--radius);
+  background: var(--bad-soft);
+  padding: 18px 22px;
+  margin-bottom: 28px;
+  animation: rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.failure strong {
+  display: block;
+  font-size: 15px;
+  color: var(--bad);
+  margin-bottom: 6px;
+}
+
+.failure p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.failure .mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.failure-partial {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.failure-partial summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.failure-partial pre {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* ── 首屏四块 IA 骨架（2026-09-28 · 契约 v2.1 §1–§5） ────────────────────
+ *
+ * 结构层来自 IA 轮：区块分隔、dl 网格、数据等宽右对齐。
+ * **字阶层是视觉轮次补上的**（2026-09-28 同日第二批，lave 排序 IA 先视觉后，
+ * 契约 §9 W5 解锁）：quick_wins 1/3/5 = 数据行 13.5px、区块标题 19px、
+ * 计数 22px，字号全部走 tokens.css 的 --fs-*，不再散写。
+ *
+ * 1 颜色只用 --ink / --ink-soft，**刻意避开 --ink-faint**：12–13.5px 文字走
+ *   faint 正是对比度未过门禁的那一项（契约 §6 是硬阻塞）。
+ * 2 红绿灯是**实心状态点 + 中文状态字**（用户 2026-09-28 拍板改实心，
+ *   取代本节此前"空心、禁止实心"的旧判定；lave 同日放行并给硬边界：
+ *   实心**仅限状态点**，品牌 accent 仍禁止任何背景填充，语义色不得扩到
+ *   卡片底/按钮底/标签底/装饰面/渐变）。判据仍是「绿 2 · 黄 1」这串字本身，
+ *   颜色只作辅助，不单独传态。
+ * 3 层次靠发丝线与间距，不靠多套盒子堆叠——首屏只有一个容器层级。 */
+
+.ask-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* B1 之后的每块用一条发丝线分隔。 */
+.fs-block + .fs-block {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+/* B1 待确认（强度一）：首屏唯一带强调的块——panel 底 + accent 描边 + 2px 竖线。 */
+.fs-block.is-key {
+  padding: 12px 14px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent-line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+/* 区块标题：19px 衬线（视觉轮次 · quick_win 3）。**stroke 实验载体**——
+ * SimSun 只有 400 一档，font-synthesis:none 又挡掉合成粗体，标题感靠
+ * 「字号 19px + 0.35px 描边」拉出来。lave 裁定 experiment-only：
+ * 放大截图若糊字/发灰 ⇒ 只回退 stroke（保留衬线 400 + font-synthesis:none），
+ * **不换无衬线**（衬线是已冻结裁决）。 */
+.fs-title {
+  margin: 0 0 8px;
+  font-family: var(--serif);
+  font-size: var(--fs-h2);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: var(--stroke-h2);
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* B1 的原话沉底单列：这条事项里唯一带时效性的信息，要能一眼读到原文。 */
+.fs-quote {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.fs-note {
+  margin: 8px 0 0;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+/* ── B2 家庭档案：dl 定义表格，一人一组 dt/dd ─────────────────────────── */
+
+.fs-dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fs-mrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fs-mname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-data);
+  color: var(--ink);
+}
+
+/* 当前成员：accent 下划线，**不填色**（强调色只描边不填充的裁决）。 */
+.fs-mrow.is-active .fs-mname {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* 条件与目标（孕妇 / 增肌）：1px 描边小标签，pill 形，不填色。 */
+.fs-tag {
+  flex: none;
+  padding: 1px 6px;
+  font-size: var(--fs-note);
+  line-height: 1.5;
+  color: var(--ink-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+}
+
+/* 数字事实：等宽 + tabular-nums 右对齐。
+ * 科技感来自真实数据本身，不靠 TONIGHT/01 那类英文装饰标签（已否决）。 */
+.fs-mnum {
+  margin: 0;
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+/* ── B3 / B4 共用的「计数 + 单位」行 ──────────────────────────────────── */
+
+.fs-weekhead {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* 计数 22px 等宽加粗（quick_win 5）。 */
+.fs-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-count);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.fs-unit {
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+}
+
+.fs-range {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+}
+
+.fs-fnames {
+  min-width: 0;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+}
+
+/* ── B3 红绿灯：实心状态点 + 中文状态字（用户 2026-09-28 拍板 · lave 放行） ── */
+
+.fs-lights {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fs-light {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-data);
+}
+
+/* 9px 实心状态点（用户 2026-09-28 拍板；lave 同日放行）。
+ * 硬边界：实心填充**仅限这个状态点**——品牌 accent 仍禁止任何背景填充，
+ * 语义色不得扩展到卡片底/按钮底/标签底/装饰面/渐变。 */
+.fs-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  background: var(--line-strong);
+  border-radius: 50%;
+}
+
+/* 语义色上底色作辅助；判据是后面的中文状态字，不靠颜色单独传态
+ * （lave：圆点必须同时有文字/位置语义，不能只靠颜色）。 */
+.fs-light[data-level='green'] .fs-dot {
+  background: var(--green);
+}
+.fs-light[data-level='yellow'] .fs-dot {
+  background: var(--yellow);
+}
+.fs-light[data-level='red'] .fs-dot {
+  background: var(--red);
+}
+
+.fs-lname {
+  font-size: var(--fs-data);
+  color: var(--ink);
+}
+
+.fs-lstat {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+}
+
+/* ── B3 常吃菜：名字左、次数右，等宽 ──────────────────────────────────── */
+
+.fs-dishes {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fs-dishes li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-data);
+}
+
+/* 长菜名截断保行（不换行撑破右栏 278px）。 */
+.fs-dname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.fs-dnum {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+}
+
+/* ── 全局导航壳（2026-09-29 户型图第 2 步） ────────────────────────
+ * 只负责"另外三个房间看得见、点得动"，不改今晚房内任何布局。
+ * 房间切换走 hash（#room=xxx）而不是路由库：刷新靠 URL 恢复、后退靠浏览器
+ * 历史，两条都由浏览器自己保证（户型图红线：不引入路由依赖）。
+ */
+.shell-nav {
+  max-width: 1010px;
+  margin: 0 auto;
+  padding: 16px 24px 0;
+  display: flex;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+}
+
+.shell-brand {
+  font-size: 15px;
+  color: var(--accent);
+  margin-right: 10px;
+}
+
+.shell-tab {
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 15px;
+  cursor: pointer;
+}
+
+.shell-tab:hover {
+  color: var(--ink);
+}
+
+.shell-tab.is-on {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.shell-ctx {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-main {
+  min-height: 55vh;
+}
+
+/* ── 占位房间（周报 / 收藏 / 服务）：只讲这间房装什么，一行数据都不摆 ── */
+.room-todo {
+  max-width: 1010px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.room-todo-h {
+  font-family: var(--serif);
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 12px;
+  -webkit-text-stroke: var(--stroke-h2);
+}
+
+.room-todo-note {
+  font-size: var(--fs-body);
+  line-height: 1.75;
+  color: var(--ink-soft);
+  max-width: 42em;
+  margin: 0 0 26px;
+}
+
+.room-todo-k {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+
+.room-todo-list {
+  margin: 0 0 30px;
+  padding-left: 20px;
+  font-size: var(--fs-body);
+  line-height: 1.75;
+  color: var(--ink);
+  max-width: 42em;
+}
+
+.room-todo-list li {
+  margin: 8px 0;
+}
+
+.room-todo-back {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 9px 22px;
+  cursor: pointer;
+}
+
+.room-todo-back:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── 周报房间（2026-09-29 户型图第 3 步） ──────────────────────────────
+ * 与右栏 WeekBlock 同源数据、不同版式：右栏是 278px 摘要，这里是整页，
+ * 因此多放两样右栏放不下的（可执行建议、反馈计数）。
+ * 趋势照实写「数据不足」、不画线；空态直接显示后端给的 message。
+ */
+.wk {
+  max-width: 1010px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+.wk-h {
+  font-family: var(--serif);
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 6px;
+  -webkit-text-stroke: var(--stroke-h2);
+}
+
+.wk-sub {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0 0 8px;
+}
+
+.wk-sec {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin-top: 26px;
+}
+
+.wk-k {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin: 0 0 10px;
+}
+
+.wk-lights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-light {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+
+/* 9px 实心点：语义色只用在状态点上，绝不铺到卡片底/按钮底/标签底。 */
+.wk-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  align-self: center;
+}
+
+.wk-light[data-level='green'] .wk-dot { background: var(--green); }
+.wk-light[data-level='yellow'] .wk-dot { background: var(--yellow); }
+.wk-light[data-level='red'] .wk-dot { background: var(--red); }
+
+.wk-lname { color: var(--ink); }
+
+.wk-lstat {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.wk-dishes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-dish {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 12px;
+  padding: 11px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wk-dish:hover { color: var(--accent); }
+
+.wk-dish-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-dish-n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.wk-dish-go {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.wk-note {
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.wk-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--ink);
+}
+
+.wk-list li { margin: 5px 0; }
+
+.wk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.wk-tags b {
+  font-weight: 400;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  margin-left: 6px;
+}
+
+.wk-empty {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15.5px;
+  line-height: 1.8;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.wk-err {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--red);
+  margin: 0;
+}
+
+.wk-loading {
+  padding: 48px 0;
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+

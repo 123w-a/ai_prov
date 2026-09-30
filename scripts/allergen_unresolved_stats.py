@@ -9,9 +9,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
+from infrastructure.paths import LOG_DIR
+
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_LOG_PATH = ROOT / "data" / "allergen_unresolved.log"
+DEFAULT_LOG_PATH = LOG_DIR / "allergen_unresolved.log"
 
 
 def summarize_unresolved_log(
@@ -41,13 +43,13 @@ def summarize_unresolved_log(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="统计 data/allergen_unresolved.log 中未归一的过敏原表达。",
+        description="统计 allergen_unresolved.log 中未归一的过敏原表达。",
     )
     parser.add_argument(
         "--log",
         type=Path,
         default=DEFAULT_LOG_PATH,
-        help="日志路径（默认 data/allergen_unresolved.log）",
+        help=f"日志路径（默认 {DEFAULT_LOG_PATH}）",
     )
     parser.add_argument(
         "--limit",

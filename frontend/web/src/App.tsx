@@ -38,7 +38,7 @@ function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
   try {
     const parsed: unknown = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as ChefAnswer).recipes)) {
-      return parsed as ChefAnswer
+      return normalizeChefAnswer(parsed as ChefAnswer)
     }
   } catch {
     // 历史数据可能是旧版纯文本回答。
@@ -48,6 +48,49 @@ function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
 
 function answerTextOnly(answer?: ChefAnswer | null): string {
   return (answer?.opening || answer?.chef_tip || '').trim()
+}
+
+function normalizeChefAnswer(answer: ChefAnswer): ChefAnswer {
+  const raw = (answer && typeof answer === 'object' ? answer : {}) as Partial<ChefAnswer>
+  const recipes = (Array.isArray(raw.recipes) ? raw.recipes : [])
+    .filter((recipe): recipe is ChefAnswer['recipes'][number] => Boolean(recipe && typeof recipe === 'object'))
+    .map((recipe) => ({
+      ...recipe,
+      name: typeof recipe.name === 'string' ? recipe.name : '',
+      intro: typeof recipe.intro === 'string' ? recipe.intro : '',
+      difficulty: Number.isFinite(Number(recipe.difficulty)) ? Number(recipe.difficulty) : 1,
+      nutrition: Number.isFinite(Number(recipe.nutrition)) ? Number(recipe.nutrition) : 1,
+      seasonings: (Array.isArray(recipe.seasonings) ? recipe.seasonings : [])
+        .filter((item) => Boolean(item && typeof item === 'object'))
+        .map((item) => ({
+          name: typeof item.name === 'string' ? item.name : '',
+          amount: typeof item.amount === 'string' ? item.amount : '',
+        })),
+      steps: (Array.isArray(recipe.steps) ? recipe.steps : [])
+        .map((step) => (typeof step === 'string' ? step : String(step ?? '')))
+        .filter(Boolean),
+      image_url: typeof recipe.image_url === 'string' ? recipe.image_url : null,
+      image_ai_generated: Boolean(recipe.image_ai_generated),
+      image_note: typeof recipe.image_note === 'string' ? recipe.image_note : '',
+    }))
+  return {
+    ...raw,
+    opening: typeof raw.opening === 'string' ? raw.opening : '',
+    recipes,
+    image_url: typeof raw.image_url === 'string' ? raw.image_url : null,
+    image_ai_generated: Boolean(raw.image_ai_generated),
+    image_requested: Boolean(raw.image_requested),
+    image_note: typeof raw.image_note === 'string' ? raw.image_note : '',
+    chef_tip: typeof raw.chef_tip === 'string' ? raw.chef_tip : '',
+    sources: Array.isArray(raw.sources) ? raw.sources : [],
+    guardrails: Array.isArray(raw.guardrails) ? raw.guardrails : [],
+    health_lights: Array.isArray(raw.health_lights) ? raw.health_lights : [],
+    member_adjustments: Array.isArray(raw.member_adjustments)
+      ? raw.member_adjustments.filter((item): item is string => typeof item === 'string')
+      : [],
+    dish_matrix: Array.isArray(raw.dish_matrix) ? raw.dish_matrix : [],
+    primary_member: typeof raw.primary_member === 'string' ? raw.primary_member : '',
+  }
 }
 
 function sessionToMessages(session: Session): ChatMessage[] {
@@ -77,6 +120,8 @@ function sessionToMessages(session: Session): ChatMessage[] {
         ? textOnly || '已取消配图，本轮没有可保留的文字内容。'
         : answer?.opening || (record.answer === '__pending__' ? '（回答生成中，请稍后刷新查看…）' : record.answer || ''),
       answer: imageCancelled ? null : answer,
+      imagePending: !imageCancelled && answer ? hasPendingRecipeImages(answer) : false,
+      imageRequested: answer?.image_requested ?? false,
       starred: record.starred ?? false,
       feedback: record.feedback ?? null,
       time: record.time,
@@ -242,14 +287,19 @@ function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessag
     }
   }
   const serverHasImage = answerHasImage(serverMessage.answer)
-  if ((localMessage.streaming || localMessage.imagePending) && !serverHasImage) {
+  const serverStillWaitingForImage = serverMessage.answer
+    ? hasPendingRecipeImages(serverMessage.answer)
+    : false
+  if ((localMessage.streaming || localMessage.imagePending) && !serverHasImage && serverStillWaitingForImage) {
     return localMessage
   }
   const mergedAnswer = mergeSyncedAnswer(localMessage.answer, serverMessage.answer)
+  const mergedImagePending =
+    mergedAnswer ? Boolean(mergedAnswer.image_requested) && hasPendingRecipeImages(mergedAnswer) : false
   return {
     ...serverMessage,
     answer: mergedAnswer ?? serverMessage.answer,
-    imagePending: localMessage.imagePending && !answerHasImage(mergedAnswer ?? serverMessage.answer),
+    imagePending: mergedImagePending,
     streaming: serverMessage.streaming ?? localMessage.streaming,
     stage: serverMessage.stage ?? localMessage.stage,
     imageRequested:
@@ -300,7 +350,7 @@ function hasPendingRecipeImages(answer: ChefAnswer, patch?: PendingImagePatch | 
   if (recipes.length === 0) return false
   return recipes.some((recipe, index) => {
     const imagePatch = patch?.images.find((item) => item.index === index)
-    return !recipe.image_url && !imagePatch?.url && !failedIndexes.has(index)
+    return !recipe.image_url && !imagePatch?.url && !failedIndexes.has(index) && !recipe.image_note
   })
 }
 
@@ -614,10 +664,23 @@ export default function App() {
               ...current,
               [sessionId!]: (current[sessionId!] ?? []).map((message) => {
                 if (message.id !== assistantId) return message
-                const answerWantsImage = Boolean(answer.image_requested ?? turnWantsImage)
+                const streamedText = message.text.trim()
+                const normalizedAnswer = normalizeChefAnswer(answer)
+                // 结构化链可能退回短兜底句；流式正文才是用户刚刚看到的完整讲解。
+                // 结构化卡片接管展示后，把流式正文放入 opening，避免卡片与流式正文重复显示。
+                const answerWithOpening =
+                  streamedText &&
+                  (!normalizedAnswer.opening ||
+                    normalizedAnswer.opening === '已按你的要求整理好这一道，完整做法见图卡。' ||
+                    streamedText.length > normalizedAnswer.opening.length + 80)
+                    ? { ...normalizedAnswer, opening: streamedText }
+                    : normalizedAnswer
+                // normalizeChefAnswer 会把缺失字段归一成 false，所以不能再用
+                // `?? turnWantsImage` 判断。只要本轮已经打开配图门，就必须等图完成后再挂卡片。
+                const answerWantsImage = Boolean(answerWithOpening.image_requested || turnWantsImage)
                 const patchedAnswer = answerWantsImage
-                  ? applyPendingImagePatch(answer, pendingImagePatchRef.current[assistantId])
-                  : stripAnswerImages(answer)
+                  ? applyPendingImagePatch(answerWithOpening, pendingImagePatchRef.current[assistantId])
+                  : stripAnswerImages(answerWithOpening)
                 const imagePending = answerWantsImage && hasPendingRecipeImages(patchedAnswer, pendingImagePatchRef.current[assistantId])
                 return {
                   ...message,
@@ -643,7 +706,19 @@ export default function App() {
                   : message.id === assistantId
                 if (!isTarget || !message.answer) return message
                 const updated = patchAnswerImage(message.answer, img)
-                return { ...message, answer: updated, imagePending: false, stage: undefined }
+                // 补图是已有卡片的就地更新，不应把整张卡片重新藏起来。
+                if (targetRecordId != null) {
+                  return { ...message, text: '', answer: updated, imagePending: false, stage: undefined }
+                }
+                const patch = pendingImagePatchRef.current[assistantId]
+                const imagePending = hasPendingRecipeImages(updated, patch)
+                return {
+                  ...message,
+                  text: imagePending ? message.text : '',
+                  answer: updated,
+                  imagePending,
+                  stage: imagePending ? 'generating_image' : undefined,
+                }
               }),
             }))
             if (targetRecordId != null) return
@@ -663,7 +738,13 @@ export default function App() {
                 const updated = patchAnswerImage(message.answer, img)
                 const patch = pendingImagePatchRef.current[assistantId]
                 const imagePending = hasPendingRecipeImages(updated, patch)
-                return { ...message, answer: updated, imagePending, stage: imagePending ? 'generating_image' : undefined }
+                return {
+                  ...message,
+                  text: imagePending ? message.text : '',
+                  answer: updated,
+                  imagePending,
+                  stage: imagePending ? 'generating_image' : undefined,
+                }
               }),
             }))
           },
@@ -680,7 +761,18 @@ export default function App() {
                   : message.id === assistantId
                 if (!isTarget || !message.answer) return message
                 const updated = patchAnswerImageFailed(message.answer, payload.indexes)
-                return { ...message, answer: updated, imagePending: false, stage: undefined }
+                if (targetRecordId != null) {
+                  return { ...message, text: '', answer: updated, imagePending: false, stage: undefined }
+                }
+                const patch = pendingImagePatchRef.current[assistantId]
+                const imagePending = hasPendingRecipeImages(updated, patch)
+                return {
+                  ...message,
+                  text: imagePending ? message.text : '',
+                  answer: updated,
+                  imagePending,
+                  stage: imagePending ? 'generating_image' : undefined,
+                }
               }),
             }))
             if (targetRecordId != null) return
@@ -697,7 +789,13 @@ export default function App() {
                 const updated = patchAnswerImageFailed(message.answer, payload.indexes)
                 const patch = pendingImagePatchRef.current[assistantId]
                 const imagePending = hasPendingRecipeImages(updated, patch)
-                return { ...message, answer: updated, imagePending, stage: imagePending ? 'generating_image' : undefined }
+                return {
+                  ...message,
+                  text: imagePending ? message.text : '',
+                  answer: updated,
+                  imagePending,
+                  stage: imagePending ? 'generating_image' : undefined,
+                }
               }),
             }))
           },
@@ -708,14 +806,17 @@ export default function App() {
               [sessionId!]: (current[sessionId!] ?? []).map((message) =>
                 message.id === assistantId && message.answer
                   ? (() => {
-                      const answerWantsImage = Boolean(message.answer?.image_requested ?? turnWantsImage)
-                      const hasImage = answerHasImage(message.answer)
+                      const answerWantsImage = Boolean(message.answer?.image_requested || turnWantsImage)
+                      const imagePending =
+                        answerWantsImage &&
+                        hasPendingRecipeImages(message.answer, pendingImagePatchRef.current[assistantId])
                       return {
                         ...message,
                         recordId: message.recordId ?? payload?.record_id,
                         streaming: false,
-                        imagePending: answerWantsImage && !hasImage ? true : false,
-                        stage: answerWantsImage && !hasImage ? 'generating_image' : undefined,
+                        imagePending,
+                        stage: imagePending ? 'generating_image' : undefined,
+                        text: imagePending ? message.text : '',
                       }
                     })()
                   : message.id === assistantId

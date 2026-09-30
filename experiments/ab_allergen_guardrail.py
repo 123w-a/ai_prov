@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from allergen_rules import audit_allergen_advisories, audit_allergens
-from nutrition_rules import audit as audit_nutrition
+from domain.allergen_rules import audit_allergen_advisories, audit_allergens
+from domain.nutrition_rules import audit as audit_nutrition
 from experiments.allergen_cases import REAL_ALLERGEN_CASES
 
 

@@ -13,17 +13,25 @@ from main import (
     stream_agent,
     image_bytes_to_oss_url,
 )
-from agent_graph import (
+from agent.graph import (
     failover_llms,
     is_candidate_revision_request,
     is_execute_plan_request,
+    is_non_recipe_information_request,
     is_specific_dish_request,
     parse_candidate_index,
 )
+from agent.turn_decision import (
+    classify_turn_intent as _classify_turn_intent_shared,
+    is_recipe_change_request as _is_recipe_change_request,
+    is_restaurant_ordering_scene as _is_restaurant_ordering_scene,
+    looks_like_dining_request as _looks_like_dining_request,
+    looks_like_home_service_request as _looks_like_home_service_request,
+)
 from agent_tools import find_recipe_image
-from model_name import is_provider_failure
-from upload_guard import validate_image_upload
-from sessions_store import append_message
+from infrastructure.model_name import is_provider_failure
+from infrastructure.upload_guard import validate_image_upload
+from storage.sessions import append_message
 import time
 from datetime import datetime
 import re
@@ -140,7 +148,7 @@ def _prune_recipe_image_cache_locked(now: float) -> None:
 
 def _find_global_dish_asset(name: str):
     try:
-        from dish_assets_store import find_dish_asset
+        from storage.dish_assets import find_dish_asset
         return find_dish_asset(name)
     except Exception:
         return None
@@ -150,7 +158,7 @@ def _save_global_dish_assets(answer_obj: dict, session_id: str) -> None:
     if not isinstance(answer_obj, dict):
         return
     try:
-        from dish_assets_store import upsert_dish_asset
+        from storage.dish_assets import upsert_dish_asset
         for recipe in answer_obj.get("recipes") or []:
             if isinstance(recipe, dict) and str(recipe.get("name") or "").strip():
                 upsert_dish_asset(recipe, session_id)
@@ -164,7 +172,7 @@ def _global_asset_prompt(message: str) -> str:
     asset = _find_global_dish_asset(requested_name) if requested_name else None
     if not asset:
         try:
-            from dish_assets_store import find_dish_asset_in_text
+            from storage.dish_assets import find_dish_asset_in_text
             asset = find_dish_asset_in_text(message)
         except Exception:
             asset = None
@@ -369,7 +377,7 @@ def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
     if is_execute_plan_request(message) and not _is_pure_execute_plan_request(message):
         return None
     try:
-        from sessions_store import find_recent_recipe_for_image
+        from storage.sessions import find_recent_recipe_for_image
 
         requested_name = _extract_requested_dish(message)
         target = find_recent_recipe_for_image(session_id, requested_name)
@@ -422,17 +430,6 @@ def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
         return None
 
 
-def _is_recipe_change_request(message: str) -> bool:
-    """用户在追问里要求换一道/改做法时，应走完整对话，不当作给上一道补图。"""
-    text = str(message or "")
-    broad_change_words = ("没胃口", "不想吃这个", "不想吃了", "换一道", "换一个", "换别的", "没食欲")
-    if any(word in text for word in broad_change_words):
-        return True
-    change_words = ("换成", "改成", "做成", "换做", "改做", "改为", "变成")
-    recipe_words = ("面", "汤", "菜", "饭", "粥", "粉", "肉", "鱼", "鸡", "牛", "虾", "豆腐")
-    return any(word in text for word in change_words) and any(word in text for word in recipe_words)
-
-
 def _is_image_revision_request(message: str, want_image: str | None) -> bool:
     if not _wants_image(message, None):
         return False
@@ -460,94 +457,14 @@ def _is_visual_dish_lookup_request(message: str, want_image: str | None) -> bool
     return any(phrase in text for phrase in visual_phrases) and bool(_extract_requested_dish(text))
 
 
-def _looks_like_dining_request(message: str) -> bool:
-    """只有菜谱/饮食/点餐类请求才允许进入配图链路。"""
-    text = str(message or "").strip()
-    if not text:
-        return False
-    markers = (
-        "做饭", "做菜", "菜谱", "食谱", "菜品", "食材", "配方", "烹饪", "做法",
-        "帮我做", "做道", "做个", "做一份", "做一下", "来道", "来个",
-        "推荐", "吃", "饭", "餐", "早餐", "午餐", "晚餐", "夜宵", "外卖", "点餐", "食堂",
-        "汤面", "面条", "米粉", "米线", "炒肉", "家常菜",
-        "餐厅", "冰箱", "营养", "热量", "减脂", "控糖", "高血压", "糖尿病",
-        "痛风", "尿酸", "健康饮食", "附近吃什么",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _is_restaurant_ordering_scene(text: str) -> bool:
-    text = str(text or "").strip()
-    if not text:
-        return False
-    restaurant_markers = (
-        "餐厅", "饭店", "饭馆", "店里", "到店", "堂食", "外食", "外吃", "外出就餐",
-        "出去吃", "出去吃饭", "在外吃", "在外面吃", "下馆子", "聚餐",
-        "点餐", "点单", "菜单", "套餐", "档口", "食堂", "外卖", "附近",
-    )
-    restaurant_context = ("店", "餐厅", "饭店", "食堂", "外卖", "附近")
-    signature_words = ("招牌", "推荐几道菜", "推荐几个菜", "点什么菜")
-    cooking_markers = ("做法", "怎么做", "菜谱", "食谱", "烹饪", "开火", "下锅", "食材", "冰箱", "在家做", "自己做")
-    if any(marker in text for marker in cooking_markers):
-        return False
-    return any(marker in text for marker in restaurant_markers) or (
-        any(word in text for word in signature_words)
-        and any(ctx in text for ctx in restaurant_context)
-    )
-
-
-# 只修高概率误判：以前裸匹配「上门」，于是「上门维修/上门取件」也会被当成私厨上门，
-# 整轮被罐头文案接管（实测：「上周上门维修的师傅说我家冰箱该换了」）。
-_HOME_SERVICE_STRONG = (
-    "到家服务", "厨师到家", "私厨到家", "上门私厨", "私厨上门",
-    "请厨师", "预约厨师", "请个厨师", "找个厨师", "上门做菜", "上门做饭",
-)
-# 「上门」只有和做饭语境同现才算私厨需求
-_HOME_SERVICE_COOKING = (
-    "做饭", "做菜", "烧菜", "下厨", "厨师", "私厨", "煮饭", "做顿饭", "做一桌", "上门服务",
-)
-# 这些语境里的「上门」是别的服务，明确排除
-_NON_CATERING_UPSTREAM = (
-    "维修", "安装", "取件", "送货", "快递", "拜访", "体检", "保修", "售后",
-    "保洁", "清洗", "家政", "搬家", "测量", "拍照",
-)
-
-
-def _looks_like_home_service_request(text: str) -> bool:
-    raw = str(text or "")
-    if not raw:
-        return False
-    if any(marker in raw for marker in _HOME_SERVICE_STRONG):
-        return True
-    if "上门" not in raw:
-        return False
-    has_cooking = any(word in raw for word in _HOME_SERVICE_COOKING)
-    if any(word in raw for word in _NON_CATERING_UPSTREAM) and not has_cooking:
-        return False
-    return has_cooking
-
-
 def _classify_turn_intent(message: str) -> str:
     text = str(message or "").strip()
-    if not text:
-        return "other"
-    if _looks_like_home_service_request(text):
-        return "home_service"
-    if _is_restaurant_ordering_scene(text):
-        return "restaurant"
-    if _is_recipe_change_request(text):
-        return "change_one"
-    if is_execute_plan_request(text):
-        return "confirm_one"
-    confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道", "第一道", "第二道", "第三道")
-    if any(word in text for word in confirm_words):
-        return "confirm_one"
-    followup_words = ("清淡", "少盐", "少油", "不要", "别放", "能不能", "可以吗", "适合吗", "热量", "钠", "糖", "脂肪")
-    if any(word in text for word in followup_words) and not _looks_like_dining_request(text):
-        return "followup"
-    if _looks_like_dining_request(text) or is_specific_dish_request(text):
-        return "recommend"
-    return "other"
+    return _classify_turn_intent_shared(
+        text,
+        is_specific_dish=is_specific_dish_request(text),
+        execute_plan=is_execute_plan_request(text),
+        allow_ordinal_confirmation=True,
+    )
 
 
 def _home_service_redirect_text() -> str:
@@ -582,15 +499,22 @@ def _resolve_picked_candidate(session_id: str, message: str) -> str | None:
     Agent 层读的是 checkpoint 里的同一份候选 payload，两层指向同一个锚点。
     """
     index = parse_candidate_index(message)
-    if not index:
-        return None
     try:
-        from sessions_store import find_recent_candidates
+        from storage.sessions import find_recent_candidates
 
         recent = find_recent_candidates(session_id)
     except Exception:
         return None
     if not recent:
+        return None
+    # 候选列表场景下，手机端常直接发送按钮值「1」「2」「3」。
+    # 裸数字不能放进通用解析器，否则会把「3个人」「5克盐」误判成选菜；
+    # 这里只在已确认存在候选锚点时收窄放行。
+    if not index:
+        raw = str(message or "").strip()
+        if raw.isdigit() and 1 <= int(raw) <= 99:
+            index = int(raw)
+    if not index:
         return None
     names = recent.get("candidates") or []
     if index > len(names):
@@ -659,12 +583,12 @@ def _register_candidate_anchor(session_id: str, record_id, message: str, answer:
         return False
     try:
         from langchain_core.messages import HumanMessage
-        from agent_graph import (
+        from agent.graph import (
             _extract_candidate_names,
             _filter_candidate_names,
             _is_candidate_turn,
         )
-        from sessions_store import set_message_candidates
+        from storage.sessions import set_message_candidates
 
         if not _is_candidate_turn([HumanMessage(content=str(message or ""))]):
             return False
@@ -690,7 +614,7 @@ def _prev_record_has_card(session_id: str, record_id) -> bool:
     这样能确定性区分「上一轮是候选清单」和「上一轮是卡片」。
     """
     try:
-        from sessions_store import _read_session
+        from storage.sessions import _read_session
         data = _read_session(session_id)
         if not isinstance(data, dict):
             return False
@@ -712,19 +636,15 @@ def _prev_record_has_card(session_id: str, record_id) -> bool:
 
 
 def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
-    """配图只在「已选定一道菜」时开启：确认一道菜 / 换一道菜 / 点名一道具体菜 / 用户明确要图。
-
-    泛推荐轮（只给食材、让我推荐几道）走候选清单，不出卡片也就没有图可配，
-    这里必须与 agent_graph 的 `_wants_recipe_images` 同源，否则会出现
-    「后端开了配图开关、前端却没有卡片」的空转。"""
-    if is_candidate_revision_request(message):
+    """配图只在具体菜品已确定后开启，泛推荐和换一道先走候选清单。"""
+    if is_non_recipe_information_request(message):
         return False
+    specific = is_specific_dish_request(message)
     if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
-        # “推荐几道菜，配张图”仍然属于候选阶段：先给编号清单，选定后再出卡片和图片。
-        return is_specific_dish_request(message) or _is_recipe_change_request(message)
+        return specific
     intent = _classify_turn_intent(message)
-    return intent in {"confirm_one", "change_one"} or (
-        intent == "recommend" and is_specific_dish_request(message)
+    return intent == "confirm_one" or (intent == "change_one" and specific) or (
+        intent == "recommend" and specific
     )
 
 
@@ -988,10 +908,10 @@ async def cancel_image_decision(
     if record_id is not None:
         try:
             if keep_text:
-                from sessions_store import mark_message_image_cancelled
+                from storage.sessions import mark_message_image_cancelled
                 mark_message_image_cancelled(session_id, record_id)
             else:
-                from sessions_store import mark_message_cancelled
+                from storage.sessions import mark_message_cancelled
                 mark_message_cancelled(session_id, record_id)
         except Exception:
             pass
@@ -1045,22 +965,12 @@ async def chat(
         return _notice_stream(busy_reason, session_id)
 
     turn_intent = _classify_turn_intent(message)
-    # 两阶段点菜第二阶段：「就第2个」是明确的选定动作，必须按确认处理并开启配图
-    # （路由层拿不到上下文，只能靠会话记录里的候选锚点解析，见 _resolve_picked_candidate）。
     picked_candidate = _resolve_picked_candidate(session_id, message)
     if picked_candidate:
         turn_intent = "confirm_one"
     image_requested = _should_enable_image_pipeline(message, want_image) or bool(picked_candidate)
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
     if picked_candidate:
-        # ⚠️ 把解析出的菜名**显式注入**给 Agent。
-        # 路由层靠会话记录里的候选锚点解析出「第2个 = 青椒炒鸡丝」，但 Agent 层读的是
-        # checkpoint 的候选 payload —— 两处锚点并不总是同时在场（实测 T2 就断了：
-        # checkpoint 里没有候选 payload，`resolve_candidate_pick` 返回 None）。
-        # 不注入的后果：模型自己去猜「第2个」是哪道，实测凭空造了一个
-        # 「滑炒鸡丝（无青椒·番茄提鲜版）」—— 候选清单里根本没有这道菜，
-        # 用户看到的第2道是「青椒炒鸡丝」。菜名一旦漂移，后面所有轮次（含配图、
-        # 过敏原审计、份量表）都建立在错误菜名上。
         effective_message = (
             f"【已选定候选：{picked_candidate}】\n"
             f"（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
@@ -1074,7 +984,7 @@ async def chat(
         # 先提取为本轮 pending 约束，确保当前回答立即遵守；只有回答成功后才会
         # 在 finish 后由前端展示确认提示，失败轮次会在持久化兜底中清理。
         from api.routes.preferences_route import _migrate, _read_family
-        from memory_candidates import extract_candidates, remember_candidates
+        from storage.memory_candidates import extract_candidates, remember_candidates
 
         family = _read_family() or _migrate({})
         candidates = extract_candidates(
@@ -1100,7 +1010,7 @@ async def chat(
     _PENDING = "__pending__"
     pending_rec_id = None
     try:
-        from sessions_store import append_message as _append, update_message_answer as _update_answer
+        from storage.sessions import append_message as _append, update_message_answer as _update_answer
         pending_rec_id = _append(session_id, message, _PENDING, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), save_img_name, save_img_type, save_img_url)
         _remember_turn_record(session_id, turn_id, pending_rec_id)
     except Exception:
@@ -1137,7 +1047,7 @@ async def chat(
     standalone_image_request = _is_standalone_image_request(message, want_image)
     if not standalone_image_request and _wants_image(message, want_image) and not _is_recipe_change_request(message):
         try:
-            from sessions_store import find_recent_recipe_for_image
+            from storage.sessions import find_recent_recipe_for_image
 
             requested_dish = _extract_requested_dish(message)
             if _names_dish_for_image(message) and not picked_candidate:
@@ -1194,7 +1104,7 @@ async def chat(
     def standalone_image_generator():
         final_answer = ""
         try:
-            from sessions_store import find_recent_recipe_for_image, find_recipe_for_image_target, update_answer_image_at_index
+            from storage.sessions import find_recent_recipe_for_image, find_recipe_for_image_target, update_answer_image_at_index
             requested_dish = _extract_requested_dish(message)
             target = None
             if target_record_id is not None:
@@ -1346,7 +1256,7 @@ async def chat(
             print(f"[persist] sid={session_id} rec={pending_rec_id} answer_len={len(answer or '')} parts={len(full_parts)}")
             if not (answer and answer.strip()) or answer.strip() == "__pending__":
                 try:
-                    from memory_candidates import dismiss
+                    from storage.memory_candidates import dismiss
 
                     for candidate_id in memory_candidate_ids:
                         dismiss(candidate_id)
@@ -1366,10 +1276,10 @@ async def chat(
                 if pending_rec_id is not None:
                     try:
                         if _should_keep_text_on_cancel(session_id, turn_id):
-                            from sessions_store import mark_message_image_cancelled
+                            from storage.sessions import mark_message_image_cancelled
                             mark_message_image_cancelled(session_id, pending_rec_id, answer)
                         else:
-                            from sessions_store import mark_message_cancelled
+                            from storage.sessions import mark_message_cancelled
                             mark_message_cancelled(session_id, pending_rec_id)
                     except Exception:
                         pass
@@ -1434,9 +1344,36 @@ async def chat(
                 if not name:
                     continue
                 try:
-                    image_url, source = _find_recipe_image_cached(name, allow_ai_fallback=allow_ai_fallback)
-                except Exception:
+                    asset = _find_global_dish_asset(name)
+                    asset_recipe = (asset.get("recipe") or {}) if isinstance(asset, dict) else {}
+                    image_url = (
+                        (asset.get("image_url") or asset_recipe.get("image_url"))
+                        if isinstance(asset, dict)
+                        else None
+                    )
+                    source = (
+                        "ai"
+                        if isinstance(asset, dict)
+                        and (asset.get("image_ai_generated") or asset_recipe.get("image_ai_generated"))
+                        else "cache"
+                    )
+                    if not image_url:
+                        image_url, source = _find_recipe_image_cached(
+                            name,
+                            allow_ai_fallback=allow_ai_fallback,
+                        )
+                except Exception as exc:
+                    print(
+                        f"[image-thread] lookup failed name={name!r} error={exc!r}",
+                        flush=True,
+                    )
                     continue
+                print(
+                    f"[image-thread] lookup name={name!r} "
+                    f"asset={'hit' if asset else 'miss'} source={source} "
+                    f"found={bool(image_url)}",
+                    flush=True,
+                )
                 if _is_image_cancelled(session_id, turn_id):
                     return
                 if not image_url:
@@ -1467,7 +1404,7 @@ async def chat(
                         except Exception:
                             pass
                     try:
-                        from dish_assets_store import update_dish_asset_image
+                        from storage.dish_assets import update_dish_asset_image
                         update_dish_asset_image(name, image_url, ai_flag, note)
                     except Exception:
                         pass
@@ -1480,6 +1417,11 @@ async def chat(
                     "url": image_url,
                     "ai_generated": ai_flag,
                 })))
+                print(
+                    f"[image-thread] emitted record_id={pending_rec_id} "
+                    f"turn_id={turn_id!r} index={index} source={source}",
+                    flush=True,
+                )
             # 第5问：补图结束给失败终态——收集最终仍无图的菜品推 image_failed 事件，
             # 前端据此把含糊的「暂无可靠成品图」占位升级为明确的失败说明（数据诚实原则）。
             if _is_image_cancelled(session_id, turn_id):
@@ -1489,6 +1431,11 @@ async def chat(
                 if not r.get("image_url")
             ]
             if failed_indexes:
+                print(
+                    f"[image-thread] failed record_id={pending_rec_id} "
+                    f"indexes={failed_indexes}",
+                    flush=True,
+                )
                 events.put(("item", ("image_failed", {
                     "record_id": pending_rec_id,
                     "turn_id": turn_id,
@@ -1609,25 +1556,30 @@ async def chat(
                     except Exception as _pe:
                         print(f"[flow] answer json-parse failed: {_pe}")
                         raise
-                    if isinstance(answer_dict, dict) and answer_dict.get("answer_kind") == "candidates":
-                        # 两阶段点菜第一阶段：正文就是用户看到的编号候选清单（已流式推完），
-                        # 这里绝不推 answer —— 前端收到 answer 会清空正文，而候选没有卡片可渲染。
-                        # 候选只登记进消息的独立字段，作为下一轮「就第2个」的确定性锚点。
-                        candidate_names = [
-                            str(name).strip()
-                            for name in (answer_dict.get("candidates") or [])
-                            if str(name).strip()
-                        ]
-                        if candidate_names and pending_rec_id is not None:
-                            try:
-                                from sessions_store import set_message_candidates
-                                set_message_candidates(session_id, pending_rec_id, candidate_names)
-                            except Exception:
-                                pass
-                        answer_dict = None
-                        continue
                     final_answer = payload
                     if isinstance(answer_dict, dict):
+                        if answer_dict.get("answer_kind") == "candidates":
+                            candidate_names = [
+                                str(name).strip()
+                                for name in (answer_dict.get("candidates") or [])
+                                if str(name).strip()
+                            ]
+                            if candidate_names and pending_rec_id is not None:
+                                try:
+                                    from storage.sessions import set_message_candidates
+                                    set_message_candidates(
+                                        session_id,
+                                        pending_rec_id,
+                                        candidate_names,
+                                    )
+                                except Exception:
+                                    pass
+                            # 候选清单已经通过正文 token 流式展示；不能再把
+                            # candidates payload 作为 answer 推给前端，否则会显示原始 JSON
+                            # 或触发错误的结构化卡片。
+                            answer_dict = None
+                            final_answer = None
+                            continue
                         # 只有模型确实产出具体菜品时，推荐阶段才进入图片展示；
                         # 普通健康问答即使命中饮食关键词，也不生成空图片槽。
                         has_recipes = any(
@@ -1636,45 +1588,30 @@ async def chat(
                         )
                         answer_dict["image_requested"] = bool(image_requested and has_recipes)
                         if answer_dict["image_requested"]:
-                            # 跨会话资产只复用基础菜品和图片；健康结论仍来自本轮 Agent。
+                            # 图片严格走 answer 之后的 image 事件，不能把缓存图或模型图
+                            # 直接塞进结构化 answer，否则前端会表现为“结构化和图片同出”。
                             for recipe in answer_dict.get("recipes") or []:
-                                if not isinstance(recipe, dict) or recipe.get("image_url"):
+                                if not isinstance(recipe, dict):
                                     continue
-                                asset = _find_global_dish_asset(recipe.get("name"))
-                                if not asset:
-                                    continue
-                                asset_recipe = asset.get("recipe") or {}
-                                cached_url = asset.get("image_url") or asset_recipe.get("image_url")
-                                if cached_url:
-                                    recipe["image_url"] = cached_url
-                                    recipe["image_ai_generated"] = bool(
-                                        asset.get("image_ai_generated")
-                                        or asset_recipe.get("image_ai_generated")
-                                    )
-                                    recipe["image_note"] = (
-                                        asset.get("image_note")
-                                        or asset_recipe.get("image_note")
-                                        or ""
-                                    )
+                                recipe["image_url"] = None
+                                recipe["image_ai_generated"] = False
                             if answer_dict.get("recipes"):
-                                first = answer_dict["recipes"][0]
-                                answer_dict["image_url"] = first.get("image_url")
-                                answer_dict["image_ai_generated"] = bool(first.get("image_ai_generated"))
-                                answer_dict["image_note"] = first.get("image_note") or ""
+                                answer_dict["image_url"] = None
+                                answer_dict["image_ai_generated"] = False
                         _save_global_dish_assets(answer_dict, session_id)
                         # 复用缓存图片（上面那步）时不会启动补图线程，于是 done 分支
                         # 不会有 img_thread 来把 answer_dict 回填进 final_answer。
                         # 不在这里同步一次，落库的就是「富化图片之前」的原始包：
                         # 用户先看到有图的卡片，前端 +1.8s/+6s 同步后图片又消失。
                         final_answer = json.dumps(answer_dict, ensure_ascii=False)
-                    # 卡片先出、图片后补：无图菜名交给后台线程（25s 预算），
-                    # 搜到即推 image 事件让前端动态填图，不再阻塞 answer 120s。
-                    if answer_dict.get("image_requested") and not _is_image_cancelled(session_id, turn_id) and any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
-                        img_thread = threading.Thread(target=_fill_images, daemon=True)
-                        img_thread.start()
                     # 先通知前端"正文说完了，正在整理卡片"，再推整包 JSON
                     yield f"data: {json.dumps({'structuring': True}, ensure_ascii=False)}\n\n"
                     yield f"data: {json.dumps({'answer': answer_dict}, ensure_ascii=False)}\n\n"
+                    # 严格保证卡片先出、图片后补：必须等 answer 已经写入 SSE 后
+                    # 才启动补图线程，避免图片线程抢跑导致前端看起来“结构化和图片同出”。
+                    if answer_dict.get("image_requested") and not _is_image_cancelled(session_id, turn_id) and any(not r.get("image_url") for r in (answer_dict.get("recipes") or [])):
+                        img_thread = threading.Thread(target=_fill_images, daemon=True)
+                        img_thread.start()
                 elif kind == "image":
                     if _is_image_cancelled(session_id, turn_id):
                         continue
