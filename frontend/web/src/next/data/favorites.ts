@@ -50,17 +50,46 @@ export function favKey(sid: string, recId: number): FavKey {
   return `${sid}:${recId}`
 }
 
+/**
+ * 后端 user_text / session_title / dish 实测存的是**双重转义**字符串：
+ * HTTP 响应里写的是 `"\\u7ed9\\u6211"`，JSON.parse 解出来是字面量
+ * `\u7ed9\u6211`（六个字符的序列），不是「给我」两个字——直接显示就是
+ * 一串反斜杠乱码（2026-10-01 在收藏恢复详情的回声上实测到）。
+ *
+ * 只在文本里**确实出现形如 \uXXXX 的合法转义**时才逐个解码；普通中文、
+ * 英文、含反斜杠的路径（\url 不是 4 位 hex，不匹配）都原样返回。
+ * 解码失败也原样返回——宁可显示乱码，也不能把用户的话改坏。
+ * 这是**前端兜底**：根因在后端写入时多转义了一次，不动 api/ 是红线。
+ *
+ * （2026-10-01 导出：历史会话侧栏 railTime.titleOf 是第二调用方——同一个
+ * 后端 bug 的兜底只许有一份实现，不许在别处再抄一遍正则。）
+ */
+export function unescapeText(s: string): string {
+  if (!s.includes('\\u')) return s
+  // ① 合法的 4 位转义 → 解成字符
+  const out = s.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex: string) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  )
+  // ② 后端按字符数截断标题会留下**半个序列**（实测 session_title 存成了
+  //    …\u63a8\u83——原词「推荐」的 \u8350 被切成 \u83，只剩两位非法 hex）。
+  //    不猜它原本是什么（猜 = 编造用户的话），用省略号标出「这里断了」。
+  //    只匹配 1~3 位**真 hex**：\url 这种普通英文里的 \u 不受影响。
+  return out.replace(/\\u[0-9a-fA-F]{1,3}(?![0-9a-fA-F])/g, '…')
+}
+
 function toEntry(item: FavoriteItem): FavEntry {
-  const ask = item.user_text ?? ''
+  const ask = unescapeText(item.user_text ?? '')
   return {
     key: favKey(item.sid, item.rec_id),
     sid: item.sid,
     recId: item.rec_id,
     // 纯散文轮后端把 dish 退化成原话截断——照它给的显示，不替它发明菜名。
-    dish: item.dish || '这顿没有菜名',
-    from: item.session_title || ask || '来源会话',
+    dish: unescapeText(item.dish) || '这顿没有菜名',
+    from: unescapeText(item.session_title) || ask || '来源会话',
     ask,
     imageUrl: item.image_url ?? null,
+    // answer 是结构化对象（实测 favorites 接口给对象、sessions 接口给字符串，
+    // 两者形态不同，以实测为准），内部字段实测是正常中文，不参与解码。
     detail: item.answer ?? null,
   }
 }

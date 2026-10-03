@@ -1,0 +1,491 @@
+/* ── 浮层面板样式（2026-10-01 B 批次①③） ────────────────────────────
+ * 两个房内浮层面板：家庭成员抽屉（右，Shell 层）+ 历史会话侧栏（左，今晚房）。
+ * 从 base.css 拆出：base.css 加完两段越过 checkScale 的 1000 行上限。
+ * 两段都只定义 .sd-* / .rail-* / .tn-railbtn 新类名，与前面任何片的选择器不相交，
+ * 放在末层不挪动已有层叠（同 fav.css / service.css 的拆分理由）。
+ * main.tsx 在冻结的十行之后追加本文件；fixture-main 不需要它（夹具台
+ * 只渲染 WaitCard / RunResult，不出现面板）——「同步」指那冻结的十行。
+ */
+
+/* ── 家庭成员抽屉（2026-10-01 B 批次①，lave 方案 B：全局遮罩抽屉） ──────
+ * 全局上下文不是房间 ⇒ 挂 Shell 层、React state 控制、hash 不承载它的状态。
+ * 画风守冻结裁决：暖色 token、发丝线分离、不靠光——遮罩用 ink 的低透明度
+ * 而不是纯黑，面板与底层之间只用 1px border-left 一条线交代层级，无投影。
+ * 语义色不铺底（裁决：accent 不上卡片/按钮/标签背景）——当前推荐只用
+ * 边框色 + 一枚 mono 小徽标表达。
+ */
+.sd-mask {
+  position: fixed;
+  inset: 0;
+  /* 用 --ink 调而不是裸 rgba（d_色值字面量门禁）：ink 的 30% 即原来的
+     rgba(61,42,24,.3)——遮罩跟着主题墨色走，改 token 时抽屉一起变。 */
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sd {
+  width: min(400px, 94vw);
+  height: 100%;
+  overflow: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  padding: 22px 26px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sd-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.sd-h {
+  font-family: var(--serif);
+  font-size: 20px;
+  margin: 0;
+}
+
+.sd-close {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.sd-close:hover {
+  color: var(--ink);
+}
+
+.sd-sub {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.sd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sd-item {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--serif);
+  color: var(--ink);
+}
+
+.sd-item:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.sd-item:disabled {
+  cursor: default;
+}
+
+.sd-item[data-on='true'] {
+  border-color: var(--accent);
+}
+
+.sd-name {
+  font-size: 15px;
+}
+
+.sd-desc {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.sd-on {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.sd-busy {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.sd-empty,
+.sd-shared,
+.sd-note {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.sd-shared {
+  color: var(--ink-soft);
+}
+
+.sd-err {
+  font-size: 12.5px;
+  color: var(--red);
+  margin: 0;
+}
+
+/* ── 历史会话侧栏（2026-10-01 B 批次③，lave 方案 A） ──────────────────
+ * 与家庭成员抽屉同族（遮罩 + 浮层面板），方向相反（左侧）：面板固定在左，
+ * 不推挤主区排版——1010px 骨架刚过用户验收，任何房内面板都不许改它。
+ * 触发按钮 .tn-railbtn 常驻在今晚房标题行（tn-head 内），其余房不渲染。
+ * z-index 55 略低于抽屉 60：两者不会同时开（抽屉属 Shell、侧栏属今晚房），
+ * 数值差只是防将来同时挂载时的层序意外。
+ */
+.tn-railbtn {
+  all: unset;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed transparent;
+}
+
+.tn-railbtn:hover {
+  color: var(--ink);
+  border-bottom-color: var(--line);
+}
+
+.rail-mask {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  z-index: 55;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.rail {
+  width: min(360px, 94vw);
+  height: 100%;
+  overflow: auto;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+  padding: 22px 24px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.rail-h {
+  font-family: var(--serif);
+  font-size: 20px;
+  margin: 0;
+}
+
+.rail-close {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.rail-close:hover {
+  color: var(--ink);
+}
+
+.rail-sub,
+.rail-note {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.rail-notice {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: none;
+}
+
+.rail-err {
+  font-size: 12.5px;
+  color: var(--red);
+  margin: 0;
+}
+
+.rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rail-item {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--serif);
+  color: var(--ink);
+}
+
+.rail-item:hover {
+  border-color: var(--accent);
+}
+
+.rail-item[data-on='true'] {
+  border-color: var(--accent);
+}
+
+.rail-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.rail-time {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-on {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.rail-bucket summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  padding: 6px 0;
+}
+
+.rail-bucket[open] summary {
+  color: var(--ink-soft);
+}
+
+.rail-bucket .rail-list {
+  margin-top: 6px;
+}
+
+/* ── 周报房间（2026-09-29 户型图第 3 步） ──────────────────────────────
+ * 与右栏 WeekBlock 同源数据、不同版式：右栏是 278px 摘要，这里是整页，
+ * 因此多放两样右栏放不下的（可执行建议、反馈计数）。
+ * 趋势照实写「数据不足」、不画线；空态直接显示后端给的 message。
+ */
+.wk {
+  max-width: 1010px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+.wk-h {
+  font-family: var(--serif);
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 6px;
+  -webkit-text-stroke: var(--stroke-h2);
+}
+
+.wk-sub {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0 0 8px;
+}
+
+.wk-sec {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin-top: 26px;
+}
+
+.wk-k {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin: 0 0 10px;
+}
+
+.wk-lights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-light {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+
+/* 9px 实心点：语义色只用在状态点上，绝不铺到卡片底/按钮底/标签底。 */
+.wk-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  align-self: center;
+}
+
+.wk-light[data-level='green'] .wk-dot { background: var(--green); }
+.wk-light[data-level='yellow'] .wk-dot { background: var(--yellow); }
+.wk-light[data-level='red'] .wk-dot { background: var(--red); }
+
+.wk-lname { color: var(--ink); }
+
+.wk-lstat {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.wk-dishes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-dish {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 12px;
+  padding: 11px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wk-dish:hover { color: var(--accent); }
+
+.wk-dish-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-dish-n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.wk-dish-go {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.wk-note {
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.wk-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--ink);
+}
+
+.wk-list li { margin: 5px 0; }
+
+.wk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.wk-tags b {
+  font-weight: 400;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  margin-left: 6px;
+}
+
+.wk-empty {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15.5px;
+  line-height: 1.8;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.wk-err {
+  max-width: 42em;
+  padding: 48px 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--red);
+  margin: 0;
+}
+
+.wk-loading {
+  padding: 48px 0;
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+

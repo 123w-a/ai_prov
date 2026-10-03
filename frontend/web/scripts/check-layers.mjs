@@ -30,6 +30,11 @@ const STYLE_ORDER = [
   './styles/primitives.css',
   // 收藏房（第 4 步）：只定义 .fv-* 新类名，登记为末层，与前面选择器不相交。
   './styles/fav.css',
+  // 服务房（第 5 步）：只定义 .sv-* 新类名，同理登记为末层。
+  './styles/service.css',
+  // 浮层面板（2026-10-01 B 批次①③）：家庭成员抽屉 .sd-* + 历史侧栏 .rail-*，
+  // 从 base.css 拆出（越 1000 行上限）；新前缀不与前面选择器相交，登记末层。
+  './styles/panels.css',
 ]
 
 /** 方案第三节：依赖方向只允许 app → views → blocks → ui。 */

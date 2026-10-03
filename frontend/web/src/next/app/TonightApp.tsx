@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createSession } from '../../api/client.ts'
+import { createSession, fetchSessions } from '../../api/client.ts'
 import { useHousehold } from '../data/household.ts'
 import {
   candidateView,
@@ -10,10 +10,11 @@ import {
   weekView,
 } from '../data/firstScreen.ts'
 import { streamChat, ChatStreamError } from '../data/chatStream.ts'
-import type { ChefAnswer, StreamStage } from '../../types.ts'
+import type { ChefAnswer, Session, StreamStage } from '../../types.ts'
 import type { RunState, TraceEvent } from '../data/model.ts'
 import { EMPTY_RUN } from '../data/model.ts'
 import { WaitCard } from '../blocks/WaitCard.tsx'
+import { SessionRail } from '../blocks/SessionRail.tsx'
 import { RunResult } from '../views/ResultView.tsx'
 import { AskView } from '../views/AskView.tsx'
 
@@ -104,6 +105,13 @@ export default function TonightApp() {
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [text, setText] = useState(() => loadRun()?.text ?? DEFAULT_TEXT)
   const [run, setRun] = useState<RunState>(() => loadRun()?.run ?? EMPTY_RUN)
+  // 历史会话侧栏（B 批次③，lave 方案 A）：列表只读 fetchSessions()；
+  // 面板形态见 blocks/SessionRail.tsx 的头注释（常驻按钮 + 左浮层，不推挤主区）。
+  const [railOpen, setRailOpen] = useState(false)
+  const [railSessions, setRailSessions] = useState<Session[]>([])
+  const [railLoading, setRailLoading] = useState(false)
+  const [railError, setRailError] = useState<string | null>(null)
+  const [railNotice, setRailNotice] = useState<string | null>(null)
   const startedAt = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   /** 定时存档用的最新值引用，避免把存档 effect 挂到每一批 token 上。 */
@@ -134,6 +142,32 @@ export default function TonightApp() {
       alive = false
     }
   }, [])
+
+  /** 会话列表只读拉取（打开面板时也会再拉一次，保证列表不是进站时的旧快照）。 */
+  const loadSessions = useCallback(() => {
+    setRailLoading(true)
+    setRailError(null)
+    fetchSessions()
+      .then((list) => setRailSessions(list))
+      .catch((err: unknown) =>
+        setRailError(`会话列表读不到（不影响正在做的事）：${err instanceof Error ? err.message : String(err)}`),
+      )
+      .finally(() => setRailLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
+
+  // 侧栏 Escape 关闭（与 Shell 抽屉同一约定：只在打开时挂监听，不打扰正常键入）。
+  useEffect(() => {
+    if (!railOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRailOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [railOpen])
 
   /**
    * 本地时钟只负责"已经过了多久"。它不猜测进度，也不推断剩余。
@@ -320,6 +354,78 @@ export default function TonightApp() {
   }, [])
 
   /**
+   * 历史会话切换（B 批次③，lave「会话切换」契约的落地）。
+   *
+   * 四条硬规矩，一条都不能松：
+   *  1 正在跑的轮先真实断掉，**并且先存档再覆盖**：abort 前把
+   *    orphaned=cancelled 写进 RUN_KEY，否则 AbortError 到达时 run 已被
+   *    下面的 setRun 换成新内容，catch 里 `prev.status !== 'running'` 的
+   *    保护会让这一轮静默消失——那是在替用户抹掉他等过的事。
+   *    面板顶部同时给出明确文案（「是被取消，不是失败」）。
+   *  2 sessionId 要同步写回 localStorage：ensureSession 刷新时读的是缓存，
+   *    不写的话切了也白切，一刷新就回到旧会话。
+   *  3 恢复只按该会话**真实存了什么**走：answer 是 JSON 字符串，parse 成功
+   *    才恢复成只读详情（restored=true，动作条按契约隐藏）；parse 失败或
+   *    本就没有 answer → 回提问态，绝不编造详情。
+   *  4 点当前会话不折腾（不触发取消、不重置界面）。
+   */
+  const pickSession = useCallback(
+    (sid: string) => {
+      if (sid === sessionId) {
+        setRailOpen(false)
+        return
+      }
+
+      const cur = runRef.current
+      const runningNow = cur.status === 'running' && !cur.orphaned
+      if (runningNow) {
+        const stopped: RunState = {
+          ...cur,
+          orphaned: true,
+          orphanCause: 'cancelled',
+          elapsed: Date.now() - startedAt.current,
+        }
+        // 先存档：下面 setRun 换新状态后，AbortError 那条路就不会再写了。
+        saveRun(stopped, textRef.current)
+        setRailNotice('上一轮正在跑，这次切换把它取消了——是被取消，不是失败，中断记录已存档。')
+        abortRef.current?.abort()
+        abortRef.current = null
+      } else {
+        setRailNotice(null)
+      }
+
+      localStorage.setItem(SESSION_KEY, sid)
+      setSessionId(sid)
+
+      const s = railSessions.find((x) => x.session_id === sid)
+      const msgs = s?.messages ?? []
+      const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+      let detail: ChefAnswer | null = null
+      if (last?.answer) {
+        try {
+          detail = JSON.parse(last.answer) as ChefAnswer
+        } catch {
+          detail = null
+        }
+      }
+      setText(last?.user_text || DEFAULT_TEXT)
+      setRun(
+        detail
+          ? {
+              ...EMPTY_RUN,
+              status: 'succeeded',
+              request: last?.user_text ?? '',
+              answer: detail,
+              restored: true,
+            }
+          : EMPTY_RUN,
+      )
+      setRailOpen(false)
+    },
+    [sessionId, railSessions],
+  )
+
+  /**
    * 周报房点「常做的菜 → 再做一顿」时接住话头。
    *
    * 今晚房在 Shell 里**常驻挂载**（只藏不卸，为了保住跑一半的那一轮），
@@ -387,6 +493,17 @@ export default function TonightApp() {
         <span className="tn-brand">小膳管家</span>
         <span className="tn-dot" />
         <h1 className="tn-title">今晚这一顿</h1>
+        {/* 历史侧栏的常驻入口：只在今晚房（本组件）渲染，打开时顺手刷新列表。 */}
+        <button
+          type="button"
+          className="tn-railbtn"
+          onClick={() => {
+            setRailOpen(true)
+            loadSessions()
+          }}
+        >
+          历史{railSessions.length > 0 ? ` ${railSessions.length}` : ''}
+        </button>
         <span className={`tn-conn${sessionError ? ' is-bad' : ''}`}>
           {sessionError ? '会话不可用' : sessionId ? '就绪' : '连接中'}
         </span>
@@ -410,6 +527,18 @@ export default function TonightApp() {
       {running && <WaitCard run={run} onCancel={cancel} onRestart={reset} />}
 
       {run.status === 'succeeded' && <RunResult run={run} onAgain={reset} />}
+
+      {/* 历史会话侧栏：fixed 定位，不参与 .tn 的排版。 */}
+      <SessionRail
+        open={railOpen}
+        sessions={railSessions}
+        activeId={sessionId}
+        notice={railNotice}
+        loading={railLoading}
+        error={railError}
+        onPick={pickSession}
+        onClose={() => setRailOpen(false)}
+      />
     </div>
   )
 }

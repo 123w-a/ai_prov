@@ -333,6 +333,21 @@ export const CASES: Record<string, FixtureCase> = {
     rail: { fam: null, week: null, cand: null, fridge: null },
   },
   typical: { kind: 'result', label: '常规（22/23）', run: run({ answer: TYPICAL }) },
+  /* 动作条验收（★收藏/赞/踩）：可见性判据是 succeeded && !restored && origin，
+     其余 result case 都不带 origin ⇒按契约整条隐藏，所以动作条在夹具台里
+     此前根本不存在（2026-10-01 验收 A 方案时发现）。
+     origin 指**真实存在**的记录（用户测试会话里那条已打星的消息），这样点★
+     走的是真后端、验的是正向可用性——指向假 id 只能验收 404 错误路径。
+     archive 不设 ⇒ 新轮初值确定（星/评分状态按「刚创建必然未收藏」给），
+     这与真实 finish 后的本轮一致。 */
+  actions: {
+    kind: 'result',
+    label: '结果·动作条(★/赞/踩)',
+    run: run({
+      answer: TYPICAL,
+      origin: { sessionId: 'user_sse_direct_mt9nqtp0', recordId: 1 },
+    }),
+  },
   full: { kind: 'result', label: '满数据（含家人矩阵）', run: run({ answer: FULL, elapsed: 354700 }) },
   thin: { kind: 'result', label: '缺字段（最薄）', run: run({ answer: THIN, elapsed: 52000 }) },
   long: { kind: 'result', label: '长文本溢出压力', run: run({ answer: LONG }) },

@@ -1,8 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-// 与 main.tsx 用的是**同一份样式、同一顺序**（七个切片按序拼回原 tonight.css）。
-// 动这七行之前先读 main.tsx 里那段说明：顺序变了层叠就变，而且看不出来。
+// 与 main.tsx 用的是**同一份样式、同一顺序**（七个切片按序拼回原 tonight.css，
+// 后接 primitives/fav/service 三片只定义新类名的追加层）。
+// 动这十行之前先读 main.tsx 里那段说明：顺序变了层叠就变，而且看不出来。
+// 2026-10-01 修：这里曾漏掉 fav.css 与 service.css（注释还写着「同一份样式」）——
+// 于是在夹具台量到的 .rs-acts margin 是 0，正式页却是 18px，「夹具几何=正式页几何」
+// 的承诺直接破了。样式片清单必须与 main.tsx 逐行对齐。
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/wait.css'
@@ -11,6 +15,8 @@ import './styles/result-v3.css'
 import './styles/steps.css'
 import './styles/motion.css'
 import './styles/primitives.css'
+import './styles/fav.css'
+import './styles/service.css'
 
 import { RunResult } from './views/ResultView.tsx'
 import { WaitCard } from './blocks/WaitCard.tsx'

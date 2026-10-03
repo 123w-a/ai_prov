@@ -15,6 +15,15 @@
 import { useEffect, useState } from 'react'
 import { fetchFamily, fetchFridge } from '../../api/client.ts'
 
+/** 成员切换广播事件名（Shell 抽屉切换成功后发出，useHousehold({live:true}) 订阅）。 */
+const MEMBER_SWITCHED = 'member-switched'
+
+/** 切换成功的一方调用它通知全局重读档案；写路径的成败以后端返回值为准，
+ *  没成功不许广播——否则各处会重读到没变的档案，用户以为切换没生效。 */
+export function notifyMemberSwitched(): void {
+  window.dispatchEvent(new Event(MEMBER_SWITCHED))
+}
+
 export type FamilyData = Awaited<ReturnType<typeof fetchFamily>>
 
 /** 家庭档案里"已登记的事实"。
@@ -38,12 +47,21 @@ export function familyFacts(
   return { members, shared: dislikes.length > 0 ? `共同忌口 ${dislikes.join('、')}` : null }
 }
 
-/** 只读取一次的家庭档案 + 冰箱。任何一侧失败都退化成 null / 空数组，不抛错、不编造。 */
-export function useHousehold(): {
+/** 只读取一次的家庭档案 + 冰箱。任何一侧失败都退化成 null / 空数组，不抛错、不编造。
+ *
+ * `live`（2026-10-01 抽屉切片新增）：
+ *   · live=true（默认）——订阅成员切换广播。起手页用它：切换后「下一轮按谁推荐」
+ *     必须立刻显示新的 active 成员，否则两处显示打架。
+ *   · live=false（快照）——只读首载那一次。等待页用它：这一轮的档案在启动时
+ *     就定死了（lave 契约：进行中的轮绑定启动时的成员快照），
+ *     中途切换不该让正在等待的用户看到"它换人了"。
+ */
+export function useHousehold(opts?: { live?: boolean }): {
   family: FamilyData | null
   fridge: string[]
   activeName: string | null
 } {
+  const live = opts?.live ?? true
   const [family, setFamily] = useState<FamilyData | null>(null)
   const [fridge, setFridge] = useState<string[]>([])
 
@@ -63,6 +81,24 @@ export function useHousehold(): {
       alive = false
     }
   }, [])
+
+  // 成员切换的广播重读（只重读 family，冰箱与成员切换无关，不动它）。
+  useEffect(() => {
+    if (!live) return
+    let alive = true
+    const refetch = () => {
+      fetchFamily()
+        .then((f) => {
+          if (alive) setFamily(f)
+        })
+        .catch(() => {})
+    }
+    window.addEventListener(MEMBER_SWITCHED, refetch)
+    return () => {
+      alive = false
+      window.removeEventListener(MEMBER_SWITCHED, refetch)
+    }
+  }, [live])
 
   const activeName = family?.members.find((m) => m.id === family.active_id)?.name ?? null
   return { family, fridge, activeName }
