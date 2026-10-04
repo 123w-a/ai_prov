@@ -98,6 +98,23 @@
   grid-column: 2;
   grid-row: 1;
   margin: 0;
+  /* 承载右上角的对位标记（见下面的 ::after）。 */
+  position: relative;
+}
+
+/* 对位标记：照片右上角一个 13px 的陶土色直角，与首屏书写面的四角裁切标记同族。
+ * 这是整个结果页唯一的照片、也是这一屏的主视觉，这枚标记让它看起来是
+ * 「被安放上去的图版」，而不是「被插进来的一张图」。1px、浅陶土，不发光不描粗。 */
+.dish-top .dish-figure::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 13px;
+  height: 13px;
+  border-top: 1px solid var(--accent-line);
+  border-right: 1px solid var(--accent-line);
+  pointer-events: none;
 }
 
 .dish-top .dish-hero {
@@ -113,6 +130,9 @@
   /* 设计稿的照片是圆角 + 柔和投影（用户已撤销"禁阴影/禁渐变"两条私设红线）。 */
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-paper);
+  /* 2026-10-04：加一根 1px 描边，把它从"一张图"定格成"一张图版"——
+   * 照片外缘与纸面之间不再靠投影虚接，有了确定的边。 */
+  border: 1px solid var(--surface-line);
 }
 
 /* 图注跟图左对齐：图不再居中，图注居中会跟照片脱开。 */
@@ -833,6 +853,8 @@
     grid-column: auto;
   }
 }
+
+
 
 
 
