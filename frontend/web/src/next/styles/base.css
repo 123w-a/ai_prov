@@ -52,6 +52,36 @@ body {
   padding: 40px 28px 96px;
   font-size: 16px;
   line-height: 1.7;
+  /* 承载整页四角裁切标记（见下面的 ::before）。 */
+  position: relative;
+}
+
+/* ── 整页四角裁切标记（2026-10-04）──────────────────────────────
+ * 语汇与首屏书写面、结果页照片上的标记同族，尺度放大到页面级：它把整页
+ * 框成一张开版图纸，是「整页只有文字」这个观感最便宜的解药。
+ *
+ * 定位用 calc(50% - 50vw ± 22px) 反推到**视口**边缘而不是内容列边缘——
+ * 预期图里这四个角落在视口四角，比 1010px 的内容列还外约 35px。
+ * top 取负值是为了盖过上方导航条（实测约 61px 高）：这是本页唯一依赖
+ * 外部高度的魔法数，导航高度一旦改动，这个 -39px 要跟着调。
+ * 纯伪元素，不进无障碍树、不占布局。 */
+.tn::before {
+  content: '';
+  position: absolute;
+  left: calc(50% - 50vw + 22px);
+  right: calc(50% - 50vw + 22px);
+  top: -39px;
+  bottom: 40px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line), var(--line)) left top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 1px 20px no-repeat;
 }
 
 /* ── 页头 ───────────────────────────────────────────── */
@@ -861,6 +891,7 @@ body {
 .shell-main {
   min-height: 55vh;
 }
+
 
 
 
