@@ -28,6 +28,12 @@ import { SafetyNotice } from './SafetyNotice.tsx'
 export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ source: string }> }) {
   return (
     <aside className="result-rail">
+      {/* 2026-10-04：这一层是「撑满」与「跟随」分开实现的产物。右栏外壳撑满整行
+          高度（并在左侧画出章节轨道），内部这一层才 sticky。原先只有一层、直接
+          sticky，页面长 1524px 而右栏内容只有 615px 时，首屏右侧下方就空掉一大片
+          ——用户说的「留白的地方太多了」有一半来自这里。装饰与定位全在 CSS，DOM
+          只多这一层。 */}
+      <div className="rail-stick">
       <Panel variant="filled">
         {isShown(vm.notice) && (
           <>
@@ -61,6 +67,9 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
           </>
         )}
       </Panel>
+      </div>
     </aside>
   )
 }
+
+

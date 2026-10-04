@@ -651,8 +651,46 @@
 .result-rail {
   grid-column: 2;
   grid-row: 1;
-  /* 常驻是这一版设计稿的全部意思所在。没有 sticky，它就只是一条
-   * 跟着滚走的侧栏，"一直在视野里"这件事根本不成立。 */
+  /* 「常驻」这件事仍然成立，但换了个实现（2026-10-04）：
+   * 这一栏本身撑满整行高度，改由内部的 .rail-stick 去 sticky。
+   *
+   * 原来直接给这一栏 sticky，代价是：结果页正文实测 1524px，而右栏内容只有
+   * 615px，"sticky"只保证它跟着滚，不保证页面上**有东西**——首屏右侧下方
+   * 于是空出一大片，用户说的「留白的地方太多了」有一半来自这里。
+   * 拆成两层之后：右栏从顶到底都在（还有一根章节轨道贯穿），内层照样跟随。 */
+  align-self: stretch;
+  position: relative;
+}
+
+/* 章节轨道：贯穿右栏全高的一根发丝竖线，配每 176px 一道的短刻度。
+ * 语汇取自图纸的标尺（与本轮首屏书写面的裁切标记同族），用页面既有的
+ * --line 与 --accent-line，不抢任何内容。纯伪元素，不进无障碍树。 */
+.result-rail::before {
+  content: '';
+  position: absolute;
+  left: -21px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.result-rail::after {
+  content: '';
+  position: absolute;
+  left: -24px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--accent-line) 0 1px,
+    transparent 1px 176px
+  );
+}
+
+/* 真正的「常驻」在这里：内容跟着视口走。 */
+.rail-stick {
   position: sticky;
   top: 24px;
 }
@@ -774,6 +812,14 @@
     padding-left: 0;
     border-left: none;
     margin-bottom: 34px;
+    /* 单列时右栏排在正文之上，贯穿轨道会变成一条贴着内容左缘的怪线。
+     * align-self 也复原：撑满是两栏并排时的用法。 */
+    align-self: auto;
+  }
+
+  .result-rail::before,
+  .result-rail::after {
+    display: none;
   }
 
   /* 宽屏落回单列时，理由重新和标签同排，用原来的两列结构。 */
@@ -787,4 +833,6 @@
     grid-column: auto;
   }
 }
+
+
 
