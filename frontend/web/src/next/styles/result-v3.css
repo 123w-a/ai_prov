@@ -632,6 +632,88 @@
   grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
   gap: 0 40px;
   align-items: start;
+  /* 承载左侧章节轨道（见 .chap-rail）：它 absolute 定位，不参与这两列栅格。 */
+  position: relative;
+}
+
+/* ── 页内章节轨道（2026-10-04 · 第 2 项）──────────────────────────────
+ * 落在结果页**左侧留白**里，不占内容列：内容列仍是 1010px，正文与右栏的
+ * 间距一个像素没动——「把页面撑宽」这条路早被实测否决过（多出来的宽度会
+ * 变成正文与右栏之间的中缝，比两侧留白更难受）。
+ *
+ * 分工：左轨道承担语义导航，右栏那条标尺继续承担测量语汇，两者不抢注意力。 */
+.chap-rail {
+  position: absolute;
+  /* 1366 视口的左侧留白是 178px（内容列 1010 居中）。这条轨道只用掉 94px：
+   * 从视口 84px 起，右缘正好贴住内容列的左边缘。 */
+  left: -122px;
+  top: 0;
+  bottom: 0;
+  width: 94px;
+}
+
+/* 竖线：贯穿整个结果页高度（跟随 absolute 容器的全高），像图纸的边尺。 */
+.chap-rail::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+/* 节点组跟随视口：滚到哪，章节列表都在视野里。 */
+.chap-rail ol {
+  position: sticky;
+  top: 128px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chap-rail a {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 0;
+  font-size: 12.5px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-decoration: none;
+}
+
+/* 空心点：底色取页面底，把竖线遮断，看上去是点「骑」在线上。 */
+.chap-rail a::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.chap-rail a:hover {
+  color: var(--ink-soft);
+}
+
+/* 当前章节：实心陶土点 + 正文墨色。 */
+.chap-rail a[aria-current='location'] {
+  color: var(--ink);
+}
+
+.chap-rail a[aria-current='location']::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 这三个（未来更多的）轨道元素是真实可聚焦链接，键盘焦点必须看得见。 */
+.chap-rail a:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .result-main {
@@ -842,6 +924,13 @@
     display: none;
   }
 
+  /* 单列时左侧留白没有了，轨道没有落脚处（会盖住正文或制造横向滚动）。
+   * lave 建议降级成顶部的横向章节条；本轮先按「不渲染」处理——
+   * 少一个导航比多一个遮挡正文的轨道好，横向条留到有真实窄屏设计稿时再做。 */
+  .chap-rail {
+    display: none;
+  }
+
   /* 宽屏落回单列时，理由重新和标签同排，用原来的两列结构。 */
   .result-rail .light {
     grid-template-columns: 52px minmax(0, 1fr);
@@ -853,6 +942,8 @@
     grid-column: auto;
   }
 }
+
+
 
 
 

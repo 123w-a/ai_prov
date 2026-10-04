@@ -11,6 +11,7 @@ import { cleanOpening, guardText, sameSource } from '../data/clean.ts'
 import type { GuardVM, LightVM, ResultVM } from '../data/viewModel.ts'
 import { SafetyNotice } from '../blocks/SafetyNotice.tsx'
 import { SideRail } from '../blocks/SideRail.tsx'
+import { ChapterRail } from '../blocks/ChapterRail.tsx'
 import { ChefTip } from '../blocks/ChefTip.tsx'
 import { Steps } from '../blocks/Steps.tsx'
 import { Sources } from '../blocks/Sources.tsx'
@@ -116,18 +117,29 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
 
   return (
     <div className="result-body">
+      {/* 页内章节轨道（第 2 项）。真实章节少于两个时它自己返回 null，
+          所以这里不做条件渲染——判据属于那个组件。 */}
+      <ChapterRail />
+
       {isShown(vm.rail) && <SideRail vm={vm} sources={sources} />}
 
       <div className="result-main">
       {/* ── 首屏 ────────────────────────────────────────────────────── */}
 
-      <DishHero vm={vm} />
+      {/* 下面四个 id 是章节轨道的锚点。包一层不带样式的 div 只为挂 id：
+          本文件里不存在 `.result-main > X` 这类直接子选择器（已核），
+          子元素各自的 margin 也不受影响，所以布局一个像素没动。 */}
+      <div id="sec-dish"><DishHero vm={vm} /></div>
 
       {/* 红/黄判据已移到常驻右栏（见上方 .result-rail）。它们**没有降级**：
           仍然在首屏、仍然绝不默认折叠，只是从"读到这里才看见"变成"一直看得见"。
           这正是设计稿第一版解决的问题。 */}
 
-      {isShown(vm.chefTip) && <ChefTip tip={vm.chefTip.data} />}
+      {isShown(vm.chefTip) && (
+        <div id="sec-focus">
+          <ChefTip tip={vm.chefTip.data} />
+        </div>
+      )}
 
       {/* 家人两列：只在真有数据时出现，不套盒子。 */}
       {isShown(vm.members) && <Members vm={vm.members.data} />}
@@ -136,11 +148,17 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
 
       {/* 营养判据已移到常驻右栏。 */}
 
-      {isShown(vm.steps) && <Steps steps={vm.steps.data} seasonings={vm.seasonings} />}
+      {isShown(vm.steps) && (
+        <div id="sec-steps">
+          <Steps steps={vm.steps.data} seasonings={vm.seasonings} />
+        </div>
+      )}
 
       {/* ── 折叠 ────────────────────────────────────────────────────── */}
 
-      <OpeningFold opening={isShown(vm.opening) ? vm.opening.data : ''} body={body} />
+      <div id="sec-fold">
+        <OpeningFold opening={isShown(vm.opening) ? vm.opening.data : ''} body={body} />
+      </div>
 
       {isShown(vm.rest) && <ExtraRecipes recipes={vm.rest.data} />}
 
@@ -349,6 +367,11 @@ export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void
     </section>
   )
 }
+
+
+
+
+
 
 
 
