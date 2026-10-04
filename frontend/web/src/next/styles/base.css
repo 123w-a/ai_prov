@@ -160,6 +160,12 @@ body {
   .ask-layout {
     display: block;
   }
+
+  /* 单列时主卡不再被右栏撑高，书写面回到内容自身高度；160px 的下限
+   * 在手机上会占掉半屏，这里降到 120px。 */
+  .ask-input {
+    min-height: 120px;
+  }
 }
 
 .ask-lead {
@@ -190,8 +196,17 @@ body {
   color: var(--accent);
 }
 
+/* 主卡内部的空白怎么处理（2026-10-04，lave 商讨后的裁决）：
+ * 用户原话「想吃什么下面那里太空了」。两个方向——甲：把空白转成可用的
+ * 输入面；乙：解耦两栏高度、让主卡回到内容自身高度。**选甲**。理由是乙
+ * 会把空白推到卡片外，而那正是上一轮已经被否决过的「卡片外 400px 空地」，
+ * 走回去等于退回原地。
+ * 做法：让 .ask 吃掉主卡的剩余高度，书写面本身就是这块空间。 */
 .ask {
-  display: block;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .ask-label {
@@ -210,6 +225,16 @@ body {
  * 靠明度差而不是描边粗细区分层级。 */
 .ask-input {
   width: 100%;
+  /* 书写面撑满 .ask 的剩余高度；160px 是下限，保证窄屏下它也是一块
+   * 能写三四行的面，而不是一条窄缝。 */
+  flex: 1;
+  min-height: 160px;
+  /* 上限 260px（约八行）。lave 原方案是 flex:1 一路撑满，实测 1366 下它
+   * 会长到 326px——按「一句话就够」的产品语气，那个框已经大得在邀请写作文。
+   * 加上限之后余下的空间由 margin-top:auto 吃掉，落在「你想吃什么」与
+   * 书写面之间当呼吸，而不是像改版前那样在动作行上方空出一大块。 */
+  max-height: 260px;
+  margin-top: auto;
   border: 1px solid var(--surface-line);
   border-radius: var(--radius);
   background: var(--surface-2);
@@ -236,16 +261,17 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-/* ── 操作行（2026-10-01 解冻）──────────────────────────────
- * margin-top:auto 把它推到卡片底部——主区现在是 flex column，
- * 于是"标题在顶、操作在底"形成明确的动线，中间留白是**这张卡片的
- * 纵深**，不再是页面没填满的空地。 */
+/* ── 操作行（2026-10-01 解冻 → 2026-10-04 改版）────────────────
+ * 解冻那一版用 margin-top:auto 把它推到卡片底部（"标题在顶、操作在底"），
+ * 中间留白当作卡片纵深。实测右栏比主卡高得多，那块"纵深"变成约 250px
+ * 空白，用户直接指出「想吃什么下面那里太空了」。
+ * 现在空白由书写面吃掉，动作行改为固定 24px 紧跟其后。 */
 .ask-actions {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin-top: auto;
-  padding-top: var(--s4);
+  margin-top: var(--s3);
+  flex: none;
 }
 
 .ask-hint {
@@ -789,6 +815,11 @@ body {
 .shell-main {
   min-height: 55vh;
 }
+
+
+
+
+
 
 
 

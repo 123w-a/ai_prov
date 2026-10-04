@@ -189,7 +189,7 @@
   --bg-hi: #fffdf8;
   --bg-lo: #f0eae0;
   --bg-deep: #ede5d9;
-  --grid-line: rgba(61, 42, 24, 0.055);
+  --grid-line: rgba(61, 42, 24, 0.035);
   --grid-size: 56px;
   --grid:
     repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size)),
