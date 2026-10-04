@@ -43,7 +43,14 @@
  *   .dish-name（40px 菜名）与 .step-no（大号陶土步骤号）保持 800，
  *   它们各自是全页唯一的重音，是有意为之而非随手写重。
  * 于是全页实际三档：400 正文 / 600 标签与标题 / 800 两处重音。
- * 放在 v3 结果页块末尾，靠层叠顺序覆盖上面的定义（同特异性，后来者胜）。 */
+ * 放在 v3 结果页块末尾，靠层叠顺序覆盖上面的定义（同特异性，后来者胜）。
+ *
+ * **衬线元素不进这份名单**（2026-10-04）：本名单的隐含前提是这些元素都是
+ * 无衬线族——只有系统无衬线才真有 600 这一档。衬线族（Windows 上的 SimSun）
+ * 只有 400，给它 600 会触发浏览器**合成粗体**：同一套字形向右下偏移重绘一遍，
+ * 边缘发虚、笔画糊在一起，比不加粗更难看。
+ * .wait-req 与 .wait-req b 已改走衬线（与首屏 .ask-lead、结果页 .dish-name
+ * 同族），故从名单移除；它的加粗由 0.5px stroke 承担。 */
 .focus-title,
 .member-name,
 .section-title,
@@ -54,8 +61,6 @@
 .fold-heading,
 .recipe-extra h3,
 .wait-fact-label,
-.wait-req,
-.wait-req b,
 .prose-empty,
 .fold-count {
   font-weight: 600;
@@ -158,6 +163,7 @@
     transition-duration: 0.01ms !important;
   }
 }
+
 
 
 

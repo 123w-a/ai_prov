@@ -47,14 +47,25 @@
 
 .wait-req {
   margin: 0;
+  /* 字体四件套与首屏 .ask-lead、结果页 .dish-name 逐字对齐（2026-10-04）：
+   * 等待页主标题此前是 26px/600 无衬线，是三页主标题里唯一漏掉这次统一的，
+   * 换页时字体族会跳一次。
+   * 字重必须 400、不能沿用 600：Windows 上 SimSun 只有 400 一档，给 600 会
+   * 触发**合成粗体**（同套字形向右下偏移重绘，发虚糊边）；加粗改由
+   * 0.5px stroke 承担，font-synthesis:none 是它的前提。 */
+  font-family: var(--serif);
   font-size: 26px;
-  font-weight: 600;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.5px currentColor;
   line-height: 1.35;
   letter-spacing: 0.01em;
 }
 
 .wait-req b {
-  font-weight: 600;
+  /* 同样不能用 600：衬线族只有 400 一档，600 会触发合成粗体。
+   * 强调改由颜色承担——accent-ink 本来就够。 */
+  font-weight: 400;
   color: var(--accent-ink);
 }
 
@@ -395,3 +406,4 @@
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
+
