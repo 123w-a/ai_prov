@@ -26,7 +26,8 @@ export function DishHero({ vm }: { vm: ResultVM }) {
 
       <header className="dish-hero">
         <h1 className="dish-name">{vm.lead?.name ?? '今晚这一顿'}</h1>
-        {isShown(vm.echo) && <p className="dish-echo">按你「{vm.echo.data}」来配</p>}
+        {/* 原话不再在这里回声。它已经升格成页首那个 AskEcho 框（第 4 项）：
+            同一个要求在一屏里说两遍，第二遍只会显得像系统在自我解释。 */}
         <div className="dish-metrics">
           {isShown(vm.difficulty) && (
             <Metric icon="hat" label="难度">

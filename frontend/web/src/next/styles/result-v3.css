@@ -142,7 +142,6 @@
 
 /* 首屏文字左对齐——居中文字在窄栏里会失去阅读方向，读起来像海报。 */
 .dish-top .dish-name,
-.dish-top .dish-echo,
 .dish-top .dish-intro {
   text-align: left;
 }
@@ -215,10 +214,6 @@
 
 .dish-top .dish-name {
   animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.07s;
-}
-
-.dish-top .dish-echo {
-  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both 0.13s;
 }
 
 .dish-top .dish-metrics {
@@ -295,15 +290,9 @@
   text-align: center;
 }
 
-/* 回声：把用户自己的原话引回来。没有这一行，这页就跟"今晚"没关系，
-   读起来像是系统随便生成的一篇文档——那正是第二版被否决的根因。 */
-.dish-echo {
-  margin: 0 0 14px;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--ink-soft);
-  text-align: center;
-}
+/* ── 顶部需求回显框 .ask-echo 已移到 styles/echo.css（2026-10-04）──────
+ * 本文件加到 1003 行、破了 check-layers 的 1000 行上限。
+ * 拆出去的那块与书写面 .ask-field 是同一句话的两个形态，本就该在一起。 */
 
 /* 指标一行：三项之间只用一根发丝竖线，字号压到最小，整体不抢视线。 */
 .dish-metrics {
@@ -942,6 +931,9 @@
     grid-column: auto;
   }
 }
+
+
+
 
 
 

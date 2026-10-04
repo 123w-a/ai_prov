@@ -337,6 +337,72 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
+/* ── 顶部需求回显框（2026-10-04 · 第 4 项）──────────────────────────
+ * 它和上面的 .ask-field 是**同一句话的两个形态**：写下来的那次，和结果页
+ * 回显的那次。所以放在同一个文件里、紧挨着——这两条规则必须一起改。
+ *
+ * 原话原来只是菜名下的一行小注脚（原 `.dish-echo`），现在升格成页首一个框，
+ * 并标上记录时刻：一轮结果可能几小时后被重新打开，没有时刻就分不清
+ * 这是刚点的还是昨天的。
+ *
+ * 角标沿用书写面那套四角裁切标记：同一句话从写下来到结果页一路带着
+ * 同一个记号，用户认得出"这是我说的"。
+ *
+ * 它在 .result-body 之前，所以是**通栏**的，不参与下方正文与右栏的两列栅格，
+ * 也不影响左侧章节轨道的定位基准。 */
+.ask-echo {
+  position: relative;
+  margin: 0 0 var(--s4);
+  padding: 15px 20px 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+
+/* 四角裁切标记：8 层渐变各画一段线（四角 × 横竖各 11px）。
+ * inset -5px 让标记落在边框外面，与书写面同一种"打样对位"的手感。 */
+.ask-echo::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  top: -5px;
+  bottom: -5px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 0 / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 0 / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 0 / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 0 / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 100% / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 100% / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 100% / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 100% / 1px 11px no-repeat;
+}
+
+/* 原话用衬线体**照录**：这是用户本人的字，给它和标题同一套待遇。
+ * 不设行数上限、不加省略号——原话被截断就等于把"他说了什么"换成
+ * "系统认为他说了什么"。 */
+.ask-echo-text {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 16.5px;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.35px currentColor;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+/* 记录时刻：等宽数字小字。它是账目不是装饰，所以走 faint。 */
+.ask-echo-stamp {
+  margin: 9px 0 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
 /* ── 操作行（2026-10-01 解冻 → 2026-10-04 改版）────────────────
  * 解冻那一版用 margin-top:auto 把它推到卡片底部（"标题在顶、操作在底"），
  * 中间留白当作卡片纵深。实测右栏比主卡高得多，那块"纵深"变成约 250px

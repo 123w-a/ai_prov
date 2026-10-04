@@ -207,7 +207,9 @@ export default function TonightApp() {
     abortRef.current = ac
 
     startedAt.current = Date.now()
-    setRun({ ...EMPTY_RUN, status: 'running', request: message })
+    // askedAt 用 startedAt.current（不是再读一次钟）：它就摆在上一行，
+    // 两处各读一次 Date.now() 会让"发送时刻"和"计时起点"差出几毫秒。
+    setRun({ ...EMPTY_RUN, status: 'running', request: message, askedAt: startedAt.current })
 
     let sawFinish = false
     let answer: ChefAnswer | null = null

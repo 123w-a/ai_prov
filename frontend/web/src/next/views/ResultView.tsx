@@ -12,6 +12,7 @@ import type { GuardVM, LightVM, ResultVM } from '../data/viewModel.ts'
 import { SafetyNotice } from '../blocks/SafetyNotice.tsx'
 import { SideRail } from '../blocks/SideRail.tsx'
 import { ChapterRail } from '../blocks/ChapterRail.tsx'
+import { AskEcho } from '../blocks/AskEcho.tsx'
 import { ChefTip } from '../blocks/ChefTip.tsx'
 import { Steps } from '../blocks/Steps.tsx'
 import { Sources } from '../blocks/Sources.tsx'
@@ -211,7 +212,8 @@ function ProseResult({ body, request, reds, guards }: {
 
       <header className="dish-hero">
         {isShown(vm.heading) && <h1 className="dish-name">{vm.heading.data}</h1>}
-        {isShown(vm.echo) && <p className="dish-echo">按你「{vm.echo.data}」来配</p>}
+        {/* 回声已升格成页首的 AskEcho 框（第 4 项），这里不再重复一遍原话：
+            同一个要求在一屏里说两遍，第二遍只会像系统在自我解释。 */}
       </header>
 
       <Prose text={vm.text} />
@@ -246,6 +248,11 @@ export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void
         {/* 恢复态不是这一轮跑出来的「完成」，写「已完成」会让它冒充刚发生的事实。 */}
         <span className="result-tick">{run.restored ? '来自收藏' : '已完成'}</span>
       </header>
+
+      {/* 需求回显框（第 4 项）。它**不挂在 vm 上、也不跟着结果形态走**：
+          结构化与纯散文两条路径都要有，因为"你要求了什么"在两处同样成立。
+          原话为空（收藏没存下它）时组件自己返回 null——绝不拿正文反推一句。 */}
+      <AskEcho text={run.request} at={run.askedAt} />
 
       {vm ? (
         <StructuredResult vm={vm} body={run.body} />
@@ -368,6 +375,7 @@ export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void
     </section>
   )
 }
+
 
 
 

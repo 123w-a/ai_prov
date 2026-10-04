@@ -30,6 +30,9 @@ function run(over: Partial<RunState>): RunState {
     status: 'succeeded',
     elapsed: 84000,
     request: '今晚想吃鱼，清淡一点，别太油，两个人的分量',
+    // 需求回显框的记录时刻（第 4 项）。取「两小时前」而不是写死一个日期：
+    // 这样它稳定落在「今天」那一档读法上，明天跑也还是同一档断言。
+    askedAt: Date.now() - 2 * 60 * 60 * 1000,
     events: [],
     heartbeats: [],
     currentStage: null,

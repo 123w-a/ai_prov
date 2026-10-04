@@ -103,6 +103,16 @@ export interface RunState {
    * 读起来像系统随便生成的一篇文档。它必须来自用户本人，不许由正文反推。
    */
   request: string
+  /**
+   * 用户按下发送的时刻（epoch ms）。结果页用它标「记录于 今天 10:23」。
+   *
+   * 为什么必须单独存一个绝对时刻：elapsed 说的是"距发送过了多久"，它不锚定时间。
+   * 页面停留十分钟后 `Date.now() - elapsed` 已经不再是发送时刻了。
+   *
+   * 为什么允许 null：从后端会话或收藏恢复的那些轮，本地没有当时的钟点。
+   * 那时**不显示时间**（时间是事实，猜一个才是错的），但原话照旧显示。
+   */
+  askedAt?: number | null
   events: TraceEvent[]
   /** 每个心跳到达的时刻，用来判断连接是否可疑。它不再驱动任何动效。 */
   heartbeats: number[]
@@ -137,6 +147,7 @@ export const EMPTY_RUN: RunState = {
   status: 'idle',
   elapsed: 0,
   request: '',
+  askedAt: null,
   events: [],
   heartbeats: [],
   currentStage: null,
@@ -182,6 +193,30 @@ export function formatSpoken(ms: number): string {
 }
 
 /**
+ * 需求记录时刻的读法：「今天 10:23」/「昨天 21:05」/「10-03 08:12」。
+ *
+ * `now` 由调用方传入、不在这里读时钟：这样它是**纯函数**，node --test 能直接
+ * 喂跨天/跨月/跨年三种样本——这三种边界靠肉眼看页面是测不出来的。
+ *
+ * 只比到「日」一级，判据是**本地日历日相同**而不是"24 小时以内"：
+ * 凌晨 1 点看昨晚 23 点的记录，该说「昨天」而不是「今天」。
+ */
+export function formatStamp(ms: number, now: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+  const dayOf = (t: number) => {
+    const x = new Date(t)
+    return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`
+  }
+  const y = new Date(now)
+  y.setDate(y.getDate() - 1)
+  if (dayOf(ms) === dayOf(now)) return `今天 ${hm}`
+  if (dayOf(ms) === dayOf(y.getTime())) return `昨天 ${hm}`
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`
+}
+
+/**
  * 本轮已经进行了几轮。用真实出现过的 searching 次数计——这是唯一可数的循环证据。
  */
 export function rounds(run: RunState): number {
@@ -196,3 +231,6 @@ export function resultForm(answer: ChefAnswer | null): ResultForm {
   const recipes = answer?.recipes ?? []
   return recipes.length > 0 ? 'structured' : 'prose'
 }
+
+
+
