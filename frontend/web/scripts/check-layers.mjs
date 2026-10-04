@@ -25,6 +25,9 @@ const STYLE_ORDER = [
   './styles/wait.css',
   './styles/result-v1v2.css',
   './styles/result-v3.css',
+  // 营养数值表（第 5 项）：只定义 .nutri-* 新类名，插在 result-v3 之后不挪动已有层叠。
+  // 它没并进 result-v3.css 是因为那个文件实测 943 行，再追加就会越过 1000 行上限。
+  './styles/nutrition.css',
   './styles/steps.css',
   './styles/motion.css',
   './styles/primitives.css',

@@ -54,6 +54,14 @@ const TYPICAL: ChefAnswer = {
       intro: '三文鱼两面各煎一分半，外皮脆、里面还是嫩的；西兰花焯水后再用蒜末快炒，保持脆感。整道菜只用一口平底锅和一个汤锅。',
       difficulty: 3,
       nutrition: 4,
+      // 主食材与克数（第 5 项营养表的输入）。正文里的用量是散在步骤中的，
+      // 结构化阶段把它抽成这个列表——没有这个列表就没有那张六列的表。
+      ingredients: [
+        { name: '三文鱼', amount_g: 300 },
+        { name: '西兰花', amount_g: 200 },
+        { name: '大蒜', amount_g: 10 },
+        { name: '食用油', amount_g: 15 },
+      ],
       seasonings: [
         { name: '黑胡椒', amount: '适量' },
         { name: '大蒜', amount: '4 瓣' },
@@ -85,6 +93,29 @@ const TYPICAL: ChefAnswer = {
     { source: '香煎鱼类火候与去腥工艺研究.pdf', section: '煎制温度', category: '做法' },
     { source: '常见水产过敏原分布与交叉反应.pdf', category: '安全' },
   ],
+  // 这顿的营养数值表：后端按上面那份 ingredients 查国标《中国食物成分表》算出。
+  // 下面这些数字是脚本跑**后端同一个函数**得来的，不是手写的——所以夹具口径与线上一致。
+  nutrition_facts: {
+    status: 'complete',
+    nutrients: {
+      energy_kcal: { value: 636.5, status: 'known' },
+      protein_g: { value: 60.2, status: 'known' },
+      fat_g: { value: 39.6, status: 'known' },
+      carb_g: { value: 11.4, status: 'known' },
+      fiber_g: { value: 3.3, status: 'known' },
+      sodium_mg: { value: 230.2, status: 'known' },
+    },
+    ingredients: [
+      { name: '三文鱼', amount_g: 300, lookup_name: '三文鱼（鲑鱼）', status: 'covered' },
+      { name: '西兰花', amount_g: 200, lookup_name: '西兰花（绿菜花）', status: 'covered' },
+      { name: '大蒜', amount_g: 10, lookup_name: '大蒜（蒜头）', status: 'covered' },
+      { name: '食用油', amount_g: 15, lookup_name: '大豆油', status: 'covered' },
+    ],
+    basis: 'recipe_ingredient_amounts',
+    covered: ['三文鱼', '西兰花', '大蒜', '食用油'],
+    missing: [],
+    no_amount: [],
+  },
   health_lights: [
     { label: '钠', level: 'yellow', reason: '生抽带来额外钠，孕期建议控制在每餐 1 茶匙酱油以内。' },
     { label: '脂肪', level: 'green', reason: '三文鱼以不饱和脂肪为主，煎制用油 1 汤匙，总量在合理区间。' },
@@ -127,7 +158,50 @@ const FULL: ChefAnswer = {
   ],
 }
 
-/** 最薄形态：字段大面积缺失。降级路径全靠它验，否则"没有数据"会被画成空白。 */
+/** 缺口形态：算得出来，但少算了几样。
+ *
+ *  这一档最容易骗人——六个数字看着齐，其实有两样没进去（一样国标表没收录、
+ *  一样正文没写克数）。所以表头必须改口说「已覆盖食材小计」，并把缺口列出来。
+ *  夹具里必须有它：只验 complete 与 unavailable，恰好会漏掉最危险的那一档。 */
+const NUTRI_PARTIAL: ChefAnswer = {
+  ...TYPICAL,
+  recipes: [
+    {
+      ...TYPICAL.recipes[0],
+      ingredients: [
+        { name: '三文鱼', amount_g: 300 },
+        { name: '西兰花', amount_g: 200 },
+        { name: '牛油果', amount_g: 80 },   // 国标表未收录
+        { name: '大蒜', amount_g: null },   // 正文只写了「4 瓣」，没有克数
+      ],
+    },
+  ],
+  nutrition_facts: {
+    status: 'partial',
+    nutrients: {
+      energy_kcal: { value: 489, status: 'known' },
+      protein_g: { value: 59.8, status: 'known' },
+      fat_g: { value: 24.6, status: 'known' },
+      carb_g: { value: 8.6, status: 'known' },
+      fiber_g: { value: 3.2, status: 'known' },
+      sodium_mg: { value: 227.5, status: 'known' },
+    },
+    ingredients: [
+      { name: '三文鱼', amount_g: 300, lookup_name: '三文鱼（鲑鱼）', status: 'covered' },
+      { name: '西兰花', amount_g: 200, lookup_name: '西兰花（绿菜花）', status: 'covered' },
+      { name: '牛油果', amount_g: 80, lookup_name: null, status: 'missing' },
+      { name: '大蒜', amount_g: null, lookup_name: '大蒜（蒜头）', status: 'no_amount' },
+    ],
+    basis: 'recipe_ingredient_amounts',
+    covered: ['三文鱼', '西兰花'],
+    missing: ['牛油果'],
+    no_amount: ['大蒜'],
+  },
+}
+
+/** 最薄形态：字段大面积缺失。降级路径全靠它验，否则"没有数据"会被画成空白。
+ *  它特意**不给** nutrition_facts：这里要验的是「后端没这个字段 ⇒ 整块不渲染」，
+ *  而不是「渲染一张写着算不出来的表」——那是别的 case 的事。 */
 const THIN: ChefAnswer = {
   recipes: [
     {
@@ -352,7 +426,8 @@ export const CASES: Record<string, FixtureCase> = {
     }),
   },
   full: { kind: 'result', label: '满数据（含家人矩阵）', run: run({ answer: FULL, elapsed: 354700 }) },
-  thin: { kind: 'result', label: '缺字段（最薄）', run: run({ answer: THIN, elapsed: 52000 }) },
+  thin: { kind: 'result', label: '缺字段（最薄，无营养表）', run: run({ answer: THIN, elapsed: 52000 }) },
+  partial: { kind: 'result', label: '营养表·缺口（已覆盖小计）', run: run({ answer: NUTRI_PARTIAL, elapsed: 96000 }) },
   long: { kind: 'result', label: '长文本溢出压力', run: run({ answer: LONG }) },
   prose: { kind: 'result', label: '纯散文（13/35）', run: run({ answer: PROSE, elapsed: 111000 }) },
   empty: { kind: 'result', label: '空结构（整理失败）', run: run({ answer: EMPTY, elapsed: 47000 }) },
@@ -414,3 +489,7 @@ export const CASES: Record<string, FixtureCase> = {
 }
 
 export const CASE_IDS = Object.keys(CASES)
+
+
+
+

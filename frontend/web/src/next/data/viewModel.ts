@@ -28,6 +28,7 @@ import type {
   DishMatrixItem,
   GuardrailItem,
   HealthLight,
+  NutritionFacts,
   Recipe,
   Seasoning,
   SourceRef,
@@ -145,6 +146,91 @@ export interface MembersVM {
   showDish: boolean
 }
 
+/* ── 营养数值表 ───────────────────────────────────────────────────────── */
+
+/** 六项的显示名与单位。
+ *
+ *  顺序即页面列序，与后端 domain/dish_nutrition.NUTRIENT_FIELDS 一一对应。
+ *  为什么标签不放进后端契约：那是排版文案，不是数据。后端给数值和口径已经够，
+ *  把中文标签塞进契约只会让改一次文案要动两端。 */
+const NUTRIENT_ROWS: Array<{ key: string; label: string; unit: string }> = [
+  { key: 'energy_kcal', label: '能量', unit: '千卡' },
+  { key: 'protein_g', label: '蛋白质', unit: '克' },
+  { key: 'fat_g', label: '脂肪', unit: '克' },
+  { key: 'carb_g', label: '碳水化合物', unit: '克' },
+  { key: 'fiber_g', label: '膳食纤维', unit: '克' },
+  { key: 'sodium_mg', label: '钠', unit: '毫克' },
+]
+
+export interface NutrientRowVM {
+  key: string
+  label: string
+  unit: string
+  /** 已格式化；null = 这一项没查到（页面印「未收录」，绝不印 0） */
+  value: string | null
+}
+
+export interface NutritionVM {
+  status: NutritionFacts['status']
+  /** 表头右侧的口径说明 */
+  basis: string
+  /** 六行。unavailable 时是空数组——没有数值就没有列可排 */
+  rows: NutrientRowVM[]
+  /** 缺口说明，如「未收录：培根 · 缺克数：豆腐」；没有缺口时为空串 */
+  gaps: string
+  /** 没有数值时那句原因 */
+  empty: string
+}
+
+/** 整数不带小数点（后端 round(…,1) 会把 612 变成 612.0），小数保留一位。 */
+function fmtNutrient(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+/**
+ * 营养数值表的视图模型。
+ *
+ * 这块只有一个设计要点：**不完整时必须自己说出来**。后端已经分好 complete/partial/
+ * unavailable 三档，这里负责翻成人话——「已覆盖食材小计」和「未收录：培根」这类交代
+ * 一句都不能省，否则用户会把一个只算了半样的数字当成整顿的热量。
+ */
+export function buildNutritionVM(facts: NutritionFacts | null | undefined): NutritionVM | null {
+  if (!facts || !facts.status) return null
+
+  const cells = facts.nutrients ?? {}
+  const rows: NutrientRowVM[] = NUTRIENT_ROWS.map((r) => {
+    const cell = cells[r.key]
+    const v = cell?.value
+    const known = cell?.status === 'known' && typeof v === 'number' && Number.isFinite(v)
+    return { key: r.key, label: r.label, unit: r.unit, value: known ? fmtNutrient(v as number) : null }
+  })
+
+  const covered = facts.covered ?? []
+  const missing = (facts.missing ?? []).filter(Boolean)
+  const noAmount = (facts.no_amount ?? []).filter(Boolean)
+  const gaps = [
+    missing.length ? `未收录：${missing.join('、')}` : '',
+    noAmount.length ? `缺克数：${noAmount.join('、')}` : '',
+  ].filter(Boolean).join(' · ')
+
+  if (facts.status === 'unavailable') {
+    // 算不出也要说清是哪一种算不出：正文没给用量，还是食材没收录。
+    const why = !covered.length && (missing.length || noAmount.length)
+      ? gaps
+      : '这道菜没有给出食材用量'
+    return { status: 'unavailable', basis: '', rows: [], gaps, empty: `算不出营养数值：${why}` }
+  }
+
+  return {
+    status: facts.status,
+    // 不写「每份」：后端算的是菜谱给的整份用量，标「每份」会暗示还有几份没算。
+    basis: facts.status === 'partial' ? '按菜谱用量 · 已覆盖食材小计' : '按菜谱用量',
+    rows,
+    gaps,
+    empty: '',
+  }
+}
+
 export interface ResultVM {
   form: 'structured' | 'prose'
   isStructured: boolean
@@ -181,6 +267,13 @@ export interface ResultVM {
   notice: Display<null>
 
   members: Display<MembersVM>
+
+  /** 这顿的营养数值表。**没有这个字段就整块不渲染**（而不是渲染一张空表）；
+   *  有字段但算不出时照样渲染，因为「为什么算不出」本身就是要给用户看的信息。
+   *
+   *  字段名带 Facts 是为了和上面那个 `nutrition`（后端给的 1–5 档指标，渲染成「营养 适中」）
+   *  分开：两者一个来自后端字段、一个来自按用量算出的表，同名会让读代码的人以为是一件事。 */
+  nutritionFacts: Display<NutritionVM>
 
   /** 用时。正常结果来自状态机（不是后端响应），永远有值；
    *  **收藏恢复态传 null ⇒ 空串 ⇒ 首屏不渲染「用时」这一格**——
@@ -316,6 +409,7 @@ export function buildResultVM(
   const guardrails = guardrailsRaw.map((g) => toGuard(g, guardTextFn))
 
   const members = buildMembersVM(rows, adjustments)
+  const nutritionVM = buildNutritionVM(a?.nutrition_facts)
 
   return {
     form: 'structured',
@@ -356,6 +450,8 @@ export function buildResultVM(
       : hide<null>('empty', '既没有营养灯也没有护栏'),
 
     members: members ? show(members) : hide<MembersVM>('empty', '没有 dish_matrix 也没有 member_adjustments'),
+
+    nutritionFacts: nutritionVM ? show(nutritionVM) : hide<NutritionVM>('absent', '后端未给这顿的营养数值表'),
 
     elapsed: elapsed === null ? '' : formatSpoken(elapsed),
 
@@ -408,3 +504,10 @@ export function buildProseVM(body: string, request: string): ProseVM {
     chars: body.length,
   }
 }
+
+
+
+
+
+
+

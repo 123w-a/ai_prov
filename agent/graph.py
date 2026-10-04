@@ -39,9 +39,10 @@ from .turn_decision import (
 )
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from .chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
-from .schemas import DishMatrixItem, GuardrailItem  # 结构化输出的确定性注入字段
+from .schemas import DishMatrixItem, GuardrailItem, NutritionFacts  # 结构化输出的确定性注入字段
 #build_structured_answer标准链+parser检查出错误后再进行重试
 from domain.nutrition_rules import detect_conditions, audit, describe, RULES, conditions_from_profile  # L3 硬护栏：确定性健康禁忌审计
+from domain.dish_nutrition import compute_nutrition_facts  # 营养数值：查国标表确定性累加，不经模型
 from domain.allergen_rules import (  # 过敏原 L3 硬护栏：与慢病规则分开，避免改变既有慢病降级语义
     allergen_label,
     audit_allergen_advisories,
@@ -2337,6 +2338,14 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
     try:#结构化链带「格式自动重试」：解析失败会回灌 LLM 修正，重试耗尽才降级
         answer = build_structured_answer(context)#会返回一个实例
         answer = rank_recipes(answer, allow_multiple=allow_multiple)
+        # 营养数值在结构化的**后面**由 domain 层算出，不让模型碰数字（理由见 domain/dish_nutrition.py）。
+        # 顺序要紧：rank_recipes 之后 recipes[0] 才是最终主推的那道菜，这张表必须跟它对上。
+        # 模型没给出 ingredients（正文里没有用量清单）时这里得到 status=unavailable，
+        # 卡片照旧要能渲染出「算不出来」和原因——那不是异常路径，是常态之一。
+        if answer.recipes:
+            answer.nutrition_facts = NutritionFacts(
+                **compute_nutrition_facts(answer.recipes[0].ingredients)
+            )
         # 自然语言已通过一次审计，但结构化模型仍可能改写食材或调料。
         # 卡片输出前再审一次，命中过敏原时直接放弃卡片，保留已通过审计的正文。
         structured_text = "\n".join(

@@ -3,11 +3,20 @@ export interface Seasoning {
   amount: string
 }
 
+/** 主食材（带克数）。
+ *  与 seasonings 分开：调料是「一小勺」「一撮」，而营养数值只认克数。
+ *  amount_g 为 null 表示正文没给克数——前端不许按常识补一个，那正是这张表最容易骗人的地方。 */
+export interface Ingredient {
+  name: string
+  amount_g?: number | null
+}
+
 export interface Recipe {
   name: string
   intro: string
   difficulty: number
   nutrition: number
+  ingredients?: Ingredient[]
   seasonings: Seasoning[]
   steps: string[]
   image_url: string | null
@@ -19,6 +28,40 @@ export interface HealthLight {
   label: string
   level: 'green' | 'yellow' | 'red'
   reason?: string
+}
+
+/** 一项营养：值 + 它到底有没有值。
+ *  0 和「没有值」是两件事——0 克膳食纤维是一句结论，「未收录」只是一句实话。 */
+export interface NutrientValue {
+  value?: number | null
+  status: 'known' | 'unavailable'
+}
+
+/** 营养账目的一行：这样食材有没有被算进去，算的是国标表里哪一条。 */
+export interface NutritionIngredient {
+  name: string
+  amount_g?: number | null
+  /** 映射到的国标表条目名；未收录为 null。页面上可追溯"这个数字查的是哪一条" */
+  lookup_name?: string | null
+  status: 'covered' | 'missing' | 'no_amount'
+}
+
+/** 这顿的营养数值表。由后端按食材用量查国标表算出，**模型不填**。
+ *
+ *  status 三档是这块最要紧的诚实标注：
+ *    complete    全部食材已收录且都有克数
+ *    partial     算出了小计，但有食材未收录或缺克数 —— 页面必须说明这是「已覆盖食材的小计」
+ *    unavailable 一个都没算成（无食材 / 全未收录 / 全无克数）
+ */
+export interface NutritionFacts {
+  status: 'complete' | 'partial' | 'unavailable'
+  /** 键固定为 energy_kcal / protein_g / fat_g / carb_g / fiber_g / sodium_mg */
+  nutrients?: Record<string, NutrientValue>
+  ingredients?: NutritionIngredient[]
+  basis?: string
+  covered?: string[]
+  missing?: string[]
+  no_amount?: string[]
 }
 
 export interface SourceRef {
@@ -54,6 +97,8 @@ export interface ChefAnswer {
   sources?: SourceRef[]
   guardrails?: GuardrailItem[]
   health_lights?: HealthLight[]
+  /** 这顿的营养数值表（后端算，见 NutritionFacts 的三档状态） */
+  nutrition_facts?: NutritionFacts | null
   member_adjustments?: string[]
   dish_matrix?: DishMatrixItem[]
   /** 本轮主菜按哪位成员的健康约束求解（由后端在出卡时注入） */
@@ -239,3 +284,6 @@ export interface FamilyData {
   active_id: string
   members: FamilyMember[]
 }
+
+
+

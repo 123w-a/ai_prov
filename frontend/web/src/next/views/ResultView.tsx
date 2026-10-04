@@ -13,6 +13,7 @@ import { SafetyNotice } from '../blocks/SafetyNotice.tsx'
 import { SideRail } from '../blocks/SideRail.tsx'
 import { ChapterRail } from '../blocks/ChapterRail.tsx'
 import { AskEcho } from '../blocks/AskEcho.tsx'
+import { NutritionTable } from '../blocks/NutritionTable.tsx'
 import { ChefTip } from '../blocks/ChefTip.tsx'
 import { Steps } from '../blocks/Steps.tsx'
 import { Sources } from '../blocks/Sources.tsx'
@@ -132,6 +133,11 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
           本文件里不存在 `.result-main > X` 这类直接子选择器（已核），
           子元素各自的 margin 也不受影响，所以布局一个像素没动。 */}
       <div id="sec-dish"><DishHero vm={vm} /></div>
+
+      {/* 营养数值表（第 5 项）：通栏排在首屏两栏之下——它讲的是「这顿」，
+          不属于左图或右文任何一栏。没有 nutrition_facts 字段时组件自己返回 null，
+          所以这里不做条件渲染（判据属于那个组件）。 */}
+      <NutritionTable vm={vm} />
 
       {/* 红/黄判据已移到常驻右栏（见上方 .result-rail）。它们**没有降级**：
           仍然在首屏、仍然绝不默认折叠，只是从"读到这里才看见"变成"一直看得见"。
