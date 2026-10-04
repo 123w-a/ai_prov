@@ -231,6 +231,23 @@ export function buildNutritionVM(facts: NutritionFacts | null | undefined): Nutr
   }
 }
 
+/** 口味标签：去空白、去重、最多 4 个。
+ *
+ *  为什么限 4 个：这一行是紧挨菜名的短标签，多了会把菜名挤到换行去——
+ *  标签是给菜名做注脚的，不是反过来。 */
+function cleanTags(tags: string[] | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of tags ?? []) {
+    const t = (raw ?? '').trim()
+    if (!t || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+    if (out.length === 4) break
+  }
+  return out
+}
+
 export interface ResultVM {
   form: 'structured' | 'prose'
   isStructured: boolean
@@ -239,6 +256,9 @@ export interface ResultVM {
   echo: Display<string>
 
   lead: Recipe | undefined
+  /** 菜名旁的口味标签（清淡 / 开胃 / 家常）。
+   *  由整理阶段从正文已有的说法里提取——正文没说就整行不渲染，前端不按菜名猜一个。 */
+  dishTags: Display<string[]>
   /** 顶层配图说明。菜品级那个实测 20/23 是空或字面量 "None"（usableNote 负责判）。 */
   imageNote: string | undefined
   rest: Display<Recipe[]>
@@ -422,6 +442,7 @@ export function buildResultVM(
     echo: text(echo, '没有可回声的用户原话'),
 
     lead,
+    dishTags: list(cleanTags(lead?.flavor_tags), '这道菜没有口味标签'),
     imageNote: a?.image_note,
     rest: list(recipes.slice(1), '只有一道菜'),
     // 传**原始值**（不预先 ?? []），否则"后端没给"会被压成"给了空数组"，五态就白判了。
@@ -504,6 +525,9 @@ export function buildProseVM(body: string, request: string): ProseVM {
     chars: body.length,
   }
 }
+
+
+
 
 
 

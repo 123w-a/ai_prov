@@ -52,6 +52,9 @@ const TYPICAL: ChefAnswer = {
     {
       name: '香煎三文鱼配蒜香西兰花',
       intro: '三文鱼两面各煎一分半，外皮脆、里面还是嫩的；西兰花焯水后再用蒜末快炒，保持脆感。整道菜只用一口平底锅和一个汤锅。',
+      // 口味标签（第 6 项）：正文里确实说了「清爽」「不重油」「配蒜提味」，
+      // 这三个词是从那些说法里提的，不是凭空贴的。
+      flavor_tags: ['清淡', '蒜香', '家常'],
       difficulty: 3,
       nutrition: 4,
       // 主食材与克数（第 5 项营养表的输入）。正文里的用量是散在步骤中的，
@@ -489,6 +492,7 @@ export const CASES: Record<string, FixtureCase> = {
 }
 
 export const CASE_IDS = Object.keys(CASES)
+
 
 
 

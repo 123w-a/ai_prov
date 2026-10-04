@@ -17,6 +17,10 @@ export interface Recipe {
   difficulty: number
   nutrition: number
   ingredients?: Ingredient[]
+  /** 口味风格标签（清淡 / 开胃 / 家常…）。
+   *  由整理阶段从正文已有的说法里提取；正文没说就是空数组——
+   *  前端不许自己按菜名猜一个，那是贴标签不是提取。 */
+  flavor_tags?: string[]
   seasonings: Seasoning[]
   steps: string[]
   image_url: string | null
@@ -284,6 +288,7 @@ export interface FamilyData {
   active_id: string
   members: FamilyMember[]
 }
+
 
 
 

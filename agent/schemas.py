@@ -41,6 +41,10 @@ class Recipe(BaseModel):#菜谱结构
         default_factory=list,
         description="主食材与克数（营养数值表的输入；正文没给用量就留空）",
     )
+    flavor_tags: list[str] = Field(
+        default_factory=list,
+        description="口味风格标签 2-4 个（如 清淡/开胃/家常），只能取自正文已有的说法",
+    )
     seasonings: list[Seasoning] = Field(#列表元素类型 Seasoning，列表中嵌套列表
         default_factory=list,
         description="调料清单"#不同材料的描述
@@ -196,3 +200,4 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
         default_factory=list,
         description="菜品与成员的可用性矩阵",
     )
+

@@ -290,9 +290,56 @@
   text-align: center;
 }
 
-/* ── 顶部需求回显框 .ask-echo 已移到 styles/echo.css（2026-10-04）──────
+/* ── 菜名旁的口味标签（第 6 项）──────────────────────────────────────────
+
+   形态照用户裁定的预期图：紧挨菜名右侧的小圆角药丸。
+   为什么是药丸而不是下划线或方角：菜名本身是 40px 衬线大字，标签必须一眼看出
+   是「另一个层级的东西」；圆角是这一页已有的区分手段（原语层 .p-pill 同源）。
+   底色取 --surface-2、描边取 --line，**不填强调色**——标签是菜名的注脚，
+   一旦用上 --accent，它就会显得比菜名更像结论。
+
+   这一行整块由 vm.dishTags 决定渲染与否：后端没提取到风格时它就不存在。
+   这里不做「兜底标签」——兜底出来的标签等于替这道菜编了一个它没有的性格。 */
+.dish-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+
+/* 进了 flex 行之后，菜名自己的底边距改由 .dish-title 统一承担，
+   否则它会把标签往右下推。本规则写在 .dish-name 之后，能盖住前面那些
+   `.dish-top .dish-name` 的同权重规则。 */
+.dish-title .dish-name {
+  margin: 0;
+}
+
+.dish-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dish-tag {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ── 顶部需求回显框 .ask-echo 已移到 styles/base.css（2026-10-04）──────
  * 本文件加到 1003 行、破了 check-layers 的 1000 行上限。
- * 拆出去的那块与书写面 .ask-field 是同一句话的两个形态，本就该在一起。 */
+ * 搬去 base.css 而不是新起一片：echo 与书写面 .ask-field 是同一句话的两个形态，
+ * 本就该在一起，而 base.css 当时还有余量。 */
 
 /* 指标一行：三项之间只用一根发丝竖线，字号压到最小，整体不抢视线。 */
 .dish-metrics {
@@ -931,6 +978,7 @@
     grid-column: auto;
   }
 }
+
 
 
 

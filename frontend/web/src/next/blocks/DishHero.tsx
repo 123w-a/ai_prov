@@ -25,7 +25,21 @@ export function DishHero({ vm }: { vm: ResultVM }) {
       {vm.lead && <DishFigure recipe={vm.lead} note={vm.imageNote} />}
 
       <header className="dish-hero">
-        <h1 className="dish-name">{vm.lead?.name ?? '今晚这一顿'}</h1>
+        <div className="dish-title">
+          <h1 className="dish-name">{vm.lead?.name ?? '今晚这一顿'}</h1>
+          {/* 口味标签（第 6 项）：紧挨菜名右侧。
+              数据来自整理阶段对正文的提取，不是前端按菜名猜的——正文没说风格时整行不渲染，
+              所以这里不做"兜底标签"。 */}
+          {isShown(vm.dishTags) && (
+            <ul className="dish-tags">
+              {vm.dishTags.data.map((tag) => (
+                <li key={tag} className="dish-tag">
+                  {tag}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {/* 原话不再在这里回声。它已经升格成页首那个 AskEcho 框（第 4 项）：
             同一个要求在一屏里说两遍，第二遍只会显得像系统在自我解释。 */}
         <div className="dish-metrics">
@@ -113,3 +127,4 @@ function Metric({ icon, label, children }: { icon: IconName; label: string; chil
     </span>
   )
 }
+

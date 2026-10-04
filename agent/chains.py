@@ -72,6 +72,10 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
         "可以折算成克，但折算依据必须是正文自己给的量）。正文没给克数的食材，amount_g 填 null；"
         "正文没给主食材清单时 ingredients 留空列表。**禁止按常识、经验或菜谱惯例补一个克数或补一样食材**——"
         "这一步只做提取，算不出数值比写一个像模像样的错数字好。seasonings 仍然只放调料，两者不要混。\n"
+        "9.2 flavor_tags：从正文**已有的说法**里提取这道菜的口味风格标签 2-4 个"
+        "（如「清淡」「开胃」「家常」「下饭」），每个不超过 4 个字。只准用正文实际出现过的意思，"
+        "正文没说就不要硬凑；营养/健康类标签属于 health_lights，菜名本身也不要点名。"
+        "提取不到就留空列表——宁可这一栏不显示，也不要给它贴一个正文没说的风格。\n"
         "10. 场景化：本结构化整理只服务居家做菜/索要菜谱/烹饪做法；"
         "外出就餐、具体餐厅、食堂、外卖、点餐场景禁止整理成 recipes，必须交由上游纯文本回答承载。\n"
         "11. chef_tip 必须是具体可执行的管家讲解，写 2-4 句：先说明为什么推荐这道菜，"
@@ -170,3 +174,4 @@ def rank_recipes(answer: ChefAnswer, allow_multiple: bool = False) -> ChefAnswer
     if not allow_multiple:
         answer.recipes = answer.recipes[:1]
     return answer
+
