@@ -1,4 +1,5 @@
 import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
+import { Icon } from '../ui/Icon.tsx'
 import { WeekBlock } from './WeekBlock.tsx'
 
 /**
@@ -65,7 +66,7 @@ function CandidateBlock({
 function FamilyBlock({ fam }: { fam: { members: FamilyMemberRow[]; shared: string[] } }) {
   return (
     <section className="fs-block" data-block="family">
-      <h3 className="fs-title">按谁的档案来定</h3>
+      <h3 className="fs-title"><Icon name="people" />按谁的档案来定</h3>
       <dl className="fs-dl">
         {fam.members.map((m) => (
           <div key={m.id} className={`fs-mrow${m.isActive ? ' is-active' : ''}`}>
@@ -95,7 +96,7 @@ function FamilyBlock({ fam }: { fam: { members: FamilyMemberRow[]; shared: strin
 function FridgeBlock({ fridge }: { fridge: { count: number; names: string } }) {
   return (
     <section className="fs-block" data-block="fridge">
-      <h3 className="fs-title">冰箱</h3>
+      <h3 className="fs-title"><Icon name="fridge" />冰箱</h3>
       <p className="fs-weekhead">
         <b className="fs-count">{fridge.count}</b>
         <span className="fs-unit">样</span>
@@ -104,3 +105,6 @@ function FridgeBlock({ fridge }: { fridge: { count: number; names: string } }) {
     </section>
   )
 }
+
+
+

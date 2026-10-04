@@ -17,6 +17,7 @@ import { Steps } from '../blocks/Steps.tsx'
 import { Sources } from '../blocks/Sources.tsx'
 import { ExtraRecipes } from '../blocks/ExtraRecipes.tsx'
 import { Fold } from '../ui/Fold.tsx'
+import { Icon } from '../ui/Icon.tsx'
 import { DishHero } from '../blocks/DishHero.tsx'
 import { Members } from '../blocks/Members.tsx'
 import { buildProseVM, buildResultVM, isShown } from '../data/viewModel.ts'
@@ -330,7 +331,7 @@ export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void
                 disabled={actions.busy || actions.loading}
                 onClick={() => void actions.toggleStar()}
               >
-                {actions.starred ? '✓ 已收藏' : '★ 收藏'}
+                <Icon name="star" />{actions.starred ? '已收藏' : '收藏'}
               </button>
               <button
                 className="fv-btn"

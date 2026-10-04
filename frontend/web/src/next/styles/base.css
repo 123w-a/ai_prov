@@ -551,6 +551,22 @@ body {
   color: var(--ink);
 }
 
+/* 标题与动作按钮里的图标（2026-10-04 · 第 3 项）。
+ * 图标本身是 1em 见方，但直接 baseline 对齐会看着偏高，所以往下压 0.1em；
+ * 右边距 7px 与这些标题原有的字距相配。颜色不在这里定——一律继承所在容器，
+ * 这样收藏按钮的激活态（改色）不用再写一条图标规则。 */
+.fs-title .icon,
+.rail-title .icon,
+.wait-fact-label .icon {
+  margin-right: 7px;
+  vertical-align: -0.1em;
+}
+
+.fv-btn .icon {
+  margin-right: 5px;
+  vertical-align: -0.1em;
+}
+
 /* B1 的原话沉底单列：这条事项里唯一带时效性的信息，要能一眼读到原文。 */
 .fs-quote {
   margin: 0;
@@ -891,6 +907,7 @@ body {
 .shell-main {
   min-height: 55vh;
 }
+
 
 
 

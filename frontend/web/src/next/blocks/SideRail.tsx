@@ -1,5 +1,6 @@
 import { srcTitle } from '../data/clean.ts'
 import { isShown, type ResultVM } from '../data/viewModel.ts'
+import { Icon } from '../ui/Icon.tsx'
 import { Panel } from '../ui/Panel.tsx'
 import { SafetyNotice } from './SafetyNotice.tsx'
 
@@ -37,7 +38,7 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
       <Panel variant="filled">
         {isShown(vm.notice) && (
           <>
-            <h2 className="rail-title">这顿要注意的</h2>
+            <h2 className="rail-title"><Icon name="alert" />这顿要注意的</h2>
             <ul className="lights">
               {/* 护栏排在最前（2026-09-26 修正）。
                   原来它写在营养灯**之后**，直接违反红线——安全项必须最先被看见。
@@ -56,7 +57,7 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
 
         {sources.length > 0 && (
           <>
-            <h2 className="rail-title">本轮依据</h2>
+            <h2 className="rail-title"><Icon name="doc" />本轮依据</h2>
             <ul className="rail-sources">
               {sources.map((s, i) => (
                 <li key={i}>
@@ -71,5 +72,8 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
     </aside>
   )
 }
+
+
+
 
 

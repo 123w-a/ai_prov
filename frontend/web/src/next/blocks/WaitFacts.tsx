@@ -1,4 +1,5 @@
 import { Panel } from '../ui/Panel.tsx'
+import { Icon } from '../ui/Icon.tsx'
 import type { familyFacts } from '../data/household.ts'
 
 type Facts = ReturnType<typeof familyFacts>
@@ -18,7 +19,7 @@ export function WaitFacts({ facts, fridge }: { facts: Facts | null; fridge: stri
       <Panel variant="outline">
         {fridge.length > 0 && (
           <section className="wait-fact">
-            <h3 className="wait-fact-label">冰箱现有</h3>
+            <h3 className="wait-fact-label"><Icon name="fridge" />冰箱现有</h3>
             <ul className="wait-chips">
               {fridge.map((item) => (
                 <li key={item}>{item}</li>

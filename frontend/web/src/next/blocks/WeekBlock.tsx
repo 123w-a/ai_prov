@@ -1,4 +1,5 @@
 import { rangeLabel, trendLabel, type WeekView } from '../data/firstScreen.ts'
+import { Icon } from '../ui/Icon.tsx'
 
 /**
  * B3 本周（首屏四块里的强度二块 · 契约 v2.1 §1）。
@@ -22,14 +23,14 @@ export function WeekBlock({ week }: { week: WeekView }) {
   if (week.isEmpty) {
     return (
       <section className="fs-block" data-block="week">
-        <h3 className="fs-title">本周</h3>
+        <h3 className="fs-title"><Icon name="calendar" />本周</h3>
         <p className="fs-note">{week.message}</p>
       </section>
     )
   }
   return (
     <section className="fs-block" data-block="week">
-      <h3 className="fs-title">本周</h3>
+      <h3 className="fs-title"><Icon name="calendar" />本周</h3>
       <p className="fs-weekhead">
         <b className="fs-count">{week.meals}</b>
         <span className="fs-unit">餐</span>
