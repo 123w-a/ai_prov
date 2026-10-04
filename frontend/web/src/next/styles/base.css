@@ -161,10 +161,10 @@ body {
     display: block;
   }
 
-  /* 单列时主卡不再被右栏撑高，书写面回到内容自身高度；160px 的下限
-   * 在手机上会占掉半屏，这里降到 120px。 */
-  .ask-input {
-    min-height: 120px;
+  /* 单列时主卡不再被右栏撑高，书写面回到内容自身高度；190px 在手机上
+   * 会占掉半屏，这里收到 160px。 */
+  .ask-field {
+    max-height: 160px;
   }
 }
 
@@ -209,6 +209,58 @@ body {
   min-height: 0;
 }
 
+/* ── 书写面的印刷语汇（2026-10-04 第二轮）──────────────────────
+ * 用户接着反馈：「太大了」＋「就不能再添加一些图画或者什么其他的进去吗，
+ * 这样还显得更加有感觉」。lave 的裁决是：不要往里塞插画，而是把这块面
+ * 本身做成**一件书写工具**——给它印刷/制图的语言（四角裁切标记 + 一道
+ * 引导弧线）。图形全部走伪元素：不进无障碍树、不增加 DOM 语义、不占布局。
+ * 这一层也是 .ask-field 存在的唯一理由：给装饰一个可定位的盒子。 */
+.ask-field {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  /* 上限从 260px 收到 190px（约五行半）——用户说太大了。
+   * 收到上限后，余下空间由 margin-top:auto 吃掉，仍落在「你想吃什么」与
+   * 书写面之间当呼吸；这条节奏是第一轮定下的，不动。 */
+  max-height: 190px;
+  margin-top: auto;
+}
+
+/* 四角裁切标记：每角两条 1px 短线，落在书写面外侧 7px 处，像开版前的裁切线。
+ * 用 --accent-line（陶土浅档），安静到不干扰文字，但让这块面「有出处」。 */
+.ask-field::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--accent-line), var(--accent-line)) left top / 13px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) left top / 1px 13px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) right top / 13px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) right top / 1px 13px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) left bottom / 13px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) left bottom / 1px 13px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) right bottom / 13px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) right bottom / 1px 13px no-repeat;
+}
+
+/* 一道引导弧线：右下角四分之一圆，半径 150px、1px 陶土浅线。
+ * 整页几乎全是直线与直角，这一处是唯一的曲线——呼吸点。
+ * 画在 ::after 上，所以叠在书写面之上（textarea 盖不住它）。 */
+.ask-field::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(150px 150px at 100% 100%,
+      transparent 149px,
+      var(--accent-line) 149px 150px,
+      transparent 150px);
+}
+
 .ask-label {
   display: block;
   font-size: 12px;
@@ -225,16 +277,10 @@ body {
  * 靠明度差而不是描边粗细区分层级。 */
 .ask-input {
   width: 100%;
-  /* 书写面撑满 .ask 的剩余高度；160px 是下限，保证窄屏下它也是一块
-   * 能写三四行的面，而不是一条窄缝。 */
+  /* 高度与呼吸都交给外层 .ask-field 管（它带上限和 margin-top:auto），
+   * 这里只负责填满它。 */
   flex: 1;
-  min-height: 160px;
-  /* 上限 260px（约八行）。lave 原方案是 flex:1 一路撑满，实测 1366 下它
-   * 会长到 326px——按「一句话就够」的产品语气，那个框已经大得在邀请写作文。
-   * 加上限之后余下的空间由 margin-top:auto 吃掉，落在「你想吃什么」与
-   * 书写面之间当呼吸，而不是像改版前那样在动作行上方空出一大块。 */
-  max-height: 260px;
-  margin-top: auto;
+  min-height: 0;
   border: 1px solid var(--surface-line);
   border-radius: var(--radius);
   background: var(--surface-2);
@@ -815,6 +861,9 @@ body {
 .shell-main {
   min-height: 55vh;
 }
+
+
+
 
 
 

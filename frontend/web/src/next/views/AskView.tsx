@@ -70,16 +70,20 @@ export function AskView({
 
           <label className="ask">
             <span className="ask-label">你想吃什么</span>
-            <textarea
-              className="ask-input"
-              value={text}
-              rows={2}
-              disabled={running}
-              onChange={(e) => onText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSend()
-              }}
-            />
+            {/* 2026-10-04：给书写面套一层容器，用来承载印刷语汇（四角裁切标记 +
+                引导弧线）。装饰全部画在这层的伪元素上，textarea 本身一字符未改。 */}
+            <span className="ask-field">
+              <textarea
+                className="ask-input"
+                value={text}
+                rows={2}
+                disabled={running}
+                onChange={(e) => onText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSend()
+                }}
+              />
+            </span>
           </label>
 
           <div className="ask-actions">
@@ -102,3 +106,4 @@ export function AskView({
     </section>
   )
 }
+
