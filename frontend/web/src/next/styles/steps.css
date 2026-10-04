@@ -17,6 +17,20 @@
   font-size: 13px;
   line-height: 1.65;
   color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 14px 20px;
+}
+
+/* 同 .steps.is-compact 的理由：折叠区里不再套面。 */
+.fold-body .seasoning-line {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
 }
 
 .seasoning {
@@ -29,13 +43,21 @@
   color: var(--ink);
 }
 
+/* 2026-10-04：从「纸上一列裸文 + 发丝线」升成一张家具。结果页其余块
+ * （重点区、右栏）本来就是面，只有做法区与调料区还裸着，读起来像两种
+ * 画风贴在同一页上。整页套一张大卡是不对的——结果页是长文档而不是任务卡，
+ * 所以按**逻辑块各自成面**，块与块之间靠间距分隔。 */
 .steps {
   margin: 0;
-  padding: 0;
+  padding: 4px 20px;
   list-style: none;
   font-size: 15px;
   line-height: 1.85;
   color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
 }
 
 .steps li {
@@ -66,7 +88,14 @@
 
 /* 折叠区里的做法收一档，避免"盒子里套盒子"的视觉噪声。 */
 .steps.is-compact {
+  /* 折叠区里的做法不再套第二层面（折叠条自身已经是面），
+   * 否则一打开就是盒子里套盒子。 */
   font-size: 14px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
 }
 
 .steps.is-compact .step-no {
@@ -128,4 +157,7 @@
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
 }
+
+
+
 

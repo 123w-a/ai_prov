@@ -168,9 +168,15 @@
 
 /* 折叠区：默认收起的内容统一走这里。
    标题行要像个"入口"，不像个章节标题——否则折叠本身又变成一层等重章节。 */
+/* 2026-10-04：折叠条从「一根顶线 + 裸 summary」升成一张可点的家具面。
+ * 它和做法区、调料区原本都裸排，现在与重点区、右栏同族。 */
 .fold {
-  border-top: 1px solid var(--line);
-  padding: 2px 0;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 0 18px;
+  margin-bottom: 12px;
 }
 
 .fold > summary {
@@ -735,4 +741,5 @@
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
+
 
