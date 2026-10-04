@@ -168,13 +168,37 @@
   --surface-2: #f7f3ec;
   --surface-line: #ebe3d6;
 
-  /* ── 地板：空间底 ──
-   * 页面不再是 #f8f4f0 一块平色：中心亮、四角沉的极浅径向渐变，
-   * 给出"这是一个有进深的房间"的底。峰值与谷值只差约 8% 明度，
-   * 远低于任何会被误读为色相的强度——仍然是暖纸调。 */
+  /* ── 地板：空间底（2026-10-04 第二轮）────────────────────────────
+   * 上一轮把地板做成径向渐变，并写下了"峰值与谷值只差约 8% 明度"的注释。
+   * 用户在真实页面上看完，结论是「背景没有任何提升」——他说得对：
+   * 8% 的明度差落在低饱和暖色区间里几乎不可见，而 --paper 的噪点只有
+   * 0.035 不透明度；两者叠起来仍然读作"一块平色"。
+   *
+   * 这一轮不靠把渐变压得更猛（那会变成一块明显的色斑），而是让背景里
+   * **出现结构性内容**，并把房间的明暗差拉进可见区间：
+   *
+   *   ① 底（--bg-deep）比原来的 --bg 再沉一档，页面下半部真的沉下去；
+   *   ② 图纸网格（--grid）铺满全屏，只有 5.5% 不透明度；
+   *   ③ 关键在 --room-wash 改用**半透明**色：它的不透明度本身就当遮罩用——
+   *      顶部不透明，网格被盖住（页头因此保持干净）；越往下越透明，
+   *      网格与更沉的底逐级露出来。
+   *
+   * 于是不需要伪元素、不需要 z-index、不需要动任何内容层的堆叠顺序，
+   * 光靠 background-* 三层就得到"上亮下沉 + 边缘见图纸"的空间感。
+   * 网格线用暖墨（与 --ink 同色相）而不是中性灰：中性灰落在暖纸上会发蓝。 */
   --bg-hi: #fffdf8;
   --bg-lo: #f0eae0;
-  --room-wash: radial-gradient(1500px 820px at 50% -20%, var(--bg-hi) 0%, var(--bg) 55%, var(--bg-lo) 100%);
+  --bg-deep: #ede5d9;
+  --grid-line: rgba(61, 42, 24, 0.055);
+  --grid-size: 56px;
+  --grid:
+    repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size)),
+    repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size));
+  --room-wash: radial-gradient(1600px 820px at 50% -10%,
+    color-mix(in srgb, var(--bg-hi) 92%, transparent) 0%,
+    color-mix(in srgb, var(--bg-hi) 58%, transparent) 34%,
+    color-mix(in srgb, var(--bg-hi) 14%, transparent) 68%,
+    color-mix(in srgb, var(--bg-hi) 0%, transparent) 100%);
 
   /* ── 形与光 ── */
   --radius-card: 14px;

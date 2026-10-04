@@ -5,15 +5,26 @@
 html,
 body {
   margin: 0;
-  /* ── 地板（2026-10-01 画风解冻）──────────────────────────────
-   * 两层叠：纸纹在上，房间底光在下。--room-wash 是中心亮、四角沉的
-   * 极浅径向渐变，fixed 让它不随内容滚动——于是滚动时内容在动、
-   * 光不动，房间的进深感是真的（这是投影而不是贴图）。
-   * 色值全部在 tokens.css，本文件只引 token（check-layers d 条）。 */
-  background-color: var(--bg);
-  background-image: var(--paper), var(--room-wash);
-  background-attachment: fixed, fixed;
-  background-size: 120px 120px, cover;
+  /* ── 地板（2026-10-01 解冻 → 2026-10-04 第二轮）────────────────
+   * 三层叠，顺序即上下关系（CSS 里第一个在最上）：
+   *   ① --paper  纸纹，最上，0.035 不透明度的噪点
+   *   ② --grid   图纸网格，居中
+   *   ③ --room-wash 房间底光，最下，**半透明**
+   * 最底下是 background-color 的 --bg-deep（比原来的 --bg 沉一档）。
+   *
+   * wash 的半透明是这轮的关键：它在顶部近似不透明，把网格盖住，
+   * 页头区域因此还是干净的；越往下越透明，网格与更沉的底露出来。
+   * 三层都 fixed：滚动时内容在动、光与网格不动，进深感才是真的
+   * （这是投影，不是贴图）。色值全部在 tokens.css，本文件只引 token
+   * （check-layers d 条）。 */
+  background-color: var(--bg-deep);
+  background-image: var(--paper), var(--grid), var(--room-wash);
+  background-attachment: fixed, fixed, fixed, fixed;
+  /* 四个尺寸值对应四层：纸纹 120px、网格横/纵两层各自 56px（必须与
+   * --grid-size 一致，否则瓦片边界与 56px 周期不整除、接缝处会挤出碎线）、
+   * wash 铺满。这一条是 getComputedStyle 读出来的：--grid 是**两层**渐变，
+   * 漏一个值就会让第 4 层回落成 120px 瓦片。 */
+  background-size: 120px 120px, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size), cover;
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -58,10 +69,10 @@ body {
 }
 
 .tn-brand {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.14em;
-  color: var(--accent);
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
 }
 
 .tn-dot {
@@ -73,9 +84,9 @@ body {
 
 .tn-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   color: var(--ink);
 }
 
@@ -136,7 +147,7 @@ body {
   border: 1px solid var(--surface-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-paper);
-  padding: var(--s3) var(--s4) var(--s4);
+  padding: 32px 44px 44px;
 }
 
 .ask-side {
@@ -164,8 +175,13 @@ body {
   font-weight: 400;
   font-synthesis: none;
   -webkit-text-stroke: 0.5px currentColor;
-  line-height: 1.2;
-  letter-spacing: -0.025em;
+  line-height: 1.24;
+  /* 中文不该吃西文的负字距：-0.025em 是给拉丁大标题收紧用的，落到汉字上
+   * 会让笔画彼此相碰（40px 时尤其明显）。汉字取微正字距，读起来才透气。 */
+  letter-spacing: 0.01em;
+  /* balance 修的是孤字行：标题原来在 40px 下把「定。」单独顶到第二行，
+   * 两行长度悬殊。balance 让浏览器自己把两行排匀（一行放不下时才生效）。 */
+  text-wrap: balance;
   color: var(--ink);
 }
 
@@ -403,7 +419,7 @@ body {
   border: 1px solid var(--surface-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-paper);
-  padding: var(--s2) 18px;
+  padding: 18px 20px;
 }
 
 /* B1 待确认（强度一）：唯一带强调的块——升格成更明确的卡片，
@@ -423,7 +439,7 @@ body {
  * 放大截图若糊字/发灰 ⇒ 只回退 stroke（保留衬线 400 + font-synthesis:none），
  * **不换无衬线**（衬线是已冻结裁决）。 */
 .fs-title {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-family: var(--serif);
   font-size: var(--fs-h2);
   font-weight: 400;
@@ -457,7 +473,7 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 
 .fs-mrow {
@@ -637,56 +653,118 @@ body {
  * 房间切换走 hash（#room=xxx）而不是路由库：刷新靠 URL 恢复、后退靠浏览器
  * 历史，两条都由浏览器自己保证（户型图红线：不引入路由依赖）。
  *
- * 解冻后从"一根底线 + 四个裸字"升成**门楣**：一条卡片顶栏，
- * 与屋内家具同族（亮面 / 描边 / 落地光 / 14px 圆角）。激活的房间
- * 用 accent-soft 浅底标出——解冻前"强调色绝不填充"卡死了这条，
- * 于是导航只能靠一根 2px 下划线说话，四个房间长得一模一样。 */
+ * 解冻后曾升成**卡片门楣**：一条卡片顶栏，与屋内家具同族（亮面 / 描边 /
+ * 落地光 / 14px 圆角），激活房间用 accent-soft 浅底标出。
+ * 2026-10-04 第二轮起改为**排印门楣**，形态与理由见下方。 */
+/* ── 第二轮（2026-10-04，用户：「导航字体也需要重新排布」）──────────────
+ * 把门楣从**卡片**改回**排印**。起因是地板这一轮压沉了，白色悬浮卡在新
+ * 背景上反而像"贴上去的一块"；参考图给的形态则是刻在纸上的门楣：与内容
+ * 同宽、无底色无圆角，只有一根底线。
+ *
+ * 三处具体重排：
+ *   ① 品牌：左侧加一枚 24px 方形印章（内嵌一个「膳」字），品牌名本身
+ *      从 accent 色改成墨色、字号 15→17px。强调色因此只留在印章这一处，
+ *      比"品牌与激活项都是橙的"更收敛。
+ *   ② 房间标签：字号 15→17px、字距 0.05em、内距加大。Windows 上衬线
+ *      只有 400 一档，层级只能靠字号 + 字距 + 颜色，不能靠字重硬撑。
+ *   ③ 激活态：从 accent-soft 填充块改回下划线短线。这不是走回头路——
+ *      解冻前那条下划线是"四个房间长得一模一样"时唯一的信号；现在字号
+ *      与字距已经把房间排开了，下划线只需承担"是哪一间"。填充块在压沉
+ *      的背景上还会与下方卡片底撞成同一层明度。 */
 .shell-nav {
-  max-width: 1010px;
-  margin: 16px auto 0;
-  padding: 10px 14px;
+  max-width: var(--content, 1010px);
+  margin: 0 auto;
+  /* 左右 28px 与 .tn 的内边距对齐：改成排印形态后导航自己没有了内边距，
+   * 品牌会比下方内容列左突 28px、右侧「就绪」也不与它对齐。形态变了，
+   * 列线不能变。 */
+  padding: 18px 28px 13px;
   display: flex;
   align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--surface-line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-paper);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: none;
 }
 
+/* 印章：方形描边内一个「膳」字。用伪元素而不是往 DOM 里塞节点——它是纯
+ * 装饰，不该进无障碍树（品牌名本身已经是可读文本）。竖排四字在 24px 里
+ * 会糊，单字印章在这个尺寸上最清楚。 */
 .shell-brand {
-  font-size: 15px;
+  position: relative;
+  padding-left: 32px;
+  font-size: 17px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  margin-right: 34px;
+}
+
+.shell-brand::before {
+  content: '膳';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -12px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
   color: var(--accent);
-  margin-right: 14px;
+  border: 1px solid var(--accent-line);
+  border-radius: 3px;
+  background: var(--accent-soft);
 }
 
 .shell-tab {
+  position: relative;
   font-family: var(--serif);
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1;
+  letter-spacing: 0.05em;
   color: var(--ink-soft);
   background: none;
   border: 0;
-  border-radius: var(--radius);
-  padding: 9px 16px;
+  border-radius: 0;
+  padding: 12px 18px;
   cursor: pointer;
-  transition: background 0.16s, color 0.16s;
+  transition: color 0.16s;
 }
 
 .shell-tab:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: none;
 }
 
 .shell-tab.is-on {
   color: var(--accent-ink);
-  background: var(--accent-soft);
+  background: none;
   font-weight: 600;
 }
 
+.shell-tab.is-on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 20px;
+  height: 2px;
+  margin-left: -10px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* 右侧上下文与左侧信息之间立一根发丝线：原来它只靠 margin-left:auto
+ * 飘在最右，与四个房间之间没有任何结构关系。 */
 .shell-ctx {
   margin-left: auto;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
   font-size: 12px;
   color: var(--ink-faint);
   font-family: var(--mono);
@@ -711,4 +789,13 @@ body {
 .shell-main {
   min-height: 55vh;
 }
+
+
+
+
+
+
+
+
+
 
