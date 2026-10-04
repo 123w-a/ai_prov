@@ -64,7 +64,7 @@ export default function WeeklyView() {
       </p>
 
       {view.lights.length > 0 && (
-        <div className="wk-sec">
+        <div className="wk-sec is-hero">
           <p className="wk-k">营养灯</p>
           <ul className="wk-lights">
             {view.lights.map((l) => (

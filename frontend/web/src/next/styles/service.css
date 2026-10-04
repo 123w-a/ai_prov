@@ -10,15 +10,33 @@
   max-width: 1010px;
   margin: 0 auto;
   padding: 40px 24px 96px;
+  /* 两个大区（服务规划 / 附近餐厅）各自成卡片，靠 gap 分隔。 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
 }
 
+/* 门牌竖条：与周报房 .wk-h、收藏房 .fv-h 同族（2026-10-01 画风解冻）。 */
 .sv-h {
+  position: relative;
+  padding-left: 18px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
   color: var(--ink);
   margin: 0 0 6px;
   -webkit-text-stroke: var(--stroke-h2);
+}
+
+.sv-h::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.14em;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--accent);
 }
 
 .sv-sub {
@@ -29,11 +47,16 @@
   margin: 0 0 8px;
 }
 
-/* 分区间：一道细线 + 一个留白，不做卡片（无玻璃、无阴影堆叠）。 */
+/* ── 分区（2026-10-01 画风解冻）──────────────────────────────
+ * 原来是「一道细线 + 一个留白」，注释还写着"不做卡片"——那条约束
+ * 随画风解冻一并撤掉。现在两个大区各自是一张家具：亮面、描边、
+ * 落地光、14px 圆角，与今晚房/周报房/收藏房同一族形制。 */
 .sv-sec {
-  padding-top: 26px;
-  margin-top: 26px;
-  border-top: 1px solid var(--line);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 20px 24px 22px;
 }
 
 .sv-k {
@@ -41,8 +64,11 @@
   font-size: 12.5px;
   letter-spacing: 0.08em;
   color: var(--ink-faint);
-  margin: 18px 0 10px;
+  margin: 18px 0 12px;
 }
+
+/* 卡内第一个小标题顶得更近些，避免卡片上沿空一大截。 */
+.sv-sec > .sv-k:first-child { margin-top: 2px; }
 
 .sv-summary {
   max-width: 46em;
@@ -52,6 +78,8 @@
   margin: 0;
 }
 
+/* 能力清单：卡内不再逐行拉线——那条线在外是"区块分隔"，进了卡片
+ * 就成了无意义的格子。留间距即可，圆点仍是唯一的行首标记。 */
 .sv-caps {
   list-style: none;
   margin: 0;
@@ -64,7 +92,6 @@
   font-size: 14.5px;
   line-height: 1.7;
   color: var(--ink);
-  border-bottom: 1px solid var(--line);
 }
 
 .sv-caps li::before {
@@ -78,16 +105,26 @@
   background: var(--accent);
 }
 
-/* 路线图：圆点 + 阶段号 + 标题 + 状态原值。状态色只落圆点与状态字。 */
+/* 路线图：圆点 + 阶段号 + 标题 + 状态原值。状态色只落圆点与状态字。
+ *
+ * 2026-10-01 解冻后，三个阶段从"逐行拉线"改成**卡内的三个时间线块**：
+ * 每阶段一个浅底圆角块（--surface-2 比卡片面暗半档，靠明度分层），
+ * 因此进度读作三段并列的行程，而不是一段被线切开的清单。
+ * 语义色（done 绿 / partial 黄）仍只在圆点与状态字上，不铺底。 */
 .sv-road {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .sv-road > li {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-line);
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
 .sv-road-h {
@@ -98,8 +135,8 @@
 
 .sv-dot {
   flex: none;
-  width: 7px;
-  height: 7px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--ink-faint);
   transform: translateY(-1px);

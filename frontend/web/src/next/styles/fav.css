@@ -18,13 +18,27 @@
   padding: 40px 24px 96px;
 }
 
+/* 门牌竖条：与周报房 .wk-h、服务房 .sv-h 同族（2026-10-01 画风解冻）。 */
 .fv-h {
+  position: relative;
+  padding-left: 18px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
   color: var(--ink);
   margin: 0 0 6px;
   -webkit-text-stroke: var(--stroke-h2);
+}
+
+.fv-h::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.14em;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--accent);
 }
 
 .fv-sub {
@@ -96,26 +110,37 @@
   margin: 0 0 12px;
 }
 
+/* ── 2026-10-01 画风解冻 ─────────────────────────────────────
+ * 原来是一条 border-top + 每项 border-bottom 的分隔线列表：1 条收藏
+ * 就是"两根横线夹一行字"，下面 600px 空着，怎么都不像一个房间。
+ * 现在每条收藏是一张家具（亮面 + 描边 + 落地光 + 14px 圆角），
+ * 多条时靠 gap 分隔；缩略图也从 2px 直角升到与卡片同族的圆角。 */
 .fv-list {
   list-style: none;
-  margin: 14px 0 0;
+  margin: var(--s2) 0 0;
   padding: 0;
-  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
 }
 
 .fv-item {
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 12px;
+  transition: box-shadow 0.18s, border-color 0.18s, transform 0.18s;
 }
 
 /* 主体整块可点：一整条是一个目标，不用先瞄准右边的小箭头。 */
 .fv-open {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   width: 100%;
   background: none;
   border: 0;
@@ -125,10 +150,10 @@
 }
 
 .fv-thumb {
-  width: 96px;
-  height: 54px;
+  width: 116px;
+  height: 66px;
   object-fit: cover;
-  border-radius: 2px;
+  border-radius: 8px;
   flex: none;
 }
 

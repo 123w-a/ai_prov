@@ -5,9 +5,15 @@
 html,
 body {
   margin: 0;
-  /* 纸感纹理叠在底色上：一层 background-image，不新增层、不改定位、不影响任何几何。 */
+  /* ── 地板（2026-10-01 画风解冻）──────────────────────────────
+   * 两层叠：纸纹在上，房间底光在下。--room-wash 是中心亮、四角沉的
+   * 极浅径向渐变，fixed 让它不随内容滚动——于是滚动时内容在动、
+   * 光不动，房间的进深感是真的（这是投影而不是贴图）。
+   * 色值全部在 tokens.css，本文件只引 token（check-layers d 条）。 */
   background-color: var(--bg);
-  background-image: var(--paper);
+  background-image: var(--paper), var(--room-wash);
+  background-attachment: fixed, fixed;
+  background-size: 120px 120px, cover;
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -106,14 +112,31 @@ body {
 .ask-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
-  gap: 0 40px;
-  align-items: start;
+  /* ── 2026-10-01 解冻：两栏等高 ──
+   * 原来 align-items:start 让左右各按自身内容定高，主区那张"纸"只占
+   * 顶部三分之一、底部空出 400px 白地——那正是"家具没摆好"的直接原因。
+   * 改 stretch 之后两栏等高：主区卡片撑到与右栏四块齐平，底部空白
+   * 由"空地"变成"房间的地面"。 */
+  gap: 0 32px;
+  align-items: stretch;
 }
 
 .ask-main {
   grid-column: 1;
   min-width: 0;
-  max-width: 42em;
+  /* ── 家具：主区容器（2026-10-01 解冻）───────────────────
+   * 从"裸排在纸上的一段文字"改成一张**有边、有光、有底**的卡片。
+   * 三件套缺一不可：亮一档的 --surface 让它从背景浮起，--shadow-paper
+   * 给它落地的光，--surface-line 描出边界。层次来自明度与光，
+   * 不碰任何语义色。圆角用 --radius-card（14px），比旧 3px 明显，
+   * 是解冻后第一处形态变化。 */
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: var(--s3) var(--s4) var(--s4);
 }
 
 .ask-side {
@@ -164,40 +187,49 @@ body {
   margin-bottom: var(--s1);
 }
 
-/* 输入框：从"漂浮白卡"改成"一条下划线"。
- * 去掉 18px 圆角、去掉 background、去掉 --shadow、去掉 4px 焦点光晕。
- * 它现在是页面上的一个书写位，不是一个组件。 */
+/* ── 输入面（2026-10-01 解冻改版）────────────────────────────
+ * 上一版是刻意的"一条下划线"（页面要素到不能再素）。解冻后它回到
+ * **一块真正的书写面**：浅底 + 描边 + 圆角，与外面那张卡片形成
+ * "面里有面"的层次。底色用 --surface-2（比卡片暗半档），
+ * 靠明度差而不是描边粗细区分层级。 */
 .ask-input {
   width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--line-strong);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  padding: 10px 0 14px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+  padding: 14px 16px;
   font-family: inherit;
   font-size: 21px;
   line-height: 1.55;
   color: var(--ink);
   resize: vertical;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
 .ask-input::placeholder {
   color: var(--ink-faint);
 }
 
-/* 焦点只让线变深、变墨色。不再有彩色光圈。 */
+/* 聚焦：描边转 accent + 一圈 accent 环。解冻后允许焦点有颜色，
+ * 但它是 1px 描边 + 极浅外环，不是发光描边。 */
 .ask-input:focus {
   outline: none;
-  border-bottom-color: var(--ink);
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
+/* ── 操作行（2026-10-01 解冻）──────────────────────────────
+ * margin-top:auto 把它推到卡片底部——主区现在是 flex column，
+ * 于是"标题在顶、操作在底"形成明确的动线，中间留白是**这张卡片的
+ * 纵深**，不再是页面没填满的空地。 */
 .ask-actions {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin-top: var(--s3);
+  margin-top: auto;
+  padding-top: var(--s4);
 }
 
 .ask-hint {
@@ -207,35 +239,46 @@ body {
   max-width: 34em;
 }
 
-/* 主行动按钮：从「填充陶土色 + 白字 + 10px 圆角」改成描边。
- * 棕底白字是最廉价的一组配色，而且直接违反用户冻结的「强调色绝不填充」。
- * 描边按钮有明确的点击边界，却不制造色块。hover 只加深边框，绝不填色。 */
+/* ── 主行动按钮（2026-10-01 解冻）──────────────────────────
+ * 从描边改成 accent 填充 + accent 色投影。解冻前这里被"强调色绝不填充"
+ * 卡死，主按钮因此长期是个不起眼的线框——一个产品最重要的动作不该
+ * 长得最轻。现在它是整页唯一的实心色块，视觉重量与它的行为权重对齐；
+ * 投影用 --shadow-go（accent 自身色相的半透明），浮而不闪。 */
 .ask-go {
   margin-left: auto;
   flex: none;
   border: 1px solid var(--accent);
   border-radius: var(--radius);
-  background: transparent;
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--white);
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 10px 26px;
+  letter-spacing: 0.06em;
+  padding: 12px 30px;
   cursor: pointer;
-  transition: border-color 0.18s, background 0.18s, color 0.18s;
+  box-shadow: var(--shadow-go);
+  transition: border-color 0.18s, background 0.18s, color 0.18s,
+    box-shadow 0.18s, transform 0.18s;
 }
 
 .ask-go:hover:not(:disabled) {
   border-color: var(--accent-ink);
-  color: var(--accent-ink);
-  background: var(--accent-soft);
+  background: var(--accent-ink);
+  box-shadow: var(--shadow-go-hi);
+  transform: translateY(-1px);
+}
+
+.ask-go:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-go);
 }
 
 .ask-go:disabled {
   border-color: var(--line);
   color: var(--ink-faint);
-  background: transparent;
+  background: var(--surface-2);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -341,25 +384,37 @@ body {
  *   颜色只作辅助，不单独传态。
  * 3 层次靠发丝线与间距，不靠多套盒子堆叠——首屏只有一个容器层级。 */
 
+/* ── 2026-10-01 画风解冻后的右栏 ─────────────────────────────
+ * 上面那条契约注释（IA 轮的四块骨架、发丝线分隔、首屏只有一个容器
+ * 层级）描述的是**结构**，全部保留；变的是**每块现在是一张家具**：
+ * 独立的面、边、光与圆角，而不是贴在白墙上的四行字。
+ * 间距从 12px 的线间空隙放大到 16px，块与块之间靠 gap 分隔，
+ * 不再需要 .fs-block + .fs-block 那条 border-top。 */
 .ask-side {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--s2);
 }
 
-/* B1 之后的每块用一条发丝线分隔。 */
-.fs-block + .fs-block {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+/* 每块：亮面 + 描边 + 落地光 + 14px 圆角，与主区卡片同一族形制，
+ * 两栏因此读作"同一批家具"而不是"一张纸加四行注脚"。 */
+.fs-block {
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: var(--s2) 18px;
 }
 
-/* B1 待确认（强度一）：首屏唯一带强调的块——panel 底 + accent 描边 + 2px 竖线。 */
+/* B1 待确认（强度一）：唯一带强调的块——升格成更明确的卡片，
+ * 保留原 accent 描边与 2px 竖线，底色改用 --accent-soft（暖调高亮面）。 */
 .fs-block.is-key {
-  padding: 12px 14px 14px;
-  background: var(--panel);
+  background: var(--accent-soft);
   border: 1px solid var(--accent-line);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: var(--s2) 18px;
 }
 
 /* 区块标题：19px 衬线（视觉轮次 · quick_win 3）。**stroke 实验载体**——
@@ -577,24 +632,33 @@ body {
   color: var(--ink-soft);
 }
 
-/* ── 全局导航壳（2026-09-29 户型图第 2 步） ────────────────────────
+/* ── 全局导航壳（2026-09-29 户型图第 2 步 · 2026-10-01 画风解冻）────────
  * 只负责"另外三个房间看得见、点得动"，不改今晚房内任何布局。
  * 房间切换走 hash（#room=xxx）而不是路由库：刷新靠 URL 恢复、后退靠浏览器
  * 历史，两条都由浏览器自己保证（户型图红线：不引入路由依赖）。
- */
+ *
+ * 解冻后从"一根底线 + 四个裸字"升成**门楣**：一条卡片顶栏，
+ * 与屋内家具同族（亮面 / 描边 / 落地光 / 14px 圆角）。激活的房间
+ * 用 accent-soft 浅底标出——解冻前"强调色绝不填充"卡死了这条，
+ * 于是导航只能靠一根 2px 下划线说话，四个房间长得一模一样。 */
 .shell-nav {
   max-width: 1010px;
-  margin: 0 auto;
-  padding: 16px 24px 0;
+  margin: 16px auto 0;
+  padding: 10px 14px;
   display: flex;
-  align-items: baseline;
-  border-bottom: 1px solid var(--line);
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
 }
 
 .shell-brand {
   font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--accent);
-  margin-right: 10px;
+  margin-right: 14px;
 }
 
 .shell-tab {
@@ -604,18 +668,21 @@ body {
   color: var(--ink-soft);
   background: none;
   border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 9px 15px;
+  border-radius: var(--radius);
+  padding: 9px 16px;
   cursor: pointer;
+  transition: background 0.16s, color 0.16s;
 }
 
 .shell-tab:hover {
   color: var(--ink);
+  background: var(--surface-2);
 }
 
 .shell-tab.is-on {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  font-weight: 600;
 }
 
 .shell-ctx {

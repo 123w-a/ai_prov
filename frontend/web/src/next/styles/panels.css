@@ -307,18 +307,40 @@
   margin-top: 6px;
 }
 
-/* ── 周报房间（2026-09-29 户型图第 3 步） ──────────────────────────────
- * 与右栏 WeekBlock 同源数据、不同版式：右栏是 278px 摘要，这里是整页，
- * 因此多放两样右栏放不下的（可执行建议、反馈计数）。
+/* ── 周报房间（2026-09-29 户型图第 3 步 · 2026-10-01 画风解冻重排）──────
+ * 与右栏 WeekBlock 同源数据、不同版式：右栏是 278px 摘要，这里是整页。
  * 趋势照实写「数据不足」、不画线；空态直接显示后端给的 message。
- */
+ *
+ * 2026-10-01 的变化只在**版式**，数据与判据一字未动：
+ *   原来 6 个 .wk-sec 从头到尾用 border-top 分隔，纵向铺满整页——
+ *   用户看到的是一份"日志"，不是一间房间。现在：
+ *     · 整页变两列网格，营养灯用 is-hero 占满整行当"仪表盘"，
+ *       它的红黄绿实心点本来就是这一页唯一的彩色，放大成横排就是
+ *       现成的墙画（有信息价值的锚点，不是装饰）；
+ *     · 其余区块各自成卡片：亮面 + 描边 + 落地光 + 14px 圆角，
+ *       与今晚房的家具同一族形制；
+ *     · 趋势/建议/护栏/反馈这四块信息量小，并排两列，页面因此
+ *       不再往下无限拉长，底部空白也一并收紧。 */
 .wk {
   max-width: 1010px;
   margin: 0 auto;
   padding: 40px 24px 96px;
+  /* 网格：标题与副标题跨全宽，下面的区块按序落进两列。
+   * 条件渲染造成的"某块不存在"由 grid 自动补位，不会留空洞。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+  align-items: start;
 }
 
+/* 房间门牌（2026-10-01 解冻）：标题左侧一根 accent 竖条。
+ * 这是"墙画"的落点——四个房间的 h2 靠它获得同一个视觉锚，
+ * 而不是四个裸标题漂在纸上。竖条是排印（与 .tn-dot 同族），
+ * 不是插图，因此不违反"不引入无数据装饰"。 */
 .wk-h {
+  grid-column: 1 / -1;
+  position: relative;
+  padding-left: 18px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
@@ -327,18 +349,41 @@
   -webkit-text-stroke: var(--stroke-h2);
 }
 
+.wk-h::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.14em;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
 .wk-sub {
+  grid-column: 1 / -1;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 13.5px;
   color: var(--ink-soft);
-  margin: 0 0 8px;
+  margin: 0 0 var(--s1);
 }
 
+/* 每块：从"一段被横线切开的文字"改成一张家具。
+ * 原来的 border-top + margin-top 双重分隔全部撤掉——分隔改由
+ * 卡片自身的边界与 gap 完成，这才是"区块"该有的读法。 */
 .wk-sec {
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
-  margin-top: 26px;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 18px 20px;
+}
+
+/* 营养灯：全宽仪表盘。 */
+.wk-sec.is-hero {
+  grid-column: 1 / -1;
+  padding: 18px 22px;
 }
 
 .wk-k {
@@ -346,28 +391,35 @@
   font-size: 12px;
   color: var(--ink-faint);
   letter-spacing: 0.04em;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 
+/* 灯排成仪表：三个营养指标并排，各自是一组「点 + 名称 + 计数」。
+ *
+ * 第一版用了 auto-fit 三等分 + 计数右对齐，实测失败：每格 320px 而内容
+ * 只有 120px，名称与计数被拉到两端、中间空 200px，读起来像表格行而不是
+ * 三个独立的灯。改成按内容排布 + 大间距——灯与灯之间靠 gap 分开，
+ * 组内三个元素紧挨着，这才是一盏灯的样子。 */
 .wk-lights {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 44px;
 }
 
 .wk-light {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
+  align-items: center;
+  gap: 9px;
   font-size: 15px;
 }
 
 /* 9px 实心点：语义色只用在状态点上，绝不铺到卡片底/按钮底/标签底。 */
 .wk-dot {
-  width: 9px;
-  height: 9px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   flex: none;
   align-self: center;
@@ -380,7 +432,6 @@
 .wk-lname { color: var(--ink); }
 
 .wk-lstat {
-  margin-left: auto;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 13.5px;
