@@ -31,6 +31,10 @@ const STYLE_ORDER = [
   // 书写面组件（2026-10-04）：.composer 只做"结果页底部那一档"的低权重覆盖，
   // 不重定义 .ask-*（那些仍归 base.css）。它必须排在 base.css 之后才生效。
   './styles/composer.css',
+  // 书页框架（2026-10-04）：四角裁切标记从 .tn 迁到 .shell-room（四房共享），
+  // 并由 .shell-main/.shell-room 的 flex:1 与 .sheet-foot 做版心撑满和底部收束。
+  // 它覆盖 base.css 的 .shell-main min-height，必须排在 base.css 之后。
+  './styles/sheet.css',
   './styles/steps.css',
   './styles/motion.css',
   './styles/primitives.css',

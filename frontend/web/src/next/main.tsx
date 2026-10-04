@@ -27,6 +27,7 @@ import './styles/result-v3.css'
    不挪动已有层叠——详见文件头那段说明。 */
 import './styles/nutrition.css'
 import './styles/composer.css'
+import './styles/sheet.css'
 import './styles/steps.css'
 import './styles/motion.css'
 /* 原语层样式（第 4 步新增）。放在最后：它只定义 .p-* 新类名，

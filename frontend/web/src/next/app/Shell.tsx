@@ -148,6 +148,14 @@ export default function Shell({
         {room === 'svc' && <div className="shell-room">{svc}</div>}
       </div>
 
+      {/* 页脚：五个房共用的底部收束。没有它时，周报这类内容较少的房间会在
+          下方留 331px 纯空白（实测），页面看起来像"没画完"而不是"留白"。
+          它是版式结构而不是装饰：一条发丝线 + 落款，把版心合上。 */}
+      <footer className="sheet-foot">
+        <span>小膳管家</span>
+        <span className="sheet-foot-r">家庭膳食规划助手</span>
+      </footer>
+
       {/* 家庭成员抽屉：遮罩点击与 Escape 都关；面板内点击 stopPropagation
           不穿透到底层房间（否则关不掉还会误点导航）。 */}
       {drawer && (

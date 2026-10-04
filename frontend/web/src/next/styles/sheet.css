@@ -1,0 +1,110 @@
+/* ── 书页框架（2026-10-04，五房统一）────────────────────────────────────
+
+   起因：用户反馈"首屏和结果页都不是很好看，显得很空，只有文字，没有任何
+   背景和图画的渲染，显得很单调；周报收藏服务也有这个情况"。实测各房纵向
+   几何后发现两件事：
+
+     · 周报内容到 y=569 就结束，下方 331px 是全空——.shell-main 只有 55vh；
+     · 页面级四角裁切标记原本挂在今晚页自己的 .tn 上，另外三个房根本没有。
+
+   所以"空"的主因不是缺装饰，而是**版式没有收口**，且框架挂在了错误的层
+   （挂在某个房上，而不是四个房共享的外壳上）。本片把框架提到 Shell 层：
+
+     · 四角裁切标记 → .shell-room::before（原来只在 .tn 上）
+     · 版心撑满视口 → .shell 竖排，.shell-main / .shell-room flex:1
+     · 底部收束     → .sheet-foot（发丝线 + 落款）
+
+   为什么单开一片：base.css 已 995/1000，放不下；而且本片主类名（.sheet-*）
+   全新。check-layers 的前缀归属只约束 .p-* / .b-*，shell 系选择器在此处覆盖
+   不违规（已核对 scripts/check-layers.mjs:107 的 checkPrefixes）。 */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 覆盖 base.css 的 min-height:55vh。内容少的房间（周报实测 592px）撑不满
+   视口，余下的 331px 就成了"页面没画完"的断裂感，而不是留白。 */
+.shell-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell-room {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 隐藏的房间必须真的不占位。UA 的 [hidden]{display:none} 会被上面的
+   display:flex 直接盖掉——今晚房是常驻挂载、只藏不卸的（保住跑一半的那一轮），
+   漏掉这条会让四个房同时渲染：实测周报被推到 y=920，页面滚动高从 900 涨到 1574。 */
+.shell-room[hidden] {
+  display: none;
+}
+
+/* 房间内容撑满版心：内容不足时，空白留在页脚之上，而不是页面底部。
+   但**内部行不跟着拉伸**——.wk 是 grid 容器，容器一高、行默认会被拉长，
+   卡片之间于是被撑开（实测营养灯块从 85px 变高），留白散在卡片缝里。
+   align-content:start 让每个块保持自己的高度，空白集中落到页脚之上，
+   那里有页脚收束，所以读起来是版心留白而不是"没画完"。 */
+.shell-room > section {
+  flex: 1;
+  align-content: start;
+}
+
+/* ── 四角裁切标记（从 .tn::before 迁来，改为四房共享）──────────────────
+   语汇与首屏书写面、结果页照片上的标记同族：它把整页框成一张开版图纸。
+   定位仍反推到**视口**边缘而不是内容列边缘——预期图里这四个角落在视口四角，
+   比 1010px 的内容列还外约 35px。
+
+   迁到 .shell-room 之后，原来那个 top:-39px 的魔法数可以去掉：它当初是为了
+   盖过导航条（实测约 73px 高），而本层起点本来就在导航之下。少一处依赖外部
+   高度的硬编码。
+
+   纯伪元素，不进无障碍树、不占布局。 */
+.shell-room::before {
+  content: '';
+  position: absolute;
+  left: calc(50% - 50vw + 22px);
+  right: calc(50% - 50vw + 22px);
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line), var(--line)) left top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 1px 20px no-repeat;
+}
+
+/* ── 页脚收束 ────────────────────────────────────────────────────────
+   它是版式结构不是装饰：一条发丝线把版心合上，左侧落款、右侧身份。
+   没有它时，内容较少的房间在下方留 331px 纯空白。 */
+.sheet-foot {
+  width: 100%;
+  max-width: var(--content, 1010px);
+  margin: 0 auto;
+  padding: 18px 28px 26px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.sheet-foot-r {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
