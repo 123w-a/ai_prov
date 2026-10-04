@@ -28,6 +28,9 @@ const STYLE_ORDER = [
   // 营养数值表（第 5 项）：只定义 .nutri-* 新类名，插在 result-v3 之后不挪动已有层叠。
   // 它没并进 result-v3.css 是因为那个文件实测 943 行，再追加就会越过 1000 行上限。
   './styles/nutrition.css',
+  // 书写面组件（2026-10-04）：.composer 只做"结果页底部那一档"的低权重覆盖，
+  // 不重定义 .ask-*（那些仍归 base.css）。它必须排在 base.css 之后才生效。
+  './styles/composer.css',
   './styles/steps.css',
   './styles/motion.css',
   './styles/primitives.css',

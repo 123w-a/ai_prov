@@ -44,6 +44,27 @@ function run(over: Partial<RunState>): RunState {
   }
 }
 
+/** 候选清单轮：**没有 answer**。
+ *
+ *  这不是我造的特例，而是后端的既有行为：answer_kind === 'candidates' 时
+ *  chat_route.py 刻意把 answer 丢掉不推（见该文件 1580 行附近的 continue），
+ *  因为候选清单本身已经由正文 token 流式展示过了。
+ *
+ *  这一档之前没有任何夹具，于是"候选轮到底渲染成什么"从来没被验过——
+ *  而用户正是在这条路径上踩到了坑（点了首屏、拿到三道菜、然后找不到继续输入的入口）。 */
+const CANDIDATES = run({
+  body: `先给你三道今晚就能做的，你挑一道我再往下展开：
+
+1. 香煎三文鱼配蒜香西兰花 —— 一口平底锅，18 分钟，钠最低
+2. 清蒸鲈鱼配姜丝 —— 更清淡，蒸锅 12 分钟，刺少好挑
+3. 番茄龙利鱼汤 —— 汤菜，酸口开胃，适合孕期口味
+
+回一句「第几个」就行，也可以直接说要改什么。`,
+  answer: null,
+  elapsed: 41000,
+  events: [{ stage: 'searching', at: 8000, nth: 1 }],
+})
+
 /** 常规形态：22/23 走这条。没有 dish_matrix、guardrails 为空、三盏灯。 */
 const TYPICAL: ChefAnswer = {
   opening:
@@ -430,6 +451,7 @@ export const CASES: Record<string, FixtureCase> = {
   },
   full: { kind: 'result', label: '满数据（含家人矩阵）', run: run({ answer: FULL, elapsed: 354700 }) },
   thin: { kind: 'result', label: '缺字段（最薄，无营养表）', run: run({ answer: THIN, elapsed: 52000 }) },
+  candidates: { kind: 'result', label: '候选轮（无 answer，正文是清单）', run: CANDIDATES },
   partial: { kind: 'result', label: '营养表·缺口（已覆盖小计）', run: run({ answer: NUTRI_PARTIAL, elapsed: 96000 }) },
   long: { kind: 'result', label: '长文本溢出压力', run: run({ answer: LONG }) },
   prose: { kind: 'result', label: '纯散文（13/35）', run: run({ answer: PROSE, elapsed: 111000 }) },
@@ -492,6 +514,9 @@ export const CASES: Record<string, FixtureCase> = {
 }
 
 export const CASE_IDS = Object.keys(CASES)
+
+
+
 
 
 

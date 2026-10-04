@@ -528,7 +528,18 @@ export default function TonightApp() {
 
       {running && <WaitCard run={run} onCancel={cancel} onRestart={reset} />}
 
-      {run.status === 'succeeded' && <RunResult run={run} onAgain={reset} />}
+      {/* 结果页也要能接着说话（甲方案）：输入状态仍由本组件持有，
+          与首屏是同一份 text——结果页只是把同一个书写面换了个位置渲染。 */}
+      {run.status === 'succeeded' && (
+        <RunResult
+          run={run}
+          onAgain={reset}
+          text={text}
+          onText={setText}
+          onSend={() => void send()}
+          blocked={blocked}
+        />
+      )}
 
       {/* 历史会话侧栏：fixed 定位，不参与 .tn 的排版。 */}
       <SessionRail
@@ -544,3 +555,4 @@ export default function TonightApp() {
     </div>
   )
 }
+

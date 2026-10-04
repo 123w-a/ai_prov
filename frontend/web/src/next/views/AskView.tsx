@@ -1,6 +1,7 @@
 import type { RunState } from '../data/model.ts'
 import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
 import { AskRail } from '../blocks/AskRail.tsx'
+import { AskComposer } from '../blocks/AskComposer.tsx'
 
 /**
  * 「今晚这一顿」的提问视图。
@@ -68,32 +69,17 @@ export function AskView({
             今晚这一顿，按<em>两个人的身体</em>来定。
           </h2>
 
-          <label className="ask">
-            <span className="ask-label">你想吃什么</span>
-            {/* 2026-10-04：给书写面套一层容器，用来承载印刷语汇（四角裁切标记 +
-                引导弧线）。装饰全部画在这层的伪元素上，textarea 本身一字符未改。 */}
-            <span className="ask-field">
-              <textarea
-                className="ask-input"
-                value={text}
-                rows={2}
-                disabled={running}
-                onChange={(e) => onText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSend()
-                }}
-              />
-            </span>
-          </label>
-
-          <div className="ask-actions">
-            <span className="ask-hint">
-              一句话就够。小膳管家会结合家人的健康情况来定这一顿。
-            </span>
-            <button className="ask-go" type="button" disabled={blocked || !text.trim()} onClick={() => onSend()}>
-              {run.status === 'failed' ? '重试' : '开始'}
-            </button>
-          </div>
+          {/* 书写面抽成了 AskComposer：结果页底部用的是同一个组件（见 ResultView）。
+              两处必须共用一份行为定义，否则回车键、禁用条件、按钮文案会各自漂移——
+              用户看到的就是"这一页的输入框跟刚才那个不一样"。 */}
+          <AskComposer
+            text={text}
+            onText={onText}
+            onSend={onSend}
+            running={running}
+            blocked={blocked}
+            submitLabel={run.status === 'failed' ? '重试' : undefined}
+          />
         </div>{/* /ask-main */}
 
         {/* 首屏四块（IA 薄切片 · 契约 v2.1）。
@@ -106,4 +92,5 @@ export function AskView({
     </section>
   )
 }
+
 

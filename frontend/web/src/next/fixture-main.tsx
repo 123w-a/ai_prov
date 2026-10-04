@@ -13,6 +13,7 @@ import './styles/wait.css'
 import './styles/result-v1v2.css'
 import './styles/result-v3.css'
 import './styles/nutrition.css'
+import './styles/composer.css'
 import './styles/steps.css'
 import './styles/motion.css'
 import './styles/primitives.css'
@@ -22,6 +23,7 @@ import './styles/service.css'
 import { RunResult } from './views/ResultView.tsx'
 import { WaitCard } from './blocks/WaitCard.tsx'
 import { AskRail } from './blocks/AskRail.tsx'
+import { AskComposer } from './blocks/AskComposer.tsx'
 import { CASES, CASE_IDS } from './fixtures.ts'
 
 /**
@@ -166,26 +168,20 @@ if (rootEl.childElementCount === 0) {
                   今晚这一顿，按<em>两个人的身体</em>来定。
                 </h2>
 
-                <label className="ask">
-                  <span className="ask-label">你想吃什么</span>
-                  {/* 用 defaultValue（非受控）而非 value+onChange：本文件刻意不定义组件、
-                      不引状态，受控却缺 onChange 会触发 React 警告，把
-                      「console 零错误」这条验收判据污染成假红灯。 */}
-                  <textarea
-                    className="ask-input"
-                    rows={2}
-                    defaultValue="今晚想用冰箱里的东西做一顿，我增肌、小美怀孕，做个我们俩都能吃的。"
-                  />
-                </label>
+                {/* 书写面**直接复用 AskComposer 组件**，不再照抄一份 markup。
+                    上一版是逐字抄的，于是 AskView 改用组件之后这里就悄悄分叉了——
+                    而夹具台的全部价值在于"量到的几何就是正式页的几何"，
+                    复制品一旦分叉，这个承诺就静默失效。
 
-                <div className="ask-actions">
-                  <span className="ask-hint">
-                    一句话就够。小膳管家会结合家人的健康情况来定这一顿。
-                  </span>
-                  <button className="ask-go" type="button">
-                    开始
-                  </button>
-                </div>
+                    受控组件配一个空 onText：本文件刻意不引状态，但**必须给 onChange**，
+                    否则 React 会警告，把「console 零错误」这条判据污染成假红灯。 */}
+                <AskComposer
+                  text="今晚想用冰箱里的东西做一顿，我增肌、小美怀孕，做个我们俩都能吃的。"
+                  onText={() => {}}
+                  onSend={() => {}}
+                  running={false}
+                  blocked={false}
+                />
               </div>
               {/* 逐字段展开而不写 {...current.rail}：rail 是可选字段，逐字段兜底 null
                   能让「忘了给 rail 的 ask case」退化成四块全空，而不是 TS 报错或运行时崩。 */}
@@ -198,7 +194,14 @@ if (rootEl.childElementCount === 0) {
             </div>
           </section>
         ) : current.kind === 'result' ? (
-          <RunResult run={current.run} onAgain={() => {}} />
+          <RunResult
+            run={current.run}
+            onAgain={() => {}}
+            text=""
+            onText={() => {}}
+            onSend={() => {}}
+            blocked={false}
+          />
         ) : (
           <WaitCard run={current.run} onCancel={() => {}} onRestart={() => {}} />
         )}
@@ -224,3 +227,6 @@ if (rootEl.childElementCount === 0) {
     </StrictMode>,
   )
 }
+
+
+

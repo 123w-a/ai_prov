@@ -1,5 +1,6 @@
 import type { RunState } from '../data/model.ts'
 import { formatClock, formatSpoken, resultForm, stageLabel } from '../data/model.ts'
+import { AskComposer } from '../blocks/AskComposer.tsx'
 import { renderRichText } from '../../utils/richText.tsx'
 // 正文清洗已迁到 data/clean.ts（架构方案第八节第 3 步）。
 // 这里只导入、不重新实现——那些正则的 bug 全都是看真实数据才发现的，
@@ -227,7 +228,24 @@ function ProseResult({ body, request, reds, guards }: {
   )
 }
 
-export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void }) {
+export function RunResult({
+  run,
+  onAgain,
+  text,
+  onText,
+  onSend,
+  blocked,
+}: {
+  run: RunState
+  onAgain: () => void
+  /** 结果页底部的书写面（甲方案）：结果出来之后仍然要能接着说下一句。
+   *  输入状态由 app 层持有，本组件只透传——它不该多出一份自己的 text 副本，
+   *  否则"结果页打的字"和"首屏打的字"会变成两个东西。 */
+  text: string
+  onText: (next: string) => void
+  onSend: () => void
+  blocked: boolean
+}) {
   const form = resultForm(run.answer)
   const sources = run.answer?.sources ?? []
   const isStructured = form === 'structured'
@@ -378,9 +396,24 @@ export function RunResult({ run, onAgain }: { run: RunState; onAgain: () => void
       <button className="again" type="button" onClick={onAgain}>
         再做一顿
       </button>
+
+      {/* 「再做一顿」是重置，「继续」是接着说话——两件事都留着，因为它们不是一回事：
+          重置会把这一轮的结果丢掉，而用户常常只是想在这道菜上改一句。
+          这一页原来只给重置，于是拿到结果后无处说下一句——正文甚至写着
+          「回一句第几个就行」，页面上却连一个输入框都没有（用户实测后提出）。 */}
+      <AskComposer
+        variant="followup"
+        text={text}
+        onText={onText}
+        onSend={onSend}
+        running={false}
+        blocked={blocked}
+      />
     </section>
   )
 }
+
+
 
 
 
