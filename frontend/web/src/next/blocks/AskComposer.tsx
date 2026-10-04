@@ -37,8 +37,9 @@ export function AskComposer({
     <div className={`composer${isFollowup ? ' is-followup' : ''}`}>
       <label className="ask">
         {!isFollowup && <span className="ask-label">你想吃什么</span>}
-        {/* 印刷语汇（四角裁切标记 + 引导弧线）画在这一层的伪元素上，
-            textarea 本身一字符未改。结果页那一档会把它关掉——见 composer.css。 */}
+        {/* 稿纸语汇（上下发丝线 + 左侧边距线 + 横向格线）画在这一层及其伪元素上，
+            textarea 本身一字符未改。结果页那一档**不再**关掉它——见 styles/base.css
+            与 styles/composer.css 里两轮改写的理由。 */}
         <span className="ask-field">
           <textarea
             className="ask-input"
