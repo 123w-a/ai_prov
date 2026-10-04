@@ -117,16 +117,18 @@ body {
  * 是缺字号跳跃"，这是关键。这里给第一个真跳：40px。
  * （视觉席建议 clamp(32px,6vw,56px)，我压到 40 封顶：这是一个安静的居家工具，
  *  56px 会滑向杂志封面，过火。） */
-/* ── 首屏两栏（2026-09-27 用户裁决）────────────────────────
+/* ── 首屏两栏（2026-09-27 定形；2026-10-04 第五轮对调）────────
  * 原来是「标题→输入→按钮→脚注」的纯垂直堆叠，主因是布局不是内容太少。
- * 网格模板与右栏宽度**逐字复用** .result-body（result-v3.css L610）：
- *   minmax(0,1fr) var(--rail, 278px) / gap 0 40px
- * 三视图右栏必须同宽——另造一个 260px 就是新的几何不一致。
- * 科技感不靠装饰标签（TONIGHT / 01 那类被否决），靠真实数据本身：
- * .ctx-people 已带 tabular-nums，尺寸与数量在右栏里是等宽可扫读的。 */
+ * 栏宽仍逐字复用 .result-body 的 --rail，三视图同宽；科技感不靠装饰标签
+ * （TONIGHT / 01 那类被否决），靠真实数据本身。
+ * 第五轮按用户裁决与预期图 gpt-image-2.png **对调两栏**：预期图里窄栏在左
+ * （16.3%，推荐/日期/饮食平衡/贴士）、宽卡在右（75.1%）。只改视觉不挪 DOM——
+ * 主卡（首屏主任务）在文档里仍排前面，屏幕阅读器与 Tab 顺序仍是「主内容
+ * 优先」，而眼睛看到的是预期图的栏序。窄屏落回 block 时按 DOM 顺序：
+ * 主卡在上、窄栏在下，同样合理。 */
 .ask-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
+  grid-template-columns: var(--rail, 278px) minmax(0, 1fr);
   /* ── 2026-10-01 解冻：两栏等高 ──
    * 原来 align-items:start 让左右各按自身内容定高，主区那张"纸"只占
    * 顶部三分之一、底部空出 400px 白地——那正是"家具没摆好"的直接原因。
@@ -137,7 +139,7 @@ body {
 }
 
 .ask-main {
-  grid-column: 1;
+  grid-area: 1 / 2; /* 行也要钉死：只写 grid-column 时 .ask-side 会被自动放置挪到第二行 */
   min-width: 0;
   /* ── 家具：主区容器（2026-10-01 解冻）───────────────────
    * 从"裸排在纸上的一段文字"改成一张**有边、有光、有底**的卡片。
@@ -155,7 +157,7 @@ body {
 }
 
 .ask-side {
-  grid-column: 2;
+  grid-area: 1 / 1;
 }
 
 /* 与结果页同一个断点（result-v3.css L767），落回单列。
@@ -165,11 +167,6 @@ body {
     display: block;
   }
 
-  /* 单列时主卡不再被右栏撑高，书写面回到内容自身高度；190px 在手机上
-   * 会占掉半屏，这里收到 160px。 */
-  .ask-field {
-    max-height: 160px;
-  }
 }
 
 .ask-lead {
@@ -200,70 +197,76 @@ body {
   color: var(--accent);
 }
 
-/* 主卡内部的空白怎么处理（2026-10-04，lave 商讨后的裁决）：
- * 用户原话「想吃什么下面那里太空了」。两个方向——甲：把空白转成可用的
- * 输入面；乙：解耦两栏高度、让主卡回到内容自身高度。**选甲**。理由是乙
- * 会把空白推到卡片外，而那正是上一轮已经被否决过的「卡片外 400px 空地」，
- * 走回去等于退回原地。
- * 做法：让 .ask 吃掉主卡的剩余高度，书写面本身就是这块空间。 */
+/* 主卡内部的空白怎么处理（2026-10-04，两轮 lave 裁决）：
+ * 用户原话「想吃什么下面那里太空了」。甲＝把空白转成可用输入面，乙＝解耦
+ * 两栏高度让主卡回到内容高度（空白被推到卡片外，已否决为「退回原地」）。
+ * 甲保留但改由**纸高**去吃：.ask 不参与撑高，纸高见下方 .ask-field（第四轮改值）。 */
 .ask {
-  flex: 1;
+  /* 2026-10-04 第三轮：不 flex:1（两版都实测否掉）。第二轮 .ask 吃掉剩余高度，
+   * 而书写面带 max-height:190、自己长不上去，空间落进 label **内部**——动作行
+   * 被推离稿纸 160px；纸无上限地长也不行（按钮底 941，掉出首屏 224px）。
+   * 最终裁决：按钮留首屏是硬约束，空白改由纸高（视口区间）吸收。 */
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-/* ── 书写面的印刷语汇（2026-10-04 第二轮）──────────────────────
- * 用户接着反馈：「太大了」＋「就不能再添加一些图画或者什么其他的进去吗，
- * 这样还显得更加有感觉」。lave 的裁决是：不要往里塞插画，而是把这块面
- * 本身做成**一件书写工具**——给它印刷/制图的语言（四角裁切标记 + 一道
- * 引导弧线）。图形全部走伪元素：不进无障碍树、不增加 DOM 语义、不占布局。
- * 这一层也是 .ask-field 存在的唯一理由：给装饰一个可定位的盒子。 */
+/* ── 书写面的印刷语汇（2026-10-04 第二轮 / 第三轮）──────────────
+ * 第二轮用户说「太大了」＋想再添点什么；lave 裁决是**不塞插画**，把这块面
+ * 做成一件书写工具：图形全走伪元素，不进无障碍树、不加 DOM 语义、不占布局。
+ * 第三轮用户说"提问框不是很好看"：语言从"四角裁切标记 + 引导弧线"换成
+ * **稿纸**——上下发丝线定栏口、左侧一条边距线、面上按行高打横向格线；
+ * 装饰从四层收到两层，四角标记归页面级框架（.shell-room::before）。
+ * 理由："一叠稿纸"比"一个控件"更接近这个产品该有的样子。 */
 .ask-field {
   position: relative;
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   min-height: 0;
-  /* 上限从 260px 收到 190px（约五行半）——用户说太大了。
-   * 收到上限后，余下空间由 margin-top:auto 吃掉，仍落在「你想吃什么」与
-   * 书写面之间当呼吸；这条节奏是第一轮定下的，不动。 */
-  max-height: 190px;
-  margin-top: auto;
+  /* 稿纸语汇（2026-10-04 第三轮）：书写区靠**上下两条发丝线**界定，
+     不再是四面围合的输入框。上一条压深当栏口，下一条浅当书写线。 */
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
+  /* 2026-10-04 第四轮（用户裁决「按预期图风格，严格按这个标准」）：
+   * 上一轮 lave 裁的 clamp(240px,42vh,420px) 在 1366×900 实测纸 378px，
+   * 而预期图 vocab.png 里那块书写面换算过来只有约 126–144px，**差近 3 倍**；
+   * 用户原话「纸太长了并且左右空白有点多」——是他先看出来的，不是我先发现的。
+   * 新值取 vocab 的比例：136px = 5 行格线（行高 27.2px），上界 16vh 封顶。
+   * 上一轮否掉的三个候选仍然否掉（纸无上限 / 给 .ask 配 calc 耦合值 /
+   * display:contents），理由不变。代价改为：一页纸固定 5 行，不随视口涨。 */
+  height: clamp(136px, 16vh, 190px);
 }
 
-/* 四角裁切标记：每角两条 1px 短线，落在书写面外侧 7px 处，像开版前的裁切线。
- * 用 --accent-line（陶土浅档），安静到不干扰文字，但让这块面「有出处」。 */
+/* 窄屏：纸收到 136px（min=max 把上面的 clamp 直接压平）。必须写在 .ask-field
+ * 主规则**之后**——同特异性下后写者胜，原先那条写在上面
+ * @media(max-width:900px) 块里，被主规则压掉，实测 420px 视口下从未生效。 */
+@media (max-width: 900px) {
+  .ask-field {
+    min-height: 136px;
+    max-height: 136px;
+  }
+}
+
+/* 左侧边距线：稿纸装订侧那道竖线，把输入文字与标签对齐到同一条栏口。
+ *
+ * 2026-10-04 第三轮：这里原来是四角裁切标记。用户看过后说"提问框不是很好看"，
+ * lave 的方向是把它做成**一张编辑台**——输入、提示、条件、提交像同一页稿纸上的
+ * 连续内容。四角标记与页面级框架（.shell-room::before）同族，落在书写面上等于
+ * 同一句话说了两遍，删掉；换成一条竖线，它承担的是**排版对齐**而不是装饰。 */
 .ask-field::before {
   content: '';
   position: absolute;
-  inset: -7px;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
   pointer-events: none;
-  background:
-    linear-gradient(var(--accent-line), var(--accent-line)) left top / 13px 1px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) left top / 1px 13px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) right top / 13px 1px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) right top / 1px 13px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) left bottom / 13px 1px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) left bottom / 1px 13px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) right bottom / 13px 1px no-repeat,
-    linear-gradient(var(--accent-line), var(--accent-line)) right bottom / 1px 13px no-repeat;
+  background: var(--accent-line);
 }
 
-/* 一道引导弧线：右下角四分之一圆，半径 150px、1px 陶土浅线。
- * 整页几乎全是直线与直角，这一处是唯一的曲线——呼吸点。
- * 画在 ::after 上，所以叠在书写面之上（textarea 盖不住它）。 */
-.ask-field::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: var(--radius);
-  background:
-    radial-gradient(150px 150px at 100% 100%,
-      transparent 149px,
-      var(--accent-line) 149px 150px,
-      transparent 150px);
-}
+/* （原右下角引导弧线已移除，2026-10-04 第三轮。）它与四角标记、灰底、描边
+ * 叠在同一块面上是四层装饰争一个位置；编辑台要的是"一叠稿纸"，不是"一个控件"。
+ * 曲线留给结果页的章节轨道与营养表分隔线，首屏保持通篇直线。 */
 
 .ask-label {
   display: block;
@@ -274,41 +277,67 @@ body {
   margin-bottom: var(--s1);
 }
 
-/* ── 输入面（2026-10-01 解冻改版）────────────────────────────
- * 上一版是刻意的"一条下划线"（页面要素到不能再素）。解冻后它回到
- * **一块真正的书写面**：浅底 + 描边 + 圆角，与外面那张卡片形成
- * "面里有面"的层次。底色用 --surface-2（比卡片暗半档），
- * 靠明度差而不是描边粗细区分层级。 */
+/* ── 输入面（2026-10-01 解冻改版；2026-10-04 第三轮改回裸排）──────────
+ * 解冻那一版把它做成"面里有面"：浅底 + 描边 + 圆角（--surface-2 比卡片
+ * 暗半档），靠明度差而不是描边粗细分层。第三轮把这一切撤掉——外层
+ * .ask-field 已经是"一页稿纸"，纸上再套一个灰底输入框就变回"一个控件"。
+ * 现在它没有自己的底色、描边与圆角，只负责把文字排在稿纸的格线上。 */
 .ask-input {
   width: 100%;
-  /* 高度与呼吸都交给外层 .ask-field 管（它带上限和 margin-top:auto），
-   * 这里只负责填满它。 */
+  /* 高度交给外层 .ask-field：这层只负责填满那张纸。 */
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--surface-line);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
-  padding: 14px 16px;
+  /* 2026-10-04 第三轮：从"面里有面"改回**直接写在稿纸上**。
+   * 原来这层是 --surface-2 灰底 + 描边 + 圆角 + inset 阴影，加上外层四角标记与
+   * 弧线，同一块面叠了四层装饰，读起来像一个**控件**而不是一页纸。
+   * 现在背景透明、无描边无圆角——界线全部由 .ask-field 的上下发丝线承担。
+   * 左内边距 18px 给边距线让位，让正文与上面的标签对齐到同一条栏口。 */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 0 12px 18px;
   font-family: inherit;
-  font-size: 21px;
-  line-height: 1.55;
+  font-size: 17px;
+  line-height: 1.6;
   color: var(--ink);
-  resize: vertical;
-  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  resize: none;
+  transition: none;
+  /* ── 稿纸格线（2026-10-04 第三轮）────────────────────────────────
+   * 用户要的是"加点图画或别的东西进去，不然只有文字太单调"。这里没有画
+   * 任何图形，只是把这块面做成**真正的稿纸**：按行高 27.2px 画横向浅线，
+   * 从首行文字下方 39px 起（12px 上内边距 + 27.2px 行高），往下重复。
+   *
+   * 它之所以是"结构"而不是"花纹"：格线的间距由字号与行高算出来，文字正好
+   * 落在格子里；空着的部分也在说"这里可以写"。纯 CSS 背景，不增 DOM、
+   * 不进无障碍树、与打字和滚动都不冲突。
+   * attachment:local 让格线跟着 textarea 的内容一起滚，写满一屏也不错位。 */
+  background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 100% 27.2px;
+  background-position: 0 39px;
+  background-attachment: local;
+  background-repeat: repeat;
+}
+
+/* 滚过一屏后，格线在焦点态下也不该比文字抢眼——它恒用 --line。 */
+.ask-input:focus {
+  background-color: transparent;
 }
 
 .ask-input::placeholder {
   color: var(--ink-faint);
 }
 
-/* 聚焦：描边转 accent + 一圈 accent 环。解冻后允许焦点有颜色，
- * 但它是 1px 描边 + 极浅外环，不是发光描边。 */
+/* 聚焦（2026-10-04 第三轮）：输入面已经透明、无描边，原来那套"描边转 accent +
+ * 一圈 accent 外环"没有了落点。焦点改由**左侧边距线**承担——它本来就是稿纸的
+ * 栏口线，聚焦时从陶土浅档提到正常档，正好是"笔已经落在这页上"的信号。
+ * 用 :focus-within 挂在容器上，因为要变色的是画在容器伪元素上的那条线。 */
 .ask-input:focus {
   outline: none;
-  border-color: var(--accent);
-  background: var(--surface);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.ask-field:focus-within::before {
+  background: var(--accent);
 }
 
 /* ── 顶部需求回显框（2026-10-04 · 第 4 项）──────────────────────────
@@ -319,8 +348,10 @@ body {
  * 并标上记录时刻：一轮结果可能几小时后被重新打开，没有时刻就分不清
  * 这是刚点的还是昨天的。
  *
- * 角标沿用书写面那套四角裁切标记：同一句话从写下来到结果页一路带着
- * 同一个记号，用户认得出"这是我说的"。
+ * 角标：与页面级四角裁切标记（.shell-room::before，见 sheet.css）同一语汇。
+ * 注意它已不再是"书写面的角标"——书写面在 2026-10-04 第三轮改走稿纸语汇
+ * （上下发丝线 + 左侧边距线），两处不再呼应；这里保留是因为结果页这一框
+ * 本身是"打样"的框。
  *
  * 它在 .result-body 之前，所以是**通栏**的，不参与下方正文与右栏的两列栅格，
  * 也不影响左侧章节轨道的定位基准。 */
@@ -639,13 +670,14 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap; /* 208px 窄栏（对调后）：溢出时数据换行，而不是把成员名压成 8px 宽 */
 }
 
 .fs-mname {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  flex: none;
   font-size: var(--fs-data);
   color: var(--ink);
 }
@@ -788,7 +820,6 @@ body {
   font-size: var(--fs-data);
 }
 
-/* 长菜名截断保行（不换行撑破右栏 278px）。 */
 .fs-dname {
   min-width: 0;
   overflow: hidden;
@@ -947,8 +978,6 @@ body {
 .shell-main {
   min-height: 55vh;
 }
-
-
 
 
 

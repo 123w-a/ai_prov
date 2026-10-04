@@ -186,19 +186,53 @@
    * 于是不需要伪元素、不需要 z-index、不需要动任何内容层的堆叠顺序，
    * 光靠 background-* 三层就得到"上亮下沉 + 边缘见图纸"的空间感。
    * 网格线用暖墨（与 --ink 同色相）而不是中性灰：中性灰落在暖纸上会发蓝。 */
-  --bg-hi: #fffdf8;
-  --bg-lo: #f0eae0;
-  --bg-deep: #ede5d9;
+  /* ── 2026-10-04：三值按预期图 gpt-image-2.png **像素实测**重定 ─────────
+   * 用户裁决「按这个预期图的风格来，严格按这个标准」。改前我先在真实页面上
+   * 采了同一批相对位置的像素与预期图对照，结论是三层背景（底/网格/房间光）
+   * 其实**早就接上了**，问题不在结构而在**色相**：
+   *
+   *   采样点     预期图      改前的真实页面     R−B 预期 / 实际
+   *   页左上    #F4E9D9    #F3EDE4            27 / 15
+   *   页左中    #F6ECDD    #EDE5DA            25 / 19
+   *   页右下    #EEE0CE    #EAE3D7            32 / 19
+   *   页上中    #FCF5E9    #F9F5EE            19 / 11
+   *
+   * 即上一轮"背景没有任何提升"的量化根因：**暖度不足，读作灰白**。
+   * 下面三值直接取预期图顶部中心 / 中段 / 底部边缘的实测均值，
+   * 明暗跨度与原值相近，变的只是色相（减蓝、加红）。 */
+  --bg-hi: #fcf5e9;
+  --bg-lo: #f6ecdd;
+  --bg-deep: #eee0ce;
   --grid-line: rgba(61, 42, 24, 0.035);
   --grid-size: 56px;
   --grid:
     repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size)),
     repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size));
+  /* 中段改用 --bg-lo：原来四档全是 --bg-hi 的不同透明度，于是"中段"只是
+     顶部色被摊薄，三段之间没有可辨色差；接上 --bg-lo 后渐变才有中间色。 */
   --room-wash: radial-gradient(1600px 820px at 50% -10%,
     color-mix(in srgb, var(--bg-hi) 92%, transparent) 0%,
-    color-mix(in srgb, var(--bg-hi) 58%, transparent) 34%,
+    color-mix(in srgb, var(--bg-lo) 62%, transparent) 34%,
     color-mix(in srgb, var(--bg-hi) 14%, transparent) 68%,
     color-mix(in srgb, var(--bg-hi) 0%, transparent) 100%);
+
+  /* ── 版心尺度（2026-10-04 预期图对齐）────────────────────────────────
+   * 这两个变量**一直只有 fallback、从没被定义过**（base.css L50/L864、
+   * sheet.css L94 的 max-width，base.css L129 与 result-v3.css L669 的栅格），
+   * 所以它们本来就是留好的对照台入口。这里第一次给它们赋值，
+   * 依据是 gpt-image-2.png 的**像素实测**：
+   *
+   *   内容区 x=50..1475 → 1425/1536 = 92.8% → 1366 视口下 1268px
+   *   左栏   x=50..300  →  250/1536 = 16.3% → 208px
+   *   右主卡 x=321..1475 → 1155/1536 = 75.1%；1268−208−32(gap) = 1028px ✓
+   *
+   * ⚠️ 冲突待用户确认：base.css L40-49 记着用户 2026-09-23 把
+   * 1010/1200/1440/100% 四档切着比完**定的是 1010**，理由是 1200/1440 会在
+   * 正文与右栏之间形成约 194px 中缝、"中缝比两侧留白更难受"。
+   * 预期图要的是 92.8%（比 1440 档还宽）。这是他的旧裁决与预期图标准的冲突，
+   * 只有他能裁——他若否决，删掉下面两行即回到 1010（全仓唯一改动点）。 */
+  --content: 1268px;
+  --rail: 208px;
 
   /* ── 形与光 ── */
   --radius-card: 14px;
