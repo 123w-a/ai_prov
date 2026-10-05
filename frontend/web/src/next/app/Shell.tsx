@@ -3,6 +3,7 @@ import { switchActiveMember, addMember, updateMember, deleteMember } from '../..
 import type { MemberInput } from '../../api/client.ts'
 import { familyFacts, notifyMemberSwitched, useHousehold, type FamilyData } from '../data/household.ts'
 import { ProfileView } from '../views/ProfileView.tsx'
+import { Icon, type IconName } from '../ui/Icon.tsx'
 
 /**
  * 全局导航壳（2026-09-29 户型图第 2 步）。
@@ -38,6 +39,22 @@ const ROOM_LABEL: Record<RoomId, string> = {
   weekly: '周报',
   fav: '收藏',
   svc: '服务',
+}
+
+/** 房间图标（2026-10-05 竖栏补密第二刀）。
+ *
+ *  复用 ui/Icon.tsx 里已有的 13 个图标，不新画、不引依赖。Icon 是 width/height=1em
+ *  且 stroke=currentColor，所以尺寸与颜色都由本片的 CSS 决定——文字调大它跟着大。
+ *
+ *  映射依据（不是随手配）：今晚这一顿=餐具、身体档案=人、周报=日历、收藏=星。
+ *  服务这一项实测其页面是「附近餐厅 + 服务规划」（ServiceView 的 sv-k 写着"附近餐厅"），
+ *  所以给厨师帽而不是对话或漏斗——配错图标比不配更糟，这一项是专门核对过的。 */
+const ROOM_ICON: Record<RoomId, IconName> = {
+  tonight: 'utensils',
+  profile: 'people',
+  weekly: 'calendar',
+  fav: 'star',
+  svc: 'hat',
 }
 
 /** 从 hash 认房间。认不出（空、写错、手改过）一律回今晚——
@@ -160,7 +177,8 @@ export default function Shell({
             aria-current={room === id ? 'page' : undefined}
             onClick={() => go(id)}
           >
-            {ROOM_LABEL[id]}
+            <Icon name={ROOM_ICON[id]} />
+            <span className="shell-tab-t">{ROOM_LABEL[id]}</span>
           </button>
         ))}
         {/* 家庭成员（2026-10-01 B 批次①，2026-10-05 竖栏补密时展开成区块）：
