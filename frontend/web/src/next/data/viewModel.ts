@@ -127,6 +127,11 @@ export interface GuardVM {
   condition: string
   /** guardText 的产物：已经翻译成中文，没有可显示内容时是 hide。 */
   text: Display<string>
+  /** 这条约束**要求什么**（后端 RULES[condition]["message"] 原值）。
+   *  与 source 取自同一个规则字典，是「依据」栏的主句：没有它，两条同条件的
+   *  护栏在右栏长得一模一样（实测两条"孕期"都是「孕期 + 同一份指南 + p4·p5」，
+   *  读的人根本分不清哪条对应"水产要熟透"、哪条对应"钠不超 2000mg"）。 */
+  rule: string
   /** 出处（指南名 + 页码），由后端从确定性规则库**机械注入**
    *  （agent/schemas.py 的 GuardrailItem.source，取自 domain/nutrition_rules.py
    *  的 RULES[cond]["source"]，与这条结论的 message 同属一份规则）。
@@ -325,6 +330,7 @@ function toGuard(g: GuardrailItem, guardText: (status?: string, reason?: string)
   return {
     condition: g.condition,
     text: texted ? show(texted) : hide<string>('empty', '状态词与理由都为空（pass 且理由自述时就是这种）'),
+    rule: (g.rule ?? '').trim(),
     source: (g.source ?? '').trim(),
   }
 }

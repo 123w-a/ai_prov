@@ -320,6 +320,16 @@
   white-space: nowrap;
 }
 
+/* 约束内容（这条依据真正在说的那句话）。它比出处重要，所以给 ink 而不是
+   ink-soft：右栏扫读时先落在"要求什么"，指南名与页码是它的落款。 */
+.rail-sources .src-rule {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
 /* 页码单独一行：它是"能直接翻书核对"的那部分，不参与上面的截断，
    用等宽字 + accent-ink 让它从一段文字里跳出来。 */
 .rail-sources .src-page {

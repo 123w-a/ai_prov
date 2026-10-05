@@ -78,6 +78,11 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
               {evidence.map((g, i) => (
                 <li key={i}>
                   <span className="src-cond">{g.condition}</span>
+                  {/* rule 是这一栏的主句，必须显示：只有"条件 + 出处"时，两条同条件
+                      的护栏（实测两条"孕期"）在右栏长得一模一样，读的人分不清哪条
+                      是"水产要熟透"、哪条是"钠不超 2000mg"。这句话才是"依据什么"
+                      真正在说的东西，指南只是它的落款。 */}
+                  {g.rule && <span className="src-rule">{g.rule}</span>}
                   {/* 名字单行截断、全名挂 title：208px 塞不下 50 字的出处，
                       但页码必须完整可见（那是能直接翻书核对的东西），
                       所以页码另起一行，不参与截断。 */}
