@@ -127,6 +127,12 @@ export interface GuardVM {
   condition: string
   /** guardText 的产物：已经翻译成中文，没有可显示内容时是 hide。 */
   text: Display<string>
+  /** 出处（指南名 + 页码），由后端从确定性规则库**机械注入**
+   *  （agent/schemas.py 的 GuardrailItem.source，取自 domain/nutrition_rules.py
+   *  的 RULES[cond]["source"]，与这条结论的 message 同属一份规则）。
+   *  没有对应规则的条件（过敏原/成员冲突/档案不可用）是空串——空就表示
+   *  本产品给不出处，不补默认值、不写"暂无"。 */
+  source: string
 }
 
 export interface MemberLineVM {
@@ -319,6 +325,7 @@ function toGuard(g: GuardrailItem, guardText: (status?: string, reason?: string)
   return {
     condition: g.condition,
     text: texted ? show(texted) : hide<string>('empty', '状态词与理由都为空（pass 且理由自述时就是这种）'),
+    source: (g.source ?? '').trim(),
   }
 }
 

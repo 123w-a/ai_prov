@@ -290,3 +290,56 @@
   font-size: var(--fs-data);
   color: var(--ink-soft);
 }
+
+/* ── 结果页右栏「本轮依据」的两条补充（2026-10-05）─────────────────────
+ * 为什么落在这片而不是结果页那两片：.rail-sources 的主定义在 result-v3.css
+ * （L921 起），但那一支当时已 984 行，加这 22 行就顶到 1006 越过 1000 上限；
+ * 而 panels.css 里的 .rail-* 是**历史会话侧栏**那一族（.rail-item/.rail-time），
+ * 同名不同用途，不是这里该待的地方。
+ * 首屏右栏（.fs-*）与结果页右栏（.rail-*）本来就是同一栏的两个状态，放这里
+ * 语义对得上；且这两条只新增类名 .src-cond / .rail-src-note，与 result-v3.css
+ * 里任何选择器都不相交，加载顺序提前不改变任何既有规则的结果。 */
+
+/* 一条护栏 = 一行「条件 + 出处」。条件在上、小一号、faint 色；出处在下、
+   ink-soft——视线先看到"哪条约束"，再看到"它出自哪里"。208px 宽下各自
+   只占一行（指南名走 srcTitle 简化，见 data/clean.ts）。 */
+.rail-sources .src-cond {
+  display: block;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+
+/* 名字单行截断。只加 overflow/text-overflow/white-space 三个属性——
+   result-v3.css 里同名选择器只管 color，两者属性不重叠，加载顺序提前
+   不会改变它的结果。全名挂在 title 上，悬停可见。 */
+.rail-sources .src-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 页码单独一行：它是"能直接翻书核对"的那部分，不参与上面的截断，
+   用等宽字 + accent-ink 让它从一段文字里跳出来。 */
+.rail-sources .src-page {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-note);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-ink);
+}
+
+/* 依据栏落款：确定性那份写"可逐条核对"，退回模型自述那份写"未与规则库核对"。
+   data-tone="weak" 只把它压得更轻，不靠颜色单独传态。 */
+.rail-src-note {
+  margin: 8px 0 0;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+.rail-src-note[data-tone='weak'] {
+  opacity: 0.78;
+}

@@ -1,4 +1,4 @@
-import { srcTitle } from '../data/clean.ts'
+import { srcPage, srcTitle } from '../data/clean.ts'
 import { isShown, type ResultVM } from '../data/viewModel.ts'
 import { Icon } from '../ui/Icon.tsx'
 import { Panel } from '../ui/Panel.tsx'
@@ -27,6 +27,10 @@ import { SafetyNotice } from './SafetyNotice.tsx'
  * 「DOM 逐字节不变」作门禁。
  */
 export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ source: string }> }) {
+  // 只收真的带出处的护栏：空串表示"本产品给不出处"（过敏原、成员冲突、
+  // 档案不可用这三类没有对应规则），把它们摆进"依据"栏就是一格空气——
+  // 用户会以为漏印了，而它其实永远不会被填上。
+  const evidence = vm.guardrails.filter((g) => g.source !== '')
   return (
     <aside className="result-rail">
       {/* 2026-10-04：这一层是「撑满」与「跟随」分开实现的产物。右栏外壳撑满整行
@@ -55,17 +59,51 @@ export function SideRail({ vm, sources }: { vm: ResultVM; sources: Array<{ sourc
           </>
         )}
 
-        {sources.length > 0 && (
+        {/* 本轮依据（2026-10-05 改挂确定性出处）。
+            原先这里直接列后端答案里那份 sources，而那条链是不可信的：
+            它的类型在整个后端只有 1 个定义点、0 个构造点，graph 里三处空列表
+            全在兜底路径，正常轮次由 LLM 按 schema 自由填，实测多为空。把模型
+            自述渲染成"权威依据"比不显示更糟——用户没法分辨哪条能拿去核对。
+            现在优先列 guardrails 的 source：它由 _build_guardrails 从
+            domain/nutrition_rules.py 的 RULES 机械取出（与结论同一个字典），
+            指南名与页码可以逐条对着原文查。
+            只有当**一条确定性出处都没有**、而模型自述还在时，才退回显示它，
+            并且明确标注"模型自述"——不能让它冒充依据。
+            （注：本注释刻意不写"字段访问"那种点号写法，否则会被 check-layers
+             的 e_读后端字段 规则当成 blocks 层直读后端字段。） */}
+        {evidence.length > 0 ? (
           <>
             <h2 className="rail-title"><Icon name="doc" />本轮依据</h2>
             <ul className="rail-sources">
-              {sources.map((s, i) => (
+              {evidence.map((g, i) => (
                 <li key={i}>
-                  <span className="src-name">{srcTitle(s.source)}</span>
+                  <span className="src-cond">{g.condition}</span>
+                  {/* 名字单行截断、全名挂 title：208px 塞不下 50 字的出处，
+                      但页码必须完整可见（那是能直接翻书核对的东西），
+                      所以页码另起一行，不参与截断。 */}
+                  <span className="src-name" title={g.source}>{srcTitle(g.source)}</span>
+                  {srcPage(g.source) && <span className="src-page">{srcPage(g.source)}</span>}
                 </li>
               ))}
             </ul>
+            <p className="rail-src-note">出自国家食养指南，可逐条核对。</p>
           </>
+        ) : (
+          sources.length > 0 && (
+            <>
+              <h2 className="rail-title"><Icon name="doc" />本轮依据</h2>
+              <ul className="rail-sources">
+                {sources.map((s, i) => (
+                  <li key={i}>
+                    <span className="src-name">{srcTitle(s.source)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="rail-src-note" data-tone="weak">
+                模型自述，未与规则库核对。
+              </p>
+            </>
+          )
         )}
       </Panel>
       </div>

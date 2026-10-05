@@ -147,3 +147,32 @@ export function srcTitle(raw: string): string {
     .trim()
   return s || raw
 }
+
+/**
+ * 从**确定性出处**里取出页码部分，右栏单独一行小字显示。
+ *
+ * guardrails 的 source 与上面那条（文件名）不是一个形状：它是
+ * 「指南名（版本）页码」，形如
+ *   · 成人高血压食养指南（2023年版）p6-7
+ *   · 成人糖尿病食养指南（2023年版）p7,p11
+ *   · 中国备孕和孕期妇女膳食指南（2022）解读（杨年红）p4；中国哺乳期妇女膳食指南（2022）解读（杨振宇）p5
+ * 前两种还好，第三种有 50 个字，直接塞进 208px 的栏里要折三四行。
+ * 而"能拿去核对"的关键恰好是**页码**——用户翻开那份指南直接跳到 p4 就行，
+ * 指南全名反而是次要的。所以把页码单独提出来显示，名字走 CSS 单行截断、
+ * 全名挂在 title 上（悬停可见）。
+ *
+ * 只认 p/p 加数字这种最稳的形态，取不到就返回空串（调用方整段不渲染），
+ * 绝不拿名字去猜页码。
+ */
+export function srcPage(raw: string): string {
+  const hits = String(raw ?? '').match(/p\s*\d+(?:\s*[-–,，]\s*\d+)*/gi) ?? []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const h of hits) {
+    const t = h.replace(/\s+/g, '').toLowerCase()
+    if (seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out.join(' · ')
+}
