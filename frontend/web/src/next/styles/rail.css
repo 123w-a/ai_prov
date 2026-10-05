@@ -1,0 +1,126 @@
+/* ── 左侧常驻竖导航（2026-10-04 骨架裁决）─────────────────────────────────
+
+   用户 2026-10-04 拍板：前端骨架以 .tmp-img/result-expect.png 为准 —— 左侧常驻
+   竖导航 + 中间主区 + 右窄栏，**禁用顶部横向导航条**。本片只做骨架的第一步：
+   把导航从版心上方的通栏条搬进版心左列，并让版心由 .shell-body 统一供给。
+
+   为什么版心要往上提一层：导航横排时，它和 .tn/.sheet-foot 各自 max-width +
+   margin:auto 就能对齐；改成竖排后，"左栏 + 主区"是**同一个版心内的两列**，
+   三者再各自居中就会出现三套互相错位的列线。所以版心和栅格归 .shell-body
+   （对应预期图实测：左栏 ≈16%≈208px = --rail，主区 ≈54%，两者间距 40px），
+   页脚留在它之外、仍按同一 max-width 居中，边界因此天然对齐。
+
+   为什么单开一片：base.css 已 999/1000（1000 行即门禁失败），本片选择器又
+   整体覆盖 base.css 的 .shell-nav/.shell-tab，必须排在它之后（frame.css 之后）。 */
+
+.shell-body {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content, 1268px);
+  margin: 0 auto;
+  display: grid;
+  /* minmax(0,1fr) 而不是 1fr：主区里有长表格与 nowrap 的数值行，
+     纯 1fr 的最小尺寸是 auto，会把栅格列顶宽、整页出现横向滚动。 */
+  grid-template-columns: var(--rail, 208px) minmax(0, 1fr);
+  gap: 40px;
+  align-items: stretch;
+}
+
+/* 覆盖 base.css 的横排导航与 frame.css 给它的 width:100%：
+   从"版心上方的通栏条"改为"版心左列的竖栏"。下边那条通栏发丝线一并去掉——
+   它是横排导航的收束线，竖栏里没有东西可收，留着会横穿左栏。 */
+.shell-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  max-width: none;
+  margin: 0;
+  padding: 24px 0 26px;
+  border-bottom: 0;
+}
+
+/* 品牌：竖栏的起点。印章仍是 34×34 实底（批次 4 定的），左栏里它比文字高，
+   所以用 46px 给文字让位（原 42px 是为横排的基线视觉调的）。 */
+.shell-brand {
+  padding-left: 46px;
+  margin-right: 0;
+  margin-bottom: 24px;
+  font-size: 18px;
+}
+
+/* 条目：横排时的"下划线短横"在竖栏里指不到任何方向（下划线指向下一行），
+   所以当前项的标记改为**左缘一道竖短线**——与顶栏那一横是同一族信号，只换朝向。
+   条目一律左对齐并撑满栏宽，让整列左边缘成为一条可读的列线。 */
+.shell-tab {
+  width: 100%;
+  text-align: left;
+  font-size: 15px;
+  padding: 9px 10px 9px 14px;
+}
+
+.shell-tab.is-on::after {
+  left: 0;
+  top: 50%;
+  bottom: auto;
+  width: 2px;
+  height: 16px;
+  margin-left: 0;
+  margin-top: -8px;
+  border-radius: 0;
+}
+
+/* 家庭成员按钮推到竖栏底部（预期图里成员卡正是左栏的收束项）。
+   分隔从"左竖线"改成"上橫线"：它在底部已经是最后一项，需要的是与上方条目分开。 */
+.shell-ctx {
+  margin-left: 0;
+  margin-top: auto;
+  padding-left: 0;
+  padding-top: 14px;
+  border-left: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* ── 四角裁切标记的挂载点随版心上移 ──────────────────────────────────────
+   sheet.css 把标记挂在 .shell-room 上、用 left/right: calc(50% - 50vw + 22px)
+   反推到**视口**四角。那个算法成立的隐含前提是：宿主自己居中、且宽度就是版心宽
+   （旧横排导航时 .shell-room 实测 x=49、宽 1268，于是 50% 恰好是视口中心）。
+
+   骨架改成两列后这个前提没了——.shell-room 是右列（x=297、宽 1020），它的 50%
+   不是视口中心，标记整体右偏 124px，右缘超出视口 102px，页面于是出现 102px
+   横向滚动（实测：元素级扫描 0 个越界，越界的正是伪元素本身，所以只有量
+   scrollWidth 才看得见）。
+
+   挂到 .shell-body 上，前提重新成立（x=49、宽 1268、视觉居中），公式回到原样。
+   下半段背景复制自 sheet.css——伪元素不能继承宿主的 background，只能连同样式
+   一起搬；这里不复用 .shell-room::before 的声明是因为它已经被 content:none 关掉了。 */
+.shell-body {
+  position: relative;
+}
+
+/* 注意层序：sheet.css 排在 rail.css **之后**（见 scripts/check-layers.mjs 的
+   STYLE_ORDER），所以同特异性的 .shell-room::before{content:none} 会被它那条
+   content:'' 盖回来——实测伪元素仍在，右缘照样超視口 102px。多带一层 .shell
+   把特异性提到 0,2,0 才关得掉；改层序则要动四片以上，代价更大。 */
+.shell .shell-room::before {
+  content: none;
+}
+
+.shell-body::before {
+  content: '';
+  position: absolute;
+  left: calc(50% - 50vw + 22px);
+  right: calc(50% - 50vw + 22px);
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line), var(--line)) left top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right top / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 1px 20px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 20px 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) right bottom / 1px 20px no-repeat;
+}

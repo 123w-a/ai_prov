@@ -26,6 +26,9 @@ const STYLE_ORDER = [
   // （auto margin 取消 stretch 导致版心退回内容宽度）。覆盖 base.css 的宽度行为，
   // 必须排在 base.css 之后；夹具台入口 fixture-main.tsx 同步导入同一项。
   './styles/frame.css',
+  // 左侧常驻竖导航（2026-10-04 骨架裁决第一步）：整体覆盖 base.css/frame.css 的
+  // .shell-nav/.shell-tab 横排形态，并引入 .shell-body 版心栅格，排在 frame.css 之后。
+  './styles/rail.css',
   './styles/wait.css',
   './styles/result-v1v2.css',
   './styles/result-v3.css',

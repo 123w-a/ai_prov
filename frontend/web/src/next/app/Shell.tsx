@@ -105,6 +105,11 @@ export default function Shell({
 
   return (
     <div className="shell">
+      {/* 版心分两段（2026-10-04 骨架裁决：左侧常驻竖导航）：.shell-body 提供版心与两列栅格，
+          导航在左、房间在右。页脚留在 .shell-body 之外，按同一版心居中，所以三者的左右边界
+          仍然对齐。下面两行的缩进刻意不重排——只加一层包裹，避免整段挪位产生看不出实际
+          变化的巨型 diff（真要重排缩进应单独一次提交）。 */}
+      <div className="shell-body">
       <nav className="shell-nav" aria-label="主导航">
         <span className="shell-brand">小膳管家</span>
         {ROOMS.map((id) => (
@@ -146,6 +151,7 @@ export default function Shell({
         {/* 服务房（第 5 步）：四个房都在下面四条分支里渲染完毕，
             RoomPlaceholder 占位组件已随之完成使命并删除。 */}
         {room === 'svc' && <div className="shell-room">{svc}</div>}
+      </div>
       </div>
 
       {/* 页脚：五个房共用的底部收束。没有它时，周报这类内容较少的房间会在

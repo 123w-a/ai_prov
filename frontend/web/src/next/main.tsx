@@ -23,6 +23,9 @@ import './styles/base.css'
 /* 版心框架（2026-10-04 第六轮）。.tn/.shell-nav/.sheet-foot 的 auto margin 会取消
    stretch，宽度退回内容 max-content——必须补 width:100%，故排在 base.css 之后。 */
 import './styles/frame.css'
+/* 左侧常驻竖导航（2026-10-04 骨架裁决第一步）。它整体覆盖 base.css 与 frame.css
+   里 .shell-nav/.shell-tab 的横排形态，必须排在 frame.css 之后。 */
+import './styles/rail.css'
 import './styles/wait.css'
 import './styles/result-v1v2.css'
 import './styles/result-v3.css'

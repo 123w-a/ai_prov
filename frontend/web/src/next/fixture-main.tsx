@@ -13,6 +13,11 @@ import './styles/base.css'
 // width:100%（auto margin 取消 stretch 会让版心退回内容宽度）——正是本文件
 // 上面那条「夹具几何=正式页几何」承诺所要求的同步。
 import './styles/frame.css'
+// 左侧常驻竖导航（2026-10-04 骨架裁决第一步）：本夹具台**不渲染 .shell-nav**
+// （导航只在正式入口 /next.html 的 Shell 里），所以这一片在这里不产生规则命中；
+// 仍然导入，是为了让样式片清单与 main.tsx 逐行对齐——2026-10-01 就是因为两份
+// 清单不一致，夹具台量到的几何与正式页不同却没人发现。
+import './styles/rail.css'
 import './styles/wait.css'
 import './styles/result-v1v2.css'
 import './styles/result-v3.css'
