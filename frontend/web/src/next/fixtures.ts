@@ -457,7 +457,16 @@ export const CASES: Record<string, FixtureCase> = {
   },
   full: { kind: 'result', label: '满数据（含家人矩阵）', run: run({ answer: FULL, elapsed: 354700 }) },
   thin: { kind: 'result', label: '缺字段（最薄，无营养表）', run: run({ answer: THIN, elapsed: 52000 }) },
-  candidates: { kind: 'result', label: '候选轮（无 answer，正文是清单）', run: CANDIDATES },
+  candidates: {
+    kind: 'result',
+    label: '候选轮（无 answer，正文是清单）',
+    run: CANDIDATES,
+    // 候选页右栏那三块（第 F 项）。刻意用首屏那同一份 RAIL_*：候选页与首屏读的是
+    // 同一份数据、只是按语境换标题，夹具照这个事实给——给两份不同的假数据，
+    // 就验不出"同一份数据在两种语境下说两种话"这件事，而那正是本项要证明的。
+    // cand 给 null：待确认块是首屏专属。
+    rail: { fam: RAIL_FAM, week: RAIL_WEEK, cand: null, fridge: RAIL_FRIDGE },
+  },
   partial: { kind: 'result', label: '营养表·缺口（已覆盖小计）', run: run({ answer: NUTRI_PARTIAL, elapsed: 96000 }) },
   long: { kind: 'result', label: '长文本溢出压力', run: run({ answer: LONG }) },
   prose: { kind: 'result', label: '纯散文（13/35）', run: run({ answer: PROSE, elapsed: 111000 }) },

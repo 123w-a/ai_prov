@@ -543,6 +543,12 @@ export default function TonightApp() {
           onSend={() => void send()}
           blocked={blocked}
           onPickCandidate={(t) => void send(t)}
+          /* 候选页右栏那三块（第 F 项）：与首屏读**同一份**已算好的数据，
+             不重新拉接口——两处若各拉一次，"首屏说的人"和"候选页说的人"
+             会在档案刚改过的那一瞬间不一致。cand 不传：待确认块是首屏专属。 */
+          fam={fam}
+          week={week}
+          fridge={fridgeBox}
         />
       )}
 

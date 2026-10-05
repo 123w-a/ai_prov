@@ -19,18 +19,21 @@ import { Icon } from '../ui/Icon.tsx'
  *   3 趋势照实写「数据不足」，**不画趋势线**——后端给的全是 insufficient，
  *      画一条上升线就是替后端编结论。
  */
-export function WeekBlock({ week }: { week: WeekView }) {
+export function WeekBlock({ week, variant = 'ask' }: { week: WeekView; variant?: 'ask' | 'candidate' }) {
+  // 同一份数据的两种语境：首屏是"我懂你"（本周吃了什么），候选页是"凭什么给你这三个"
+  // （本周已做过什么，好避开重复）。默认 'ask' 保证首屏逐字不变。
+  const weekLabel = variant === 'candidate' ? '本周已做过' : '本周'
   if (week.isEmpty) {
     return (
       <section className="fs-block" data-block="week">
-        <h3 className="fs-title"><Icon name="calendar" />本周</h3>
+        <h3 className="fs-title"><Icon name="calendar" />{weekLabel}</h3>
         <p className="fs-note">{week.message}</p>
       </section>
     )
   }
   return (
     <section className="fs-block" data-block="week">
-      <h3 className="fs-title"><Icon name="calendar" />本周</h3>
+      <h3 className="fs-title"><Icon name="calendar" />{weekLabel}</h3>
       <p className="fs-weekhead">
         <b className="fs-count">{week.meals}</b>
         <span className="fs-unit">餐</span>

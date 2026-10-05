@@ -19,6 +19,11 @@ import { ChefTip } from '../blocks/ChefTip.tsx'
 import { Steps } from '../blocks/Steps.tsx'
 import { Sources } from '../blocks/Sources.tsx'
 import { ExtraRecipes } from '../blocks/ExtraRecipes.tsx'
+// 候选页右栏（2026-10-05 第 F 项）：复用首屏那三块（档案/本周/冰箱）。
+// 数据由 app 层算好传下来——AskRail 自己是只读展示组件，不许在这里再拉一份，
+// 否则"首屏说的人"和"候选页说的人"会变成两份可能不一致的数据。
+import { AskRail } from '../blocks/AskRail.tsx'
+import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
 import { Fold } from '../ui/Fold.tsx'
 import { Icon } from '../ui/Icon.tsx'
 import { DishHero } from '../blocks/DishHero.tsx'
@@ -238,6 +243,9 @@ export function RunResult({
   onSend,
   blocked,
   onPickCandidate,
+  fam,
+  week,
+  fridge,
 }: {
   run: RunState
   onAgain: () => void
@@ -252,6 +260,11 @@ export function RunResult({
    *  必须走 send(text) 而不是 setText 后再 send——后者要等 React 状态落地，
    *  同一帧里调用会读到旧文本，发出去的是上一轮那句话。 */
   onPickCandidate: (text: string) => void
+  /** 候选页右栏那三块的数据（第 F 项）。只有候选轮用得上，其余形态传 null
+   *  ——普通散文轮与结构化轮不该因为这次改动多出一个右栏。 */
+  fam?: { members: FamilyMemberRow[]; shared: string[] } | null
+  week?: WeekView | null
+  fridge?: { count: number; names: string } | null
 }) {
   const form = resultForm(run.answer)
   const sources = run.answer?.sources ?? []
@@ -294,24 +307,38 @@ export function RunResult({
 
       {vm ? (
         <StructuredResult vm={vm} body={run.body} />
-      ) : (
-        <>
-          {/* 卡片在正文之前：这一轮用户要看的是"选哪个"，编号清单只是同一份
-              内容的未结构化形态，所以卡片承接选择动作、正文接着讲别的。 */}
-          {useCards && (
+      ) : useCards ? (
+        /* 候选轮（第 F 项）：从"一列正文"变成"选择区 + 右栏方案依据"，
+           与预期图 cand-expect-v2.png 同构。右栏复用首屏那三块——
+           同一份数据在两个语境下的两种说法（variant='candidate' 换标题），
+           不新建组件、也不再拉一次接口。
+           .ask-layout 与 .result-body 是同一套网格（minmax(0,1fr) var(--rail)），
+           所以这里不引入新的列宽常量。 */
+        <div className="ask-layout">
+          <div className="ask-main">
             <CandidateCards
               list={cands}
               onPick={(c) => onPickCandidate(`第${c.index}个，${c.name}`)}
               onAsk={onText}
             />
-          )}
-          <ProseResult
-            body={useCards ? stripCandidateLines(run.body) : run.body}
-            request={run.request}
-            reds={[]}
-            guards={[]}
-          />
-        </>
+            <ProseResult
+              body={stripCandidateLines(run.body)}
+              request={run.request}
+              reds={[]}
+              guards={[]}
+            />
+          </div>
+          {/* cand 传 null：那个"待确认"块是首屏专属（它是档案里待用户拍板的事项），
+              候选页右栏要回答的是"为什么是这三个"，混进待确认事项只会跑题。 */}
+          <AskRail fam={fam ?? null} week={week ?? null} cand={null} fridge={fridge ?? null} variant="candidate" />
+        </div>
+      ) : (
+        <ProseResult
+          body={run.body}
+          request={run.request}
+          reds={[]}
+          guards={[]}
+        />
       )}
 
       {/* 「真实过程」只对真实跑出来的那一轮开放。收藏里没有当时的用时与阶段

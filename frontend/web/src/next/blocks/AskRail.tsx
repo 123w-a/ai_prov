@@ -27,19 +27,26 @@ export function AskRail({
   week,
   cand,
   fridge,
+  variant = 'ask',
 }: {
   fam: { members: FamilyMemberRow[]; shared: string[] } | null
   week: WeekView | null
   cand: { member: string; source: string; severity: string } | null
   fridge: { count: number; names: string } | null
+  /** 同一份数据的两处用法（2026-10-05 加）：
+   *  'ask'（默认）= 首屏，语气是"我按谁的档案来定"；
+   *  'candidate' = 候选选择页，那三块的作用变成"凭什么给你这三个方案"，
+   *  所以标题换成"匹配的饮食档案 / 本周已做过 / 冰箱现有食材"。
+   *  默认 'ask' 保证首屏逐字不变；候选页不传 cand（待确认块是首屏专属）。 */
+  variant?: 'ask' | 'candidate'
 }) {
   if (!cand && !fam && !week && !fridge) return null
   return (
     <aside className="ask-side">
       {cand && <CandidateBlock cand={cand} />}
-      {fam && <FamilyBlock fam={fam} />}
-      {week && <WeekBlock week={week} />}
-      {fridge && <FridgeBlock fridge={fridge} />}
+      {fam && <FamilyBlock fam={fam} variant={variant} />}
+      {week && <WeekBlock week={week} variant={variant} />}
+      {fridge && <FridgeBlock fridge={fridge} variant={variant} />}
     </aside>
   )
 }
@@ -63,10 +70,13 @@ function CandidateBlock({
 }
 
 /** B2 家庭档案（强度二）。一人一组 dt/dd，数字右对齐、条件/目标走描边小标签。 */
-function FamilyBlock({ fam }: { fam: { members: FamilyMemberRow[]; shared: string[] } }) {
+function FamilyBlock({ fam, variant = 'ask' }: { fam: { members: FamilyMemberRow[]; shared: string[] }; variant?: 'ask' | 'candidate' }) {
   return (
     <section className="fs-block" data-block="family">
-      <h3 className="fs-title"><Icon name="people" />按谁的档案来定</h3>
+      <h3 className="fs-title">
+        <Icon name="people" />
+        {variant === 'candidate' ? '匹配的饮食档案' : '按谁的档案来定'}
+      </h3>
       <dl className="fs-dl">
         {fam.members.map((m) => (
           <div key={m.id} className={`fs-mrow${m.isActive ? ' is-active' : ''}`}>
@@ -93,10 +103,13 @@ function FamilyBlock({ fam }: { fam: { members: FamilyMemberRow[]; shared: strin
 }
 
 /** B4 冰箱（强度三）。计数 + 名字，无图标、无装饰。 */
-function FridgeBlock({ fridge }: { fridge: { count: number; names: string } }) {
+function FridgeBlock({ fridge, variant = 'ask' }: { fridge: { count: number; names: string }; variant?: 'ask' | 'candidate' }) {
   return (
     <section className="fs-block" data-block="fridge">
-      <h3 className="fs-title"><Icon name="fridge" />冰箱</h3>
+      <h3 className="fs-title">
+        <Icon name="fridge" />
+        {variant === 'candidate' ? '冰箱现有食材' : '冰箱'}
+      </h3>
       <p className="fs-weekhead">
         <b className="fs-count">{fridge.count}</b>
         <span className="fs-unit">样</span>
