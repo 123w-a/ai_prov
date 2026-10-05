@@ -1,0 +1,117 @@
+/* ── 候选卡（两阶段点菜·第一阶段）──────────────────────────────────────
+   数据面只有菜名（见 data/candidates.ts 文件头），所以这里只画真的有的三样：
+   序号、菜名、一个选择动作。**不摆属性占位行**——预期图那张图里每张卡有四行
+   属性（时间/厨具/特点/适合谁），后端一行都没有；画成空行或"待补充"都是把
+   "没有"伪装成"暂时没填"，而它们其实永远不会被填上（要填得先改后端）。
+
+   形制沿用主卡那一族：--surface-2 亮面、--surface-line 描边、--shadow-paper
+   落地光、--radius-card（当前 0px，硬直角，与预期图一致）。圆角只用在按钮与
+   药丸上（--radius / --radius-pill）——那是控件，不是卡片面。
+
+   单开一片而不进 base.css：base.css 已 886/1000，本片只定义 .cand-* 新类名，
+   与前面所有片的选择器不相交，放末层不挪动已有层叠。 */
+
+.cand {
+  margin: 0 0 var(--s3);
+}
+
+/* auto-fit + minmax 而不是固定三列：后端候选数从 2 到 8 都可能
+   （_extract_candidate_names 上限 8），固定三列会在 2 道菜时留下一个空洞。 */
+.cand-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(186px, 1fr));
+  gap: var(--s2);
+}
+
+.cand-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s2) 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+}
+
+.cand-no {
+  font-family: var(--mono);
+  font-size: var(--fs-note);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+/* 字重必须 400：Windows 上 SimSun 只有这一档，给 600 会触发**合成粗体**
+   （同套字形向右下偏移重绘、发虚糊边）。这条坑在 base.css 的 .ask-lead 里
+   已经踩过一次，候选菜名与那一行同族，照同样的规格。 */
+.cand-name {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+/* margin-top: auto 让按钮落在卡片底部：三张卡等高（grid 默认 stretch），
+   菜名长短不一时（"香煎三文鱼配蒜香西兰花"会折成两行）按钮不会各自漂在
+   不同高度——第一版这里误写成 margin-top: var(--s2)，实测第 1 张 y=433、
+   第 2/3 张 y=407，三颗按钮错开 26px。auto 吃掉剩余空间，卡内最小间距
+   仍由 .cand-card 的 gap 保证。 */
+.cand-pick {
+  margin-top: auto;
+  align-self: flex-start;
+  padding: 7px 16px;
+  font-family: var(--sans);
+  font-size: var(--fs-data);
+  color: var(--seal-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.cand-pick:hover {
+  background: var(--accent-ink);
+}
+
+.cand-more {
+  margin-top: var(--s2);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cand-more-label {
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+.cand-asks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 药丸形（--radius-pill）：它们是"半句话"，不是按钮——点下去只把话放进
+   输入框，等用户补完口味再发。形状要和上面那个真按钮区分开。 */
+.cand-chip {
+  padding: 5px 12px;
+  font-family: var(--sans);
+  font-size: var(--fs-data);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.cand-chip:hover {
+  border-color: var(--accent);
+}

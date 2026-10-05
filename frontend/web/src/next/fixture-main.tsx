@@ -9,6 +9,7 @@ import { createRoot } from 'react-dom/client'
 // 的承诺直接破了。样式片清单必须与 main.tsx 逐行对齐。
 import './styles/tokens.css'
 import './styles/base.css'
+import './styles/firstscreen.css'
 // 版心框架（2026-10-04 第六轮）：与 main.tsx 同步。它补的是 .tn/.shell-nav 的
 // width:100%（auto margin 取消 stretch 会让版心退回内容宽度）——正是本文件
 // 上面那条「夹具几何=正式页几何」承诺所要求的同步。
@@ -29,6 +30,9 @@ import './styles/motion.css'
 import './styles/primitives.css'
 import './styles/fav.css'
 import './styles/service.css'
+// 候选卡样式（2026-10-05）：夹具台有 candidates 用例，这一片**会**命中，
+// 必须与 main.tsx 同步——否则候选卡在夹具台量到的几何不是正式页的。
+import './styles/candidate.css'
 
 import { RunResult } from './views/ResultView.tsx'
 import { WaitCard } from './blocks/WaitCard.tsx'
@@ -211,6 +215,7 @@ if (rootEl.childElementCount === 0) {
             onText={() => {}}
             onSend={() => {}}
             blocked={false}
+            onPickCandidate={() => {}}
           />
         ) : (
           <WaitCard run={current.run} onCancel={() => {}} onRestart={() => {}} />

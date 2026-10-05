@@ -20,6 +20,11 @@ import { createRoot } from 'react-dom/client'
  */
 import './styles/tokens.css'
 import './styles/base.css'
+/* 首屏右栏四块卡片（.ask-side + .fs-*，2026-10-05 从 base.css 整族搬出：
+   base.css 当时 1008 行越过 1000 行上限）。必须紧跟 base.css——全仓只有它
+   定义 .fs-*，而 base.css 里排在原段落之后的只有 .tn-* 导航族，两者不相交，
+   所以"紧跟 base.css"与"原先在 base.css 内部"等价。 */
+import './styles/firstscreen.css'
 /* 版心框架（2026-10-04 第六轮）。.tn/.shell-nav/.sheet-foot 的 auto margin 会取消
    stretch，宽度退回内容 max-content——必须补 width:100%，故排在 base.css 之后。 */
 import './styles/frame.css'
@@ -51,6 +56,10 @@ import './styles/service.css'
    .tn-railbtn 新类名，与前面所有片选择器不相交，放末层不挪动已有层叠。
    夹具台（fixture-main）不需要它——面板不在夹具台渲染。 */
 import './styles/panels.css'
+/* 候选卡样式（2026-10-05 新增）。同样只定义 .cand-* 新类名，放末层不挪层叠。
+   注意它**必须**同时登记到 fixture-main.tsx：夹具台有 candidates 这个用例，
+   漏登记就会重演「夹具几何≠正式页几何」那个坑。 */
+import './styles/candidate.css'
 
 import Shell from './app/Shell.tsx'
 import TonightApp from './app/TonightApp.tsx'

@@ -22,6 +22,9 @@ const SRC = join(ROOT, 'src', 'next')
 const STYLE_ORDER = [
   './styles/tokens.css',
   './styles/base.css',
+  // 首屏右栏四块卡片（2026-10-05 从 base.css 整族搬出，base 当时 1008 行超上限）。
+  // 必须紧跟 base.css：全仓只有它定义 .fs-*，位置等价于原先在 base.css 内部。
+  './styles/firstscreen.css',
   // 版心框架（2026-10-04 第六轮）：补 .tn/.shell-nav/.sheet-foot 的 width:100%
   // （auto margin 取消 stretch 导致版心退回内容宽度）。覆盖 base.css 的宽度行为，
   // 必须排在 base.css 之后；夹具台入口 fixture-main.tsx 同步导入同一项。
@@ -52,6 +55,9 @@ const STYLE_ORDER = [
   // 浮层面板（2026-10-01 B 批次①③）：家庭成员抽屉 .sd-* + 历史侧栏 .rail-*，
   // 从 base.css 拆出（越 1000 行上限）；新前缀不与前面选择器相交，登记末层。
   './styles/panels.css',
+  // 候选卡（2026-10-05）：.cand-* 新前缀，只画序号/菜名/选择动作 + 换口径药丸，
+  // 与前面选择器不相交，登记末层。夹具台有 candidates 用例，两处清单都要有它。
+  './styles/candidate.css',
 ]
 
 /** 方案第三节：依赖方向只允许 app → views → blocks → ui。 */

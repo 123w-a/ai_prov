@@ -197,9 +197,13 @@ export default function TonightApp() {
     return () => window.clearInterval(t)
   }, [run.status, run.orphaned])
 
-  const send = useCallback(async () => {
+  const send = useCallback(async (override?: unknown) => {
     if (!sessionId || run.status === 'running') return
-    const message = text.trim()
+    // override 供候选卡「选这个方案」直接发送。它**不能**走 setText 再 send：
+    // 同一帧里 text 还是旧值，发出去的会是上一轮那句话。
+    // 形参收成 unknown 是因为 send 也直接绑在按钮 onClick 上，那条路径会传进一个
+    // MouseEvent——所以必须先判类型再用，否则事件对象会被当成消息正文发出去。
+    const message = (typeof override === 'string' ? override : text).trim()
     if (!message) return
 
     abortRef.current?.abort()
@@ -538,6 +542,7 @@ export default function TonightApp() {
           onText={setText}
           onSend={() => void send()}
           blocked={blocked}
+          onPickCandidate={(t) => void send(t)}
         />
       )}
 

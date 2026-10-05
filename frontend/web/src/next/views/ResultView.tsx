@@ -24,6 +24,8 @@ import { Icon } from '../ui/Icon.tsx'
 import { DishHero } from '../blocks/DishHero.tsx'
 import { Members } from '../blocks/Members.tsx'
 import { buildProseVM, buildResultVM, isShown } from '../data/viewModel.ts'
+import { parseCandidateList, stripCandidateLines } from '../data/candidates.ts'
+import { CandidateCards } from '../blocks/CandidateCards.tsx'
 // 页底动作条（★收藏/赞/踩）的状态与写动作全在 data 层，这里只负责画。
 import { useResultActions } from '../data/resultActions.ts'
 
@@ -235,6 +237,7 @@ export function RunResult({
   onText,
   onSend,
   blocked,
+  onPickCandidate,
 }: {
   run: RunState
   onAgain: () => void
@@ -245,6 +248,10 @@ export function RunResult({
   onText: (next: string) => void
   onSend: () => void
   blocked: boolean
+  /** 候选卡「选这个方案」：把"第 N 个，菜名"直接发出去。
+   *  必须走 send(text) 而不是 setText 后再 send——后者要等 React 状态落地，
+   *  同一帧里调用会读到旧文本，发出去的是上一轮那句话。 */
+  onPickCandidate: (text: string) => void
 }) {
   const form = resultForm(run.answer)
   const sources = run.answer?.sources ?? []
@@ -260,6 +267,13 @@ export function RunResult({
 
   // ★/赞/踩：可见性、初始态回查、写动作都在 useResultActions 里（契约见其文件头）。
   const actions = useResultActions(run)
+
+  // 候选轮（两阶段点菜第一阶段）走的是**纯散文路径**：后端在推送前把结构化
+  // candidates 丢掉了（chat_route.py:1561-1580），前端手上只有正文那串编号清单。
+  // 所以这里从正文解析成卡片。判据是"≥2 道菜"——1 道菜不构成选择题，
+  // 照卡片画反而把一句普通推荐拆成一张孤零零的卡。
+  const cands = vm ? [] : parseCandidateList(run.body)
+  const useCards = cands.length >= 2
 
   return (
     <section className={`result${isStructured ? '' : ' is-prose'}`}>
@@ -281,12 +295,23 @@ export function RunResult({
       {vm ? (
         <StructuredResult vm={vm} body={run.body} />
       ) : (
-        <ProseResult
-          body={run.body}
-          request={run.request}
-          reds={[]}
-          guards={[]}
-        />
+        <>
+          {/* 卡片在正文之前：这一轮用户要看的是"选哪个"，编号清单只是同一份
+              内容的未结构化形态，所以卡片承接选择动作、正文接着讲别的。 */}
+          {useCards && (
+            <CandidateCards
+              list={cands}
+              onPick={(c) => onPickCandidate(`第${c.index}个，${c.name}`)}
+              onAsk={onText}
+            />
+          )}
+          <ProseResult
+            body={useCards ? stripCandidateLines(run.body) : run.body}
+            request={run.request}
+            reds={[]}
+            guards={[]}
+          />
+        </>
       )}
 
       {/* 「真实过程」只对真实跑出来的那一轮开放。收藏里没有当时的用时与阶段
