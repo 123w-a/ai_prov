@@ -1,21 +1,28 @@
+import { useState } from 'react'
+import type { MemberInput } from '../../api/client.ts'
+import { MemberForm } from '../blocks/MemberForm.tsx'
 import type { FamilyData } from '../data/household.ts'
 
 /**
- * 「身体档案」房间（2026-10-05 落地第一刀）。
+ * 「身体档案」房间（2026-10-05）。
  *
- * 这一间回答的是用户原话的那个问题：「我建立的家庭画像不知道从哪个入口进入」。
- * 此前成员只在 Shell 的抽屉里出现，抽屉又只能**切换**，看不到一个人的全貌，
- * 更没有任何增删改——而旧前端 components/FamilyPanel.tsx 其实早就做完了这套。
- *
- * 本单元只做**读**：把每个人完整摆出来 + 「设为当前」。
- * 增 / 改 / 删是下一个单元（三个端点都已存在：POST 与 PUT/DELETE /profile/members）。
+ * 这一间回答的是用户原话的那个问题：「我建立的家庭画像不知道从哪个入口进入，
+ * 也不知道如何增加新家庭人员和减家庭成员」。此前成员只出现在 Shell 的抽屉里，
+ * 抽屉又只能**切换**，看不到一个人的全貌，更没有任何增删改——而旧前端
+ * components/FamilyPanel.tsx 其实早就做完了这套。
  *
  * 两条纪律：
  *   1 props-only，这里**不做任何 I/O**。档案由 app 用 useHousehold 读一次再传进来，
  *     与起手页、等待页读的是同一份——各自去拉会让三页在档案刚改过的一瞬间显示不同的人
  *     （AskView 的文件头已经为此写过一次理由，这里是同一个理由）。
+ *     增删改也一样：动作由上层传入，本组件只负责"什么时候请求这一次动作"。
  *   2 空值不画那一行。后端给不出的事实就不占位，绝不写「无」来把空白撑满——
  *     「无」和「不知道」在健康信息上不是一回事。
+ *
+ * 后端的边界（本组件据此禁用按钮，而不是等它报错）：
+ *   · 最多 8 人（POST 超限返回 400）
+ *   · 至少保留 1 人（DELETE 到最后一人返回 400）
+ *   · PUT 是**整成员覆盖**，所以 MemberForm 必须覆盖 profile 的全部字段。
  */
 
 /** 事实行的取值：把数组与单值统一成一句可读的话；空则返回 null（调用方不画这一行）。 */
@@ -29,9 +36,9 @@ function line(value: string | string[] | null | undefined): string | null {
 }
 
 /** 后端 sex 是 male/female 这种枚举值，直接放上页面就是英文漏进界面
- *  （本单元实测：卡片上出现过「30 岁 · female」）。这里只翻译**已知的两个**，
+ *  （实测：卡片上出现过「30 岁 · female」）。这里只翻译**已知的三个**，
  *  认不出的值原样保留——不猜、不吞，否则档案里真写了别的东西会静默消失。 */
-const SEX_LABEL: Record<string, string> = { male: '男', female: '女' }
+const SEX_LABEL: Record<string, string> = { male: '男', female: '女', other: '其他' }
 
 /** 身高体重只在两者都有时才写，避免出现「176cm · —」这种半截话（同 familyFacts）。 */
 function bodyLine(basic: FamilyData['members'][number]['profile']['basic']): string | null {
@@ -44,21 +51,60 @@ function bodyLine(basic: FamilyData['members'][number]['profile']['basic']): str
   return bits.length > 0 ? bits.join(' · ') : null
 }
 
+/** 一个成员 → 可提交的 MemberInput。编辑时要原样带上所有字段，不能只带页面上显示的那些。 */
+function toInput(m: FamilyData['members'][number]): MemberInput {
+  const p = m.profile
+  return {
+    name: m.name,
+    profile: {
+      conditions: [...(p.conditions ?? [])],
+      allergens: [...(p.allergens ?? [])],
+      restricts: [...(p.restricts ?? [])],
+      goal: p.goal ?? '',
+      diet_style: p.diet_style ?? '',
+      dislikes: [...(p.dislikes ?? [])],
+      taste_notes: [...(p.taste_notes ?? [])],
+      basic: {
+        height_cm: p.basic?.height_cm ?? null,
+        weight_kg: p.basic?.weight_kg ?? null,
+        age: p.basic?.age ?? null,
+        sex: (p.basic?.sex ?? '') as MemberInput['profile']['basic']['sex'],
+      },
+    },
+  }
+}
+
 export function ProfileView({
   family,
   shared,
   onPick,
+  onAdd,
+  onUpdate,
+  onDelete,
   switching,
   switchErr,
+  busy,
+  writeErr,
 }: {
   family: FamilyData | null
   /** 全家都忌的那几项（来自 familyFacts 的交集推导，不在这里重算一遍）。 */
   shared: string | null
   onPick: (id: string) => void
+  onAdd: (input: MemberInput) => void
+  onUpdate: (id: string, input: MemberInput) => void
+  onDelete: (id: string) => void
   /** 正在切换的成员 id，非 null 时禁用所有切换按钮，避免连点发出一串写请求。 */
   switching: string | null
   switchErr: string | null
+  /** 增/改/删请求进行中。 */
+  busy: boolean
+  writeErr: string | null
 }) {
+  /** 谁在编辑：成员 id；'new' 表示正在新增；null 表示没人在编辑。 */
+  const [editing, setEditing] = useState<string | null>(null)
+  /** 谁在等删除确认。删除不可逆，所以要点两下——但不弹原生 confirm（它阻塞且样式不可控）。 */
+  const [confirming, setConfirming] = useState<string | null>(null)
+
   if (!family || family.members.length === 0) {
     return (
       <section className="pf">
@@ -69,6 +115,13 @@ export function ProfileView({
   }
 
   const active = family.members.find((m) => m.id === family.active_id) ?? null
+  const onlyOne = family.members.length <= 1
+  const full = family.members.length >= 8
+
+  const closeAll = () => {
+    setEditing(null)
+    setConfirming(null)
+  }
 
   return (
     <section className="pf">
@@ -90,6 +143,8 @@ export function ProfileView({
         {family.members.map((m) => {
           const p = m.profile
           const on = family.active_id === m.id
+          const isEditing = editing === m.id
+          const isConfirming = confirming === m.id
           // 每一行都先算好再决定画不画：值为空就整行不出现。
           const rows: Array<[string, string | null]> = [
             ['身体状况', line(p.conditions)],
@@ -107,19 +162,80 @@ export function ProfileView({
               <div className="pf-card-head">
                 <span className="pf-name">{m.name}</span>
                 {on && <span className="pf-badge">当前生效</span>}
-                {!on && (
+
+                <span className="pf-ops">
+                  {!on && (
+                    <button
+                      type="button"
+                      className="pf-pick"
+                      disabled={switching !== null || busy}
+                      onClick={() => onPick(m.id)}
+                    >
+                      {switching === m.id ? '切换中…' : '设为当前'}
+                    </button>
+                  )}
+                  {!isEditing && (
+                    <button
+                      type="button"
+                      className="pf-act"
+                      disabled={busy}
+                      onClick={() => {
+                        setConfirming(null)
+                        setEditing(m.id)
+                      }}
+                    >
+                      编辑
+                    </button>
+                  )}
+                  {/* 只剩一人时后端会拒（至少保留一位），所以这里先禁用而不是让它失败。 */}
                   <button
                     type="button"
-                    className="pf-pick"
-                    disabled={switching !== null}
-                    onClick={() => onPick(m.id)}
+                    className="pf-act pf-act-danger"
+                    disabled={busy || onlyOne}
+                    title={onlyOne ? '至少保留一位家庭成员' : undefined}
+                    onClick={() => {
+                      setEditing(null)
+                      setConfirming(isConfirming ? null : m.id)
+                    }}
                   >
-                    {switching === m.id ? '切换中…' : '设为当前'}
+                    删除
                   </button>
-                )}
+                </span>
               </div>
 
-              {shown.length > 0 ? (
+              {isConfirming && (
+                <div className="pf-confirm" role="alert">
+                  <span className="pf-confirm-q">
+                    删除「{m.name}」？{on && '他正生效，删掉后会自动切到剩下的第一位。'}
+                  </span>
+                  <button
+                    type="button"
+                    className="pf-danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirming(null)
+                      onDelete(m.id)
+                    }}
+                  >
+                    {busy ? '删除中…' : '确认删除'}
+                  </button>
+                  <button type="button" className="pf-act" onClick={() => setConfirming(null)} disabled={busy}>
+                    取消
+                  </button>
+                </div>
+              )}
+
+              {isEditing ? (
+                <MemberForm
+                  initial={toInput(m)}
+                  busy={busy}
+                  onCancel={closeAll}
+                  onSubmit={(input) => {
+                    onUpdate(m.id, input)
+                    setEditing(null)
+                  }}
+                />
+              ) : shown.length > 0 ? (
                 <dl className="pf-rows">
                   {shown.map(([label, value]) => (
                     <div className="pf-row" key={label}>
@@ -136,6 +252,28 @@ export function ProfileView({
         })}
       </ul>
 
+      {/* 新增入口。满 8 人时禁用（后端会 400），并说明为什么。 */}
+      {editing === 'new' ? (
+        <div className="pf-newbox">
+          <MemberForm
+            initial={null}
+            busy={busy}
+            onCancel={closeAll}
+            onSubmit={(input) => {
+              onAdd(input)
+              setEditing(null)
+            }}
+          />
+        </div>
+      ) : (
+        <div className="pf-add">
+          <button type="button" className="pf-add-btn" disabled={busy || full} onClick={() => setEditing('new')}>
+            ＋ 添加成员
+          </button>
+          {full && <span className="pf-add-hint">最多 8 位家庭成员</span>}
+        </div>
+      )}
+
       {/* 家庭共享项：后端没有"家户级忌口"字段，所以它只能是**每个人都忌**的交集
           （推导在 familyFacts 里，这里不重算）。一个人忌的不算全家的，所以
           单人家庭永远不会出现这一块。 */}
@@ -147,9 +285,9 @@ export function ProfileView({
         </div>
       )}
 
-      {switchErr && (
+      {(writeErr || switchErr) && (
         <p className="pf-err" role="alert">
-          {switchErr}
+          {writeErr ?? switchErr}
         </p>
       )}
 

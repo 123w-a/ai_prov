@@ -70,6 +70,10 @@ export function useHousehold(opts?: { live?: boolean }): {
   family: FamilyData | null
   fridge: string[]
   activeName: string | null
+  /** 写路径（增/改/删成员）成功后直接把这个新档案放进来。
+   *  三个写端点都返回**整份**新 family，所以这里不必再拉一次 GET——
+   *  重拉不仅多一次往返，还会在"后端已写、GET 未回"的窗口里让页面短暂显示旧档案。 */
+  applyFamily: (f: FamilyData) => void
 } {
   const live = opts?.live ?? true
   const [family, setFamily] = useState<FamilyData | null>(null)
@@ -111,5 +115,5 @@ export function useHousehold(opts?: { live?: boolean }): {
   }, [live])
 
   const activeName = family?.members.find((m) => m.id === family.active_id)?.name ?? null
-  return { family, fridge, activeName }
+  return { family, fridge, activeName, applyFamily: setFamily }
 }

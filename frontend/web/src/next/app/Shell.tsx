@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { switchActiveMember } from '../../api/client.ts'
-import { familyFacts, notifyMemberSwitched, useHousehold } from '../data/household.ts'
+import { switchActiveMember, addMember, updateMember, deleteMember } from '../../api/client.ts'
+import type { MemberInput } from '../../api/client.ts'
+import { familyFacts, notifyMemberSwitched, useHousehold, type FamilyData } from '../data/household.ts'
 import { ProfileView } from '../views/ProfileView.tsx'
 
 /**
@@ -64,9 +65,36 @@ export default function Shell({
   const [drawer, setDrawer] = useState(false)
   const [switching, setSwitching] = useState<string | null>(null)
   const [switchErr, setSwitchErr] = useState<string | null>(null)
+  /** 增/改/删成员共用的进行中与错误（它们是同一种交互，不需要各有一份）。 */
+  const [writeBusy, setWriteBusy] = useState(false)
+  const [writeErr, setWriteErr] = useState<string | null>(null)
 
-  const { family, activeName } = useHousehold()
+  const { family, activeName, applyFamily } = useHousehold()
   const facts = familyFacts(family)
+
+  /**
+   * 三个写动作共用的收口。
+   *
+   * 后端每个写端点都返回**整份**新 family，所以直接 applyFamily 用它，
+   * 不另发一次 GET：重拉既多一次往返，又会在"后端已写、GET 未回"的窗口里显示旧档案。
+   *
+   * 成功之后仍然广播一次：本组件的实例已经由 applyFamily 更新了，但起手页有它自己的
+   * useHousehold 实例——改了成员名字而不广播，那边会一直显示旧名字。
+   * 等待页用的是 live:false 快照，它**不会**跟着变，这正是要的（那一轮绑定启动时的档案）。
+   */
+  const runWrite = async (fn: () => Promise<FamilyData>) => {
+    if (writeBusy) return
+    setWriteBusy(true)
+    setWriteErr(null)
+    try {
+      applyFamily(await fn())
+      notifyMemberSwitched()
+    } catch (err) {
+      setWriteErr(`没有保存成功，档案没有改动：${errText(err)}`)
+    } finally {
+      setWriteBusy(false)
+    }
+  }
 
   useEffect(() => {
     const sync = () => setRoom(readRoom())
@@ -158,8 +186,13 @@ export default function Shell({
               family={family}
               shared={facts?.shared ?? null}
               onPick={(id) => void pick(id)}
+              onAdd={(input: MemberInput) => void runWrite(() => addMember(input))}
+              onUpdate={(id: string, input: MemberInput) => void runWrite(() => updateMember(id, input))}
+              onDelete={(id: string) => void runWrite(() => deleteMember(id))}
               switching={switching}
               switchErr={switchErr}
+              busy={writeBusy}
+              writeErr={writeErr}
             />
           </div>
         )}
