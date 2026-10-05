@@ -380,43 +380,59 @@
   color: var(--accent-ink);
 }
 
-/* 首屏示例问法（2026-10-05，主卡下半部）。
-   与候选页药丸（.cand-chip）参数一致但**故意各写一份**：它们属于两个不同的
-   页面，将来任一边要调（比如候选页要更紧凑）不该牵动另一边；把两条规则合成
-   一个选择器组反而会让"改这里动了那里"成为默认状态。
-   点下去只把话放进输入框，所以形状是"半句话"的药丸，不是按钮。 */
+/* 首屏示例问法（2026-10-05，主卡下半部；同日第五刀由药丸改卡片）。
+   与候选页药丸（.cand-chip）**故意各写一份**：它们属于两个页面，任一边要调
+   （比如候选页要更紧凑）不该牵动另一边。
+   点下去只把话放进输入框，所以它是"半句话"的容器而不是提交按钮——这条没变。
+
+   为什么从一行药丸改成 2×2 卡片（用户 2026-10-05 裁决）：实测动作行底部 505 →
+   示例区顶部 733，中间 228px 全空。空档**不是间距造成的**——.composer 的 flex:1
+   吃掉了主卡剩余高度、而内容填不满。示例区贴在主卡底部（.ask-main 是 flex column），
+   所以把它长高就会反过来压缩 composer、自动把那段空档吃掉；
+   **不要去调 margin**，调了只会与 flex 分配打架。 */
 .ask-examples {
   list-style: none;
   margin: 18px 0 0;
   padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
 }
 
+/* 标签独占一行：它是这一小节的标题，不是第五张卡。 */
 .ask-examples-label {
+  grid-column: 1 / -1;
   font-size: var(--fs-note);
   color: var(--ink-faint);
   letter-spacing: 0.02em;
 }
 
 .ask-example {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 16px;
+  text-align: left;
   font-family: var(--sans);
   font-size: var(--fs-data);
+  line-height: 1.5;
   color: var(--accent-ink);
   background: var(--accent-soft);
   border: 1px solid var(--accent-line);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-card);
   cursor: pointer;
 }
 
 .ask-example:hover {
   border-color: var(--accent);
+}
+
+/* 窄屏落回单列：两列时每张只剩 150px 上下，句子会挤成两行小字。 */
+@media (max-width: 900px) {
+  .ask-examples {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .rail-src-note[data-tone='weak'] {
