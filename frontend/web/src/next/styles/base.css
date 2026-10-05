@@ -180,6 +180,14 @@ body {
 
 .ask-lead {
   margin: 0 0 var(--s3);
+  /* ── 篇首标记（2026-10-05，用户要求"旁边加一些图案、图标之类，显得高级一些"）
+   * 左侧一道栏口线 + 线端一枚朱红回纹小章，与竖栏的书脊/回纹章**同一套语汇**——
+   * 这一页的装饰只该有一个来源，再造一套图形语言就是新的不一致。
+   * 这里**不动字号、字重、字体**：高级来自这处克制的结构标记与一点朱红，
+   * 加大加粗只会更吵；而"加图标"的幼稚风险（人形、餐具图形）也一并避开。
+   * 朱红只用这一处：它是整页唯一的红，所以成为视线落点而不是噪音。 */
+  position: relative;
+  padding-left: 26px;
   /* 字体四件套与结果页 .dish-name 逐字对齐，修的是「同一产品首屏黑体、
    * 结果页宋体」的断裂——那才是「看着素」的第一来源。
    * 字重必须是 400、不能沿用原来的 600：Windows 上 SimSun 只有 400 一档，
@@ -199,6 +207,30 @@ body {
    * 两行长度悬殊。balance 让浏览器自己把两行排匀（一行放不下时才生效）。 */
   text-wrap: balance;
   color: var(--ink);
+}
+
+/* 栏口线：与标题同高。它是"标记"不是"纹理"，所以两端**不做淡出**——
+   短元素的硬边更利落，而淡出是长装饰带才需要的技巧。 */
+.ask-lead::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.26em;
+  width: 2px;
+  background: var(--line-strong);
+}
+
+/* 朱红回纹小章：叠在栏口线顶端。12px 配 3px 粗边，天然中空，即袖珍版"回"字——
+   与竖栏那三枚章同形，只是缩到最小，读者未必读出字，但看得出是枚印。 */
+.ask-lead::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 0.1em;
+  width: 12px;
+  height: 12px;
+  border: 3px solid var(--seal);
 }
 
 .ask-lead em {
