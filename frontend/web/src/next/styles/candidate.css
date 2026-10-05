@@ -100,8 +100,14 @@
 }
 
 /* 药丸形（--radius-pill）：它们是"半句话"，不是按钮——点下去只把话放进
-   输入框，等用户补完口味再发。形状要和上面那个真按钮区分开。 */
+   输入框，等用户补完口味再发。形状要和上面那个真按钮区分开。
+   2026-10-05 加图标：inline-flex + 居中，图标是 1em（= 字号）所以与文字同高，
+   不需要给它单设尺寸——Icon 组件里尺寸就不由调用方给，这里也不破例。
+   图标色跟随 color（currentColor），与文字同为 --accent-ink。 */
 .cand-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 5px 12px;
   font-family: var(--sans);
   font-size: var(--fs-data);
@@ -110,6 +116,12 @@
   border: 1px solid var(--accent-line);
   border-radius: var(--radius-pill);
   cursor: pointer;
+}
+
+/* 图标压淡一档：它是锚点不是内容，跟着文字同色会与文字抢注意力。
+   用 opacity 而不是另一套颜色——色值字面量只能出现在 tokens.css。 */
+.cand-chip .icon {
+  opacity: 0.72;
 }
 
 .cand-chip:hover {

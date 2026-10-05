@@ -1,4 +1,5 @@
 import type { Candidate } from '../data/candidates.ts'
+import { Icon, type IconName } from '../ui/Icon.tsx'
 
 /**
  * 候选卡（两阶段点菜·第一阶段）。
@@ -28,7 +29,12 @@ export function CandidateCards({
    *  直接发出去等于替他决定了没说的那一半。 */
   onAsk: (text: string) => void
 }) {
-  const asks = ['换个口味', '换些食材', '做法简单点', '直接告诉我吃什么']
+  const asks: Array<{ label: string; icon: IconName }> = [
+    { label: '换个口味', icon: 'utensils' },
+    { label: '换些食材', icon: 'fish' },
+    { label: '做法简单点', icon: 'funnel' },
+    { label: '直接告诉我吃什么', icon: 'chat' },
+  ]
   return (
     <div className="cand">
       <ul className="cand-list">
@@ -50,9 +56,10 @@ export function CandidateCards({
         <span className="cand-more-label">以上都不想吃？</span>
         <ul className="cand-asks">
           {asks.map((a) => (
-            <li key={a}>
-              <button className="cand-chip" type="button" onClick={() => onAsk(a)}>
-                {a}
+            <li key={a.label}>
+              <button className="cand-chip" type="button" onClick={() => onAsk(a.label)}>
+                <Icon name={a.icon} />
+                {a.label}
               </button>
             </li>
           ))}
