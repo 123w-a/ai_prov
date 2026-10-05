@@ -265,62 +265,83 @@
   text-align: left;
 }
 
-/* ── 竖栏装饰：册页「索引脊柱」（2026-10-05 第四刀）────────────────────────
-   用户拍板要纸面装饰纹（"前端本来就是为了好看而来的"），并要求再议一轮做什么最好看。
-   两家的第一推荐不同：lave 首选索引脊柱，lave2 首选 45° 斜向发丝纹。此处采纳前者——
-   斜纹与全站已有的方格纸底（水平+垂直）构成三个方向会打架，且斜纹偏商务科技语言，
-   不是中文册页。但把 lave2 的一个技巧嫁了过来：**上下两端用 mask 淡出**。
+/* ── 竖栏装饰：册页「书脊 + 三枚回纹章」（2026-10-05 第五刀）────────────────
+   第四刀做的是"索引脊柱"（断续竖线 + 每 40px 一道 14px 短刻度），形态被否决——
+   不是因为不好看，而是因为**用户根本没看见**：截图像素统计（区域 27×415）显示
+   装饰线与纸底 rgb(238,225,207) 的最大通道差只有 **19**，差异超过 16 的像素仅占
+   **2.0%**，落在感知阈值以下。用户原话是问"不是要在导航栏下方给我增添一些图案吗"。
 
-   为什么要淡出（这条是上上轮失败的直接教训）：那时我给 .shell-nav 加过一条贯穿到底的
-   右边界线，设想是让空白读成"栏内留白"，实测截图后否掉——硬边把空框得更显眼。
-   脊柱同理，两端硬截断会像一条没画完的线；淡出之后它才是"纸面的纹理"。
+   第五刀按两家商讨的一致结论**换形态**而不是继续加深对比度：细线 + 刻度在语汇上
+   属于"测量工具"，而用户要的是"图案"。选 lave 的"书脊 + 三枚回纹章"而不是连续纹样带，
+   理由是它有**图案主体**（三枚章），符合"增添图案"的字面期待；纯纹样带容易被再次忽略。
 
-   用真实 flex spacer 而不是绝对定位：它自然吃掉目录块与成员区之间的剩余高度，
-   于是竖栏高度怎么变都不用改这里的任何数字。
+   保留的技巧只有一条：**两端 mask 淡出**。这条来自更早那次失败的教训——我给
+   .shell-nav 加过一条贯穿到底的右边界线，硬边把空框得更显眼；硬截断的线读成
+   "没画完"，淡出之后它才是纸面的一部分。
 
-   几何同步：竖线周期 8px（3px 实 + 5px 虚），刻度周期 40px = 8×5，所以**每一条刻度
-   都正好落在竖线某个实线段的起点上**。周期不整除会让刻度浮在虚线空隙里、看着毛躁。 */
+   位置必须在目录块之后、成员区之前（见 Shell.tsx 同名注释）：它靠 flex:1 吃掉
+   两者之间的剩余高度，竖栏高度怎么变都不用改这里的数字。 */
 .shell-rail-art {
   flex: 1;
-  /* 竖栏被压得很矮时不画：几像素里塞脊椎与刻度只会变成一团噪点。 */
+  /* 竖栏被压得很矮时不画：几像素里塞书脊与三枚章只会变成一团噪点。 */
   min-height: 72px;
-  background:
-    /* 断续竖线，与目录块左缘（x=0）对齐，让脊柱读成导航块那条左线的延续 */
-    repeating-linear-gradient(
-        to bottom,
-        var(--accent-line) 0 3px,
-        transparent 3px 8px
-      )
-      left top / 1px 100% no-repeat,
-    /* 短横刻度：从竖线向右伸 14px，像目录标尺 */
-    repeating-linear-gradient(
-        to bottom,
-        transparent 0 39px,
-        var(--accent-line) 39px 40px
-      )
-      8px top / 14px 100% no-repeat;
-  /* 0.7 而不是最初的 0.5：0.5 在 1366×900 的真实页面上几乎看不见（实测截图确认），
-     起不到"让留白有秩序"的作用；而 lave2 提醒过浓了会变分割线。0.7 是能看清的下限。
-     颜色仍用 --accent-line(#ddc7b6)，它本身就是淡色，所以 0.7 依然是纸面纹理而非 UI 线。 */
-  opacity: 0.7;
-  /* 两端淡出。这是本方案的关键，缺了它就会重蹈贯穿边线的覆辙。
-     用 var(--ink) 而不是 #000：mask 只关心 alpha，不透明令牌等效，而本仓的门禁
+  /* 用 flex 均分而不是绝对定位：竖栏高度变化时三枚章自动重排、永不重叠
+     （min-height 72px 时三枚 22px 仍排得下）。 */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  align-items: center;
+  position: relative;
+  pointer-events: none;
+  /* 对比度取 --line-strong(#c7ac9c)：与纸底最大通道差约 53，在"看得见"之上、
+     又明显轻于导航文字的 --ink（差约 200），所以它不会把装饰变成焦点。
+     上一版用 --accent-line(#ddc7b6) 只有 19，是这次失败的直接原因。
+     颜色只在这里定义一次，下面全部走 currentColor。 */
+  color: var(--line-strong);
+}
+
+/* 书脊：一条贯穿的竖线，两端淡出。 */
+.shell-rail-art::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4%;
+  bottom: 4%;
+  width: 1.5px;
+  margin-left: -0.75px;
+  background: currentColor;
+  /* 用 var(--ink) 而不是 #000：mask 只关心 alpha，不透明令牌等效，而本仓的门禁
      (d_色值字面量) 规定只有 tokens.css 可以持有色值字面量——写字面量会当场判违规。 */
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    var(--ink) 16%,
-    var(--ink) 84%,
+    var(--ink) 13%,
+    var(--ink) 87%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    var(--ink) 16%,
-    var(--ink) 84%,
+    var(--ink) 13%,
+    var(--ink) 87%,
     transparent 100%
   );
-  pointer-events: none;
+}
+
+/* 三枚回纹章：方框套方框，即"回"字。是章不是插画——没有曲线、没有具象，
+   与册页书口那排方折纹同源。书脊从章中间穿过，像印在装订线上。 */
+.shell-rail-art i {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid currentColor;
+}
+
+.shell-rail-art i::before {
+  content: '';
+  position: absolute;
+  inset: 4.5px;
+  border: 1.2px solid currentColor;
 }
 
 .shell-member-empty {
