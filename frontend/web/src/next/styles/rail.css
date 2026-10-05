@@ -265,7 +265,7 @@
   text-align: left;
 }
 
-/* ── 竖栏装饰：册页「书脊 + 三枚回纹章」（2026-10-05 第五刀）────────────────
+/* ── 竖栏装饰：册页「书脊 + 三枚回纹章」（2026-10-05 第五刀换形 / 第六刀加厚）──
    第四刀做的是"索引脊柱"（断续竖线 + 每 40px 一道 14px 短刻度），形态被否决——
    不是因为不好看，而是因为**用户根本没看见**：截图像素统计（区域 27×415）显示
    装饰线与纸底 rgb(238,225,207) 的最大通道差只有 **19**，差异超过 16 的像素仅占
@@ -274,6 +274,13 @@
    第五刀按两家商讨的一致结论**换形态**而不是继续加深对比度：细线 + 刻度在语汇上
    属于"测量工具"，而用户要的是"图案"。选 lave 的"书脊 + 三枚回纹章"而不是连续纹样带，
    理由是它有**图案主体**（三枚章），符合"增添图案"的字面期待；纯纹样带容易被再次忽略。
+
+   第六刀只做一件事：用户看过成品后说"看着有些单薄"，于是**把笔画加厚**——
+   书脊 1.5 → 2.5px，章 22 → 26px 且边框 1.5 → 5px。
+   关键是**加厚走面积、不走颜色**：颜色一动（比如提到 --ink-faint，与纸底差约 95）
+   就会去和导航抢焦点，而这处装饰的定位自始至终是"纸面纹理"。
+   粗边框天然中空，所以加厚不需要任何"挖孔"技巧，也不需要引用竖栏底色——
+   书脊照样从章中间穿过去。
 
    保留的技巧只有一条：**两端 mask 淡出**。这条来自更早那次失败的教训——我给
    .shell-nav 加过一条贯穿到底的右边界线，硬边把空框得更显眼；硬截断的线读成
@@ -286,7 +293,7 @@
   /* 竖栏被压得很矮时不画：几像素里塞书脊与三枚章只会变成一团噪点。 */
   min-height: 72px;
   /* 用 flex 均分而不是绝对定位：竖栏高度变化时三枚章自动重排、永不重叠
-     （min-height 72px 时三枚 22px 仍排得下）。 */
+     （min-height 72px 时三枚 26px 仍排得下）。 */
   display: flex;
   flex-direction: column;
   justify-content: space-around;
@@ -295,7 +302,7 @@
   pointer-events: none;
   /* 对比度取 --line-strong(#c7ac9c)：与纸底最大通道差约 53，在"看得见"之上、
      又明显轻于导航文字的 --ink（差约 200），所以它不会把装饰变成焦点。
-     上一版用 --accent-line(#ddc7b6) 只有 19，是这次失败的直接原因。
+     上一版用 --accent-line(#ddc7b6) 只有 19，是那次失败的直接原因。
      颜色只在这里定义一次，下面全部走 currentColor。 */
   color: var(--line-strong);
 }
@@ -307,8 +314,8 @@
   left: 50%;
   top: 4%;
   bottom: 4%;
-  width: 1.5px;
-  margin-left: -0.75px;
+  width: 2.5px;
+  margin-left: -1.25px;
   background: currentColor;
   /* 用 var(--ink) 而不是 #000：mask 只关心 alpha，不透明令牌等效，而本仓的门禁
      (d_色值字面量) 规定只有 tokens.css 可以持有色值字面量——写字面量会当场判违规。 */
@@ -329,19 +336,21 @@
 }
 
 /* 三枚回纹章：方框套方框，即"回"字。是章不是插画——没有曲线、没有具象，
-   与册页书口那排方折纹同源。书脊从章中间穿过，像印在装订线上。 */
+   与册页书口那排方折纹同源。书脊从章中间穿过，像印在装订线上。
+   26px 外框配 5px 粗边：留白只剩 3px 缝 + 2px 内框，笔画占比接近一半，
+   远看是一枚有分量的方章，近看才读出"回"字。 */
 .shell-rail-art i {
   position: relative;
-  width: 22px;
-  height: 22px;
-  border: 1.5px solid currentColor;
+  width: 26px;
+  height: 26px;
+  border: 5px solid currentColor;
 }
 
 .shell-rail-art i::before {
   content: '';
   position: absolute;
-  inset: 4.5px;
-  border: 1.2px solid currentColor;
+  inset: 3px;
+  border: 2px solid currentColor;
 }
 
 .shell-member-empty {
