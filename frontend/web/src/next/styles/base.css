@@ -222,6 +222,22 @@ body {
   pointer-events: none;
 }
 
+/* 卡片右上角的蒸笼：与篇首图形同一位设计师的稿（G 稿），同为矢量重绘。
+   这里用 --line-strong 而不是 --accent：左上角的碗筷是主角图形（与 em 同色），
+   这一枚是静物/背景层次——两个图形同色同重就会互相抢，而卡片底 --surface 上
+   --line-strong 仍清晰可辨（这正是第五刀"看不见"的边界：比它淡一档就不行）。
+   锚在 .ask-lead 上而非 .ask-main：后者是 flex 纵向容器且为 static，
+   SVG 若走流会占掉垂直空间、把整卡往下推。 */
+.ask-aside-art {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 96px;
+  height: 72px;
+  color: var(--line-strong);
+  pointer-events: none;
+}
+
 .ask-lead em {
   font-style: normal;
   color: var(--accent);

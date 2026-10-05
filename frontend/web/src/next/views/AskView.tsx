@@ -111,6 +111,36 @@ export function AskView({
               </g>
             </svg>
             今晚这一顿，按<em>两个人的身体</em>来定。
+            {/* 卡片右上角的蒸笼（同一位设计师的 G 稿，同样是矢量重绘）。
+                它用 --line-strong 而非 --accent，原因见 base.css 里那条规则的注释：
+                左上角的碗筷是主角图形，这一枚是静物背景，同色同重会互相抢。
+                挂进 .ask-lead（它已是 position:relative）而不是 .ask-main——
+                .ask-main 是 flex 纵向容器且是 static，SVG 走流会占掉垂直空间。 */}
+            <svg
+              className="ask-aside-art"
+              viewBox="0 0 96 72"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <g
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <ellipse cx="48" cy="40" rx="34" ry="8" />
+                <path d="M14 40v18" />
+                <path d="M82 40v18" />
+                <path d="M14 50a34 8 0 0 0 68 0" />
+                <path d="M14 58a34 8 0 0 0 68 0" />
+                {/* 蒸汽：第一版两条 12 单位的小波浪，在这个尺寸下读起来像两个逗号，
+                    撑不起"热气"；改成三条、两侧 14 单位、中间 16 单位。 */}
+                <path d="M36 28c-4-6 4-8 0-14" />
+                <path d="M48 26c-4-6 4-8 0-16" />
+                <path d="M60 28c-4-6 4-8 0-14" />
+              </g>
+            </svg>
           </h2>
 
           {/* 书写面抽成了 AskComposer：结果页底部用的是同一个组件（见 ResultView）。
