@@ -1,0 +1,80 @@
+/* ── 版心框架（2026-10-04 第六轮）──────────────────────────────────────
+ *
+ * 为什么必须有这一片：
+ *
+ * .tn / .shell-nav / .sheet-foot 三个版心容器都是 `max-width: var(--content)`
+ * 加 `margin: 0 auto`。在 flex 列容器里，**auto margin 会取消 align-self:
+ * stretch**，于是它们的宽度退回"内容 max-content"，max-width 根本顶不到。
+ * 真实入口 /next.html（1366×900）实测：
+ *
+ *   .tn        max-width: 1268px → 实测宽 1032px（左留白 167px）
+ *   .shell-nav max-width: 1268px → 实测宽  581px（只包住自己那几个按钮）
+ *
+ * 也就是说：--content 改成 1268 并不会让页面变宽。夹具台（fixture.html）的
+ * 宿主容器与真实入口不同，同一个 .tn 在那里量到的是 1268 —— 这正是
+ * "夹具台上验过、真实入口没生效"的成因。本片修的就是它，
+ * 并且此后版心几何一律以 /next.html 为判据。
+ *
+ * width:100% 与 max-width 并存：宽度撑满可用空间但不越 1268，
+ * auto margin 继续负责居中（1366 视口 → 两侧各 49px，与预期图 50/61px 同量级）。
+ * box-sizing 已是 border-box（全局 reset），所以 100% 不会被 padding 再撑出容器。
+ *
+ * 这片只碰宽度，不改颜色、间距、字号：视觉批次的改动一律另开一片。
+ */
+.tn,
+.shell-nav,
+.sheet-foot {
+  width: 100%;
+}
+
+/* ── 批次 4：导航形态（2026-10-04 第八轮）──────────────────────────────
+ *
+ * 只改三件事，全部有预期图像素证据：
+ *
+ * ① 导航高度 73 → 101。预期图导航底线在 y=115 / 1024 高，即视口的 11.2%，
+ *    1366×900 下折合 101px。当前 73px（padding 18+13 + 内容 41 + 底线 1）。
+ *    改为 32/27 → 32 + 41 + 27 + 1 = 101。
+ *
+ * ② 印章：24×24 浅底(accent-soft)描边(accent-line) → 34×34 深砖红实底 + 白字。
+ *    预期图那枚方章实测是红白交错的实心图案（红 #8E1B0D/#981004/#A3422C、
+ *    白 #FDF8F2），比现有那枚浅米底描边章重得多。字号 13 → 19：
+ *    24px 里放 13px 是描边章的尺度，34px 实底章要更大才不空。
+ *
+ * ③ 房内页头 (.tn-head) 去掉自己的底线：预期图从导航到下一条线之间
+ *    只有内容，没有第二条通栏线。现在导航底线（--line-strong）+ 页头底线
+ *    (--line) 上下相隔 88px 并列，读作"两层页头"。
+ *    .tn-brand/.tn-dot 也隐藏——"小膳管家"在全局导航里已经有了，
+ *    页头再写一遍是重复品牌。页头保留房名与就绪状态，它仍承担"我在哪一间"。
+ *
+ * 不改的：tab 字号(17)/字距(0.05em)/当前项下划短线、.shell-ctx 的左侧发丝线。
+ * 预期图这四处没有可判定的差异证据，不凭感觉动。
+ */
+.shell-nav {
+  padding: 32px 28px 27px;
+}
+
+.shell-brand::before {
+  left: 0;
+  margin-top: -17px;
+  width: 34px;
+  height: 34px;
+  font-size: 19px;
+  color: var(--seal-ink);
+  border: 0;
+  border-radius: 2px;
+  background: var(--seal);
+}
+
+.shell-brand {
+  padding-left: 42px; /* 印章 24 → 34，留位同增，否则字压在章上 */
+}
+
+.tn-head {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.tn-brand,
+.tn-dot {
+  display: none;
+}

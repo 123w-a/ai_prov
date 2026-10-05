@@ -9,6 +9,10 @@ import { createRoot } from 'react-dom/client'
 // 的承诺直接破了。样式片清单必须与 main.tsx 逐行对齐。
 import './styles/tokens.css'
 import './styles/base.css'
+// 版心框架（2026-10-04 第六轮）：与 main.tsx 同步。它补的是 .tn/.shell-nav 的
+// width:100%（auto margin 取消 stretch 会让版心退回内容宽度）——正是本文件
+// 上面那条「夹具几何=正式页几何」承诺所要求的同步。
+import './styles/frame.css'
 import './styles/wait.css'
 import './styles/result-v1v2.css'
 import './styles/result-v3.css'

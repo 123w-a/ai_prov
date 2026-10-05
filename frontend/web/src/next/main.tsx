@@ -20,6 +20,9 @@ import { createRoot } from 'react-dom/client'
  */
 import './styles/tokens.css'
 import './styles/base.css'
+/* 版心框架（2026-10-04 第六轮）。.tn/.shell-nav/.sheet-foot 的 auto margin 会取消
+   stretch，宽度退回内容 max-content——必须补 width:100%，故排在 base.css 之后。 */
+import './styles/frame.css'
 import './styles/wait.css'
 import './styles/result-v1v2.css'
 import './styles/result-v3.css'

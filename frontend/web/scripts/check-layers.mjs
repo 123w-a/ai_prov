@@ -22,6 +22,10 @@ const SRC = join(ROOT, 'src', 'next')
 const STYLE_ORDER = [
   './styles/tokens.css',
   './styles/base.css',
+  // 版心框架（2026-10-04 第六轮）：补 .tn/.shell-nav/.sheet-foot 的 width:100%
+  // （auto margin 取消 stretch 导致版心退回内容宽度）。覆盖 base.css 的宽度行为，
+  // 必须排在 base.css 之后；夹具台入口 fixture-main.tsx 同步导入同一项。
+  './styles/frame.css',
   './styles/wait.css',
   './styles/result-v1v2.css',
   './styles/result-v3.css',

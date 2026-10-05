@@ -28,7 +28,7 @@ const ROOMS = ['tonight', 'weekly', 'fav', 'svc'] as const
 type RoomId = (typeof ROOMS)[number]
 
 const ROOM_LABEL: Record<RoomId, string> = {
-  tonight: '今晚',
+  tonight: '今晚这一顿',
   weekly: '周报',
   fav: '收藏',
   svc: '服务',

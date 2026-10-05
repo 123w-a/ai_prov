@@ -123,7 +123,7 @@
 .sv-road > li {
   background: var(--surface-2);
   border: 1px solid var(--surface-line);
-  border-radius: 10px;
+  border-radius: var(--radius-card); /* 原写死 10px：与 --radius-card 归零后的直角标准不一致（导航批次扫全站圆角时发现） */
   padding: 12px 14px;
 }
 

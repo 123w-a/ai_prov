@@ -26,13 +26,18 @@
   --ink-soft: #63523c;
   --ink-faint: #8e8271;
 
-  --line: #e4dcd0;
-  --line-strong: #d4c9b8;
+  --line: #e8d8c4; /* 第七轮随卡片暖调同步（预期图卡片内发丝线未单独取样，取"比卡片边线浅一档"） */
+  --line-strong: #c7ac9c; /* 第七轮：预期图导航底线实测值（原 #d4c9b8 的 R−B 是 28，现 43） */
 
   --accent: #a96f4e;
   --accent-ink: #7d4e33;
   --accent-soft: #f4ece5;
   --accent-line: #ddc7b6;
+  /* 批次 4（导航）：预期图左上那枚方章是**深砖红实底 + 白字**，
+   * 实测红 #8E1B0D/#981004/#A3422C、白 #FDF8F2。它比 --accent 更红更深，
+   * 所以单独成 token 而不是改 accent——accent 还管按钮与描边，不该被印章拉深。 */
+  --seal: #9c2314;
+  --seal-ink: #fdf8f2;
 
   --ok-dot: #718c87;
   --beat: #c9a227;
@@ -164,9 +169,13 @@
    * 而不是语义色——红黄绿仍只作状态，不进任何底面。 */
 
   /* ── 家具：容器面 ── */
-  --surface: #fffefc;
-  --surface-2: #f7f3ec;
-  --surface-line: #ebe3d6;
+  /* 2026-10-04 第七轮（批次 3 卡片质感）：三值按预期图**像素实测**重定。
+   * 卡片面实测 #FBF6F0（原 #FFFEFC 偏冷白，R−B 只有 3）；
+   * 卡片边线实测 #E8D1B9/#DFC8AC，R−B 47——它是一条**暖褐**发丝线，
+   * 原值 #EBE3D6 的 R−B 才 21，读作冷米灰。 */
+  --surface: #fbf6f0;
+  --surface-2: #f4eee4;
+  --surface-line: #e2c9ac;
 
   /* ── 地板：空间底（2026-10-04 第二轮）────────────────────────────
    * 上一轮把地板做成径向渐变，并写下了"峰值与谷值只差约 8% 明度"的注释。
@@ -235,11 +244,14 @@
   --rail: 208px;
 
   /* ── 形与光 ── */
-  --radius-card: 14px;
+  --radius-card: 0px; /* 第七轮：预期图卡片是硬直角——逐行扫 y=166..178 的左边界，x 恒为 318-321，没有圆角过渡 */
   /* 主行动按钮的投影：直接用 accent 本身的色相做半透明投影，
    * 按钮因此像是"带光浮在纸上"，而不是画在纸上——这是解冻后
    * 允许强调色参与光效的第一个位置（仍不铺大面积色块）。 */
   --shadow-go: 0 6px 18px color-mix(in srgb, var(--accent) 26%, transparent);
   --shadow-go-hi: 0 10px 26px color-mix(in srgb, var(--accent) 34%, transparent);
 }
+
+
+
 
