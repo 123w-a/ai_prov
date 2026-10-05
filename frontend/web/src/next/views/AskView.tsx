@@ -81,6 +81,35 @@ export function AskView({
       <div className="ask-layout">
         <div className="ask-main">
           <h2 className="ask-lead">
+            {/* 篇首图形（2026-10-05，用户要求"更具体的图形"，由 lave1 的设计师模型出稿）。
+                造型＝一只碗 + 一双斜搭的筷子，不重复文案里的"两个人"——那已由 em 强调。
+                **这里是矢量重绘而不是位图**：设计师交付的是 1024² 位图线稿，缩到 52px 后
+                线条淡到几乎看不见（64px 最近邻放大预览实测已证），而 SVG 在任何尺寸都
+                保持 1.7 单位线宽，并且能用 currentColor 跟令牌走色。构图沿用设计师选定的
+                那一版，没有另起一套造型。 */}
+            <svg
+              className="ask-lead-art"
+              viewBox="0 0 64 64"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <g
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M11 22c0 16 8.5 28 21 28s21-12 21-28" />
+                <ellipse cx="32" cy="22" rx="21" ry="6.2" />
+                <path d="M24.5 50.2l1.6 5.3h11.8l1.6-5.3" />
+                {/* 筷子两端各伸出碗口 8 单位。第一版只伸出 2 单位，两根筷子看起来是
+                    "画在碗口里的两道斜线"，读不出"搁在碗沿上"；伸出量是这个造型的
+                    语义所在，不能省。 */}
+                <path d="M3 16L61 27" />
+                <path d="M3 20.5L61 31.5" />
+              </g>
+            </svg>
             今晚这一顿，按<em>两个人的身体</em>来定。
           </h2>
 
