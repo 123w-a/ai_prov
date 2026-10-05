@@ -350,6 +350,36 @@
   color: var(--ink-faint);
 }
 
+/* 正文折叠里的「本轮依据」（第 E 项改挂确定性出处后配套的三条）。
+   与上面 .rail-sources 那族同源同类，只有一处不同：**这里不截断**。
+   折叠打开就是为了看全名，所以 .src-name 不给 overflow/ellipsis，
+   名与页码各占一行。放在这个文件而不是 result-v3.css：那个文件已 982 行，
+   差 18 行撞 1000 行上限，而这三条属于本族（rail/fold 两处依据样式同处一文件
+   才好一起读）。 */
+.sources .src-cond {
+  display: block;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+
+.sources .src-rule {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.sources .src-page {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-note);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-ink);
+}
+
 .rail-src-note[data-tone='weak'] {
   opacity: 0.78;
 }

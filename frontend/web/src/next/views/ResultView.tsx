@@ -125,6 +125,9 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
   // 这一版只做一件事：把原来散在这里的判断换成读 vm。判断本身一个字没改，
   // 全部照抄进了 viewModel.ts（含"空右栏整块不渲染"这种踩过坑才补上的外层条件）。
   const sources = vm.sources
+  // 「本轮依据」现在挂的是确定性出处（第 E 项）：只有带 source 的护栏才进这个折叠。
+  // 与右栏同一口径、同一个 filter——两处若各筛一次，早晚会筛出两种结果。
+  const evidence = vm.guardrails.filter((g) => g.source !== '')
 
   return (
     <div className="result-body">
@@ -178,7 +181,7 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
 
       {isShown(vm.rest) && <ExtraRecipes recipes={vm.rest.data} />}
 
-      {sources.length > 0 && <Sources sources={sources} />}
+      {evidence.length > 0 && <Sources evidence={evidence} />}
       </div>
     </div>
   )
