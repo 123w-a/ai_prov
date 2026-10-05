@@ -69,7 +69,9 @@ export default function Shell({
   const [writeBusy, setWriteBusy] = useState(false)
   const [writeErr, setWriteErr] = useState<string | null>(null)
 
-  const { family, activeName, applyFamily } = useHousehold()
+  // 不再解构 activeName：竖栏补密后成员名单直接列出并标出当前那位，
+  // 「当前是谁」由 family.active_id 现算，多留一个派生量只会多一处可能不同步的名字。
+  const { family, applyFamily } = useHousehold()
   const facts = familyFacts(family)
 
   /**
@@ -145,6 +147,10 @@ export default function Shell({
       <div className="shell-body">
       <nav className="shell-nav" aria-label="主导航">
         <span className="shell-brand">小膳管家</span>
+        {/* 定位小注（2026-10-05 竖栏补密）：横排时品牌靠右侧的日期与家庭状态平衡，
+            改成竖栏后顶端只剩一个词，下面是导航、再下面是一整片空。加这一行不是装饰——
+            它就是页脚那句「家庭膳食规划助手」，写在这里让竖栏的上端有收束。 */}
+        <span className="shell-brand-note">家庭膳食规划助手</span>
         {ROOMS.map((id) => (
           <button
             key={id}
@@ -157,11 +163,49 @@ export default function Shell({
             {ROOM_LABEL[id]}
           </button>
         ))}
-        {/* 家庭成员切换是全局上下文，不是房间（户型图裁决）：按钮显示当前推荐，
-            点开抽屉。hash 不承载抽屉状态。 */}
+        {/* 家庭成员（2026-10-01 B 批次①，2026-10-05 竖栏补密时展开成区块）：
+            它是全局上下文、不是房间，所以挂在本组件、由 React state 控制，
+            hash 不承载它的状态（打开抽屉不该多一条历史、不该让后退键迷路）。
+
+            为什么要展开：竖栏 900px 里导航只占 135px，空掉约 78%，而"再加几个房间"
+            在数学上填不满（九项也才 300px）。这里展开是**零新数据**的——family 已经在
+            useHousehold 手里，pick() 也早就存在（原先只被抽屉用）。所以它不是把留白
+            装饰掉，而是把一件本来只能进抽屉做的事挪到看得见的地方：不进任何房间就能换人。
+
+            与抽屉的分工：这里管"换人"（一次点击即生效），抽屉管"管理"（增删改在身体档案页）。
+            两者不冲突，也不互相取代。 */}
         <span className="shell-ctx">
+          <span className="shell-ctx-h">家庭成员</span>
+          {family && family.members.length > 0 ? (
+            <ul className="shell-members">
+              {family.members.map((m) => {
+                const on = family.active_id === m.id
+                return (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className={`shell-member${on ? ' is-on' : ''}`}
+                      aria-current={on ? 'true' : undefined}
+                      disabled={switching !== null}
+                      title={on ? '当前生效' : `切换到 ${m.name}`}
+                      onClick={() => void pick(m.id)}
+                    >
+                      <span className="shell-member-name">{m.name}</span>
+                      {on && <span className="shell-member-on">当前</span>}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <span className="shell-member-empty">还没有读出来</span>
+          )}
+          {/* 抽屉与上面那几行的分工：这里只有名字（快速换人），抽屉里有每个人的
+              画像摘要标签与共同忌口（要不要换、换了会怎样，得先看清）。所以按钮叫
+              「成员详情」——原先叫「管理成员 · 我」，后缀与上面已列出的当前成员重复，
+              「管理」也不准：增删改在身体档案房，抽屉里只是看与切换。 */}
           <button type="button" className="shell-ctx-btn" onClick={() => setDrawer(true)}>
-            {activeName ? `家庭成员 · ${activeName}` : '家庭成员'}
+            成员详情
           </button>
         </span>
       </nav>

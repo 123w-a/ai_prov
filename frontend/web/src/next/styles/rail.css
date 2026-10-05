@@ -41,12 +41,25 @@
 }
 
 /* 品牌：竖栏的起点。印章仍是 34×34 实底（批次 4 定的），左栏里它比文字高，
-   所以用 46px 给文字让位（原 42px 是为横排的基线视觉调的）。 */
+   所以用 46px 给文字让位（原 42px 是为横排的基线视觉调的）。
+
+   2026-10-05 竖栏补密：品牌下加一行定位小注，并把品牌自己的下边距从 24px 收到 2px
+   ——两行要读成一组（"小膳管家 / 家庭膳食规划助手"），中间隔 24px 会把它们拆成
+   两个不相干的东西。整组的间距交给 .shell-brand-note 的下边距。 */
 .shell-brand {
   padding-left: 46px;
   margin-right: 0;
-  margin-bottom: 24px;
+  margin-bottom: 2px;
   font-size: 18px;
+}
+
+.shell-brand-note {
+  padding-left: 46px;
+  margin-bottom: 24px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
 }
 
 /* 条目：横排时的"下划线短横"在竖栏里指不到任何方向（下划线指向下一行），
@@ -71,7 +84,7 @@
 }
 
 /* 家庭成员按钮推到竖栏底部（预期图里成员卡正是左栏的收束项）。
-   分隔从"左竖线"改成"上橫线"：它在底部已经是最后一项，需要的是与上方条目分开。 */
+   分隔从"左竖线"改成"上横线"：它在底部已经是最后一项，需要的是与上方条目分开。 */
 .shell-ctx {
   margin-left: 0;
   margin-top: auto;
@@ -79,6 +92,106 @@
   padding-top: 14px;
   border-left: 0;
   border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── 竖栏补密（2026-10-05）───────────────────────────────────────────────
+   由来：用户反馈"导航栏空"。实测竖栏 900px，导航只占 135px、空掉约 78%。
+   关键在于**加房间解决不了它**——九项也才 300px，数学上填不满 900px。
+   所以这里不靠加选项，而是把底部那块真信息展开：成员名单直接可点切换，
+   数据与动作都是现成的（family 在 useHousehold 手里，pick() 原先只被抽屉用）。
+
+   小标题与导航条目同一套 mono 小注语言（本仓已在多处使用），不引新视觉。 */
+.shell-ctx-h {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  padding-left: 14px;
+}
+
+.shell-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 成员行比房间条目小一档：它们是这一栏的次要内容（房间才是主），
+   同尺寸会让"哪一列是导航"变得要靠位置去猜。 */
+.shell-member {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius, 4px);
+  padding: 6px 10px 6px 14px;
+  cursor: pointer;
+  position: relative;
+}
+
+.shell-member:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.shell-member:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* 当前生效：左侧一道竖短线，与 .shell-tab.is-on 同一族信号（朝向一致，都在左缘）。 */
+.shell-member.is-on {
+  color: var(--ink);
+}
+
+.shell-member.is-on::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  background: var(--accent);
+}
+
+.shell-member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「当前」标记：语义色只做小字，不铺底（房规）。 */
+.shell-member-on {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+}
+
+.shell-ctx-btn {
+  /* 与上面成员名单之间多留一档：实测原本只差 6px，"我"这一行和下面那行会读成挤在一起
+     （截图缩略后甚至像重叠）。14px 让"名单"与"看详情"读成两件事。 */
+  margin-top: 14px;
+  text-align: left;
+}
+
+.shell-member-empty {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  padding-left: 14px;
 }
 
 /* ── 四角裁切标记的挂载点随版心上移 ──────────────────────────────────────
