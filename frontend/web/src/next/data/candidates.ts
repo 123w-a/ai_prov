@@ -21,6 +21,20 @@ export interface Candidate {
   /** 与正文一致的序号（用户点卡片时回给后端的就是它）。 */
   index: number
   name: string
+  /** 推荐理由（2026-10-05 捞回）。
+   *
+   *  它**一直在正文里**：后端的候选规则明确要求「菜名后接「 —— 」再写一句约 30 字的
+   *  推荐理由」，而这里的解析此前把分隔符之后的部分直接丢掉了（`split(...)[0]`）。
+   *  于是预期图 cand-expect-v2.png 卡片上第二行那句（"原汁原味，鲜嫩不腻"）本来
+   *  就送来了，却没被显示。
+   *
+   *  捞它不碰后端、不碰 prompt、不碰流式链路：正文一个字没改，只是不再把已经
+   *  收到的半行信息丢掉。所以它是"候选卡补内容"里代价最小、且**真实性最高**的一项
+   *  ——这句话是后端按规则要求模型针对**这道菜**写的，不是我们拿别的字段拼的。
+   *
+   *  空串表示这一行没写理由（后端允许"长短随性"，也允许个别行不写）：
+   *  那就**不显示这一行**，不拿菜名或别的字段凑一句话出来。 */
+  reason: string
 }
 
 /** 与后端 _extract_candidate_names 同一套切分：菜名与推荐理由之间的分隔符。 */
@@ -42,13 +56,24 @@ export function parseCandidateList(body: string): Candidate[] {
     if (!m) continue
     const index = Number.parseInt(m[1], 10)
     if (!Number.isFinite(index)) continue
-    let name = m[2].split(REASON_SPLIT)[0].trim()
+    // 分隔符**只切第一刀**：菜名在左、理由在右，理由整体保留。
+    // 不能用 split 再拼回去——理由里自己带冒号或破折号是常事
+    //（"清蒸 —— 汤锅一次搞定：蒸鱼同时烧水"），拼回去会把中间那个冒号吃掉。
+    const cut = REASON_SPLIT.exec(m[2])
+    let name = (cut ? m[2].slice(0, cut.index) : m[2]).trim()
     name = name.replace(TRIM_CHARS, '').trim()
     name = name.replace(/[，。！？；;,!.?;]+$/, '').trim()
     if (name.length < 2 || name.length > 14) continue
     if (seen.has(name)) continue
     seen.add(name)
-    out.push({ index, name })
+    // 理由只做两端清理，**不改写、不截断**：它是要给用户读的原话。
+    // 菜名长度那道闸门（2..14）不适用于理由——那是为了挡住"整句话被当成菜名"，
+    // 理由本来就该是一句话。
+    const reason = (cut ? m[2].slice(cut.index + cut[0].length) : '')
+      .trim()
+      .replace(TRIM_CHARS, '')
+      .trim()
+    out.push({ index, name, reason })
     if (out.length >= 8) break
   }
   return out

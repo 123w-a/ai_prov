@@ -60,6 +60,21 @@
    不同高度——第一版这里误写成 margin-top: var(--s2)，实测第 1 张 y=433、
    第 2/3 张 y=407，三颗按钮错开 26px。auto 吃掉剩余空间，卡内最小间距
    仍由 .cand-card 的 gap 保证。 */
+/* 推荐理由（2026-10-05 捞回）：预期图里菜名下那一行小字。
+   给 --ink-soft 而不是 --ink：它是菜名的附注，读序是"先看菜名、再看为什么"。
+   行高放宽到 1.6 并限 3 行——理由按规则约 30 字，186px 的最窄卡片下会折行，
+   限行是为了不让某条特别长的理由把三张卡的高度拉得参差不齐。 */
+.cand-reason {
+  margin-top: 6px;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
 .cand-pick {
   margin-top: auto;
   align-self: flex-start;

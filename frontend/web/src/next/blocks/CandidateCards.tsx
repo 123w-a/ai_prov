@@ -42,6 +42,10 @@ export function CandidateCards({
           <li className="cand-card" key={c.index}>
             <span className="cand-no">{c.index}</span>
             <b className="cand-name">{c.name}</b>
+            {/* 推荐理由：正文里本来就有（后端规则要求"菜名后接 —— 再写一句约 30 字
+                的理由"），此前被解析器丢掉了。它在预期图里就是菜名下那一行小字。
+                没写理由的行不显示这一行——不拿菜名或别的字段凑一句出来。 */}
+            {c.reason && <span className="cand-reason">{c.reason}</span>}
             <button
               className="cand-pick"
               type="button"
