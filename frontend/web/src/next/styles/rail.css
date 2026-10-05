@@ -162,7 +162,9 @@
    分隔从"左竖线"改成"上横线"：它在底部已经是最后一项，需要的是与上方条目分开。 */
 .shell-ctx {
   margin-left: 0;
-  margin-top: auto;
+  /* 不再需要 margin-top:auto 吸底：目录块与成员区之间现在有 .shell-rail-art 用 flex:1
+     吃掉剩余高度，两者同时存在会互相抢空间、把脊柱压扁。 */
+  margin-top: 0;
   padding-left: 0;
   padding-top: 14px;
   border-left: 0;
@@ -261,6 +263,64 @@
      （截图缩略后甚至像重叠）。14px 让"名单"与"看详情"读成两件事。 */
   margin-top: 14px;
   text-align: left;
+}
+
+/* ── 竖栏装饰：册页「索引脊柱」（2026-10-05 第四刀）────────────────────────
+   用户拍板要纸面装饰纹（"前端本来就是为了好看而来的"），并要求再议一轮做什么最好看。
+   两家的第一推荐不同：lave 首选索引脊柱，lave2 首选 45° 斜向发丝纹。此处采纳前者——
+   斜纹与全站已有的方格纸底（水平+垂直）构成三个方向会打架，且斜纹偏商务科技语言，
+   不是中文册页。但把 lave2 的一个技巧嫁了过来：**上下两端用 mask 淡出**。
+
+   为什么要淡出（这条是上上轮失败的直接教训）：那时我给 .shell-nav 加过一条贯穿到底的
+   右边界线，设想是让空白读成"栏内留白"，实测截图后否掉——硬边把空框得更显眼。
+   脊柱同理，两端硬截断会像一条没画完的线；淡出之后它才是"纸面的纹理"。
+
+   用真实 flex spacer 而不是绝对定位：它自然吃掉目录块与成员区之间的剩余高度，
+   于是竖栏高度怎么变都不用改这里的任何数字。
+
+   几何同步：竖线周期 8px（3px 实 + 5px 虚），刻度周期 40px = 8×5，所以**每一条刻度
+   都正好落在竖线某个实线段的起点上**。周期不整除会让刻度浮在虚线空隙里、看着毛躁。 */
+.shell-rail-art {
+  flex: 1;
+  /* 竖栏被压得很矮时不画：几像素里塞脊椎与刻度只会变成一团噪点。 */
+  min-height: 72px;
+  background:
+    /* 断续竖线，与目录块左缘（x=0）对齐，让脊柱读成导航块那条左线的延续 */
+    repeating-linear-gradient(
+        to bottom,
+        var(--accent-line) 0 3px,
+        transparent 3px 8px
+      )
+      left top / 1px 100% no-repeat,
+    /* 短横刻度：从竖线向右伸 14px，像目录标尺 */
+    repeating-linear-gradient(
+        to bottom,
+        transparent 0 39px,
+        var(--accent-line) 39px 40px
+      )
+      8px top / 14px 100% no-repeat;
+  /* 0.7 而不是最初的 0.5：0.5 在 1366×900 的真实页面上几乎看不见（实测截图确认），
+     起不到"让留白有秩序"的作用；而 lave2 提醒过浓了会变分割线。0.7 是能看清的下限。
+     颜色仍用 --accent-line(#ddc7b6)，它本身就是淡色，所以 0.7 依然是纸面纹理而非 UI 线。 */
+  opacity: 0.7;
+  /* 两端淡出。这是本方案的关键，缺了它就会重蹈贯穿边线的覆辙。
+     用 var(--ink) 而不是 #000：mask 只关心 alpha，不透明令牌等效，而本仓的门禁
+     (d_色值字面量) 规定只有 tokens.css 可以持有色值字面量——写字面量会当场判违规。 */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--ink) 16%,
+    var(--ink) 84%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--ink) 16%,
+    var(--ink) 84%,
+    transparent 100%
+  );
+  pointer-events: none;
 }
 
 .shell-member-empty {
