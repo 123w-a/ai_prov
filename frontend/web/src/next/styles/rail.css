@@ -33,17 +33,16 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  /* 6px 而不是 2px：条目现在是独立成框的，2px 会让五个框挤成一坨、读成一根长条。
-     框与框之间需要能看见"这是五件东西"的缝。 */
-  gap: 6px;
+  /* 间距 0（2026-10-05 第三刀，lave gpt-6.1-sol 的诊断）：
+     它指出"当前问题主要是五个框结束得太突然，优先改成目录化呈现，而不是继续塞卡片"。
+     照此把五项连成一个目录块——相邻框共享边界（用 margin-top:-1px 抵消双线），
+     于是这一列读成**一件东西**而不是五个孤立小块，"突然结束"也随之消失。
+     与 lave2 的"分组"相比，这个做法不新增任何标题文字，不碰"不增加无用内容"的约束。 */
+  gap: 0;
   max-width: none;
   margin: 0;
   padding: 24px 0 26px;
   border-bottom: 0;
-  /* 这里原先还有一条贯穿的右边界线（同一轮的早先版本）。已删除——实测截图后否掉：
-     条目成框之后，框的右缘正好落在栏的右缘上，边线与框线贴成双线、显得脏；
-     而它原本想解决的"空"并没被解决（有边的框反而把空白框得更显眼）。
-     真正让这一列看起来不空的是密度本身：五个框 + 图标 + 16px 字。 */
 }
 
 /* 品牌：竖栏的起点。印章仍是 34×34 实底（批次 4 定的），左栏里它比文字高，
@@ -88,12 +87,36 @@
   gap: 10px;
   text-align: left;
   font-size: 16px;
-  padding: 14px 12px 14px 14px;
-  /* 框：--line 是纸面的发丝色，界面上大量使用，这里不是新语言。
-     radius 用 --radius(4px) 而不是 card 的 0——条目是小控件，方角会显得像表格单元格。 */
+  /* 内边距 14→19px：单项 46→56px。lave2(claude-opus-5-5) 看图后建议拉到 62px，
+     我取 56 是保守值——它是看过图的意见，所以不该无视，但 62px 已接近移动端列表比例，
+     与 1366 宽的桌面版心不太协调。先到 56 看效果。 */
+  padding: 19px 12px 19px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius, 4px);
   background: none;
+}
+
+/* 相邻框共享一条边界：抵消上一条下边框与下一条上边框叠成的双线。
+   这样五项是一个整块（目录），而不是五个各自带四条边的小卡。 */
+.shell-tab + .shell-tab {
+  margin-top: -1px;
+}
+
+/* 目录块的首尾各留一个圆角，内部接缝是直角——否则中间那些圆角会在接缝处
+   露出两个相对的月牙，看起来像没对齐。 */
+.shell-tab:first-of-type {
+  border-radius: var(--radius, 4px) var(--radius, 4px) 0 0;
+}
+
+.shell-tab:last-of-type {
+  border-radius: 0 0 var(--radius, 4px) var(--radius, 4px);
+}
+
+/* 当前项被夹在中间时，它自己的四条边要压住左右邻居的边界，否则相邻框的框线
+   会从它上面穿过去（当前项有底色，穿线尤其明显）。 */
+.shell-tab.is-on {
+  position: relative;
+  z-index: 1;
 }
 
 .shell-tab:hover {
