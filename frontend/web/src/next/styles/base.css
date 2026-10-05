@@ -232,8 +232,11 @@ body {
   position: absolute;
   top: 0;
   right: 0;
-  width: 96px;
-  height: 72px;
+  /* 96×72 → 144×108（用户反馈"太小了"）。这个尺寸是校验过上限的：文字墨迹最右
+     759，图形左边 860，仍留 101px 间隙；下沿 250 仍在 composer 顶部 265 之上。
+     再往上加就得动标题字号或换行——那才是真正的代价，而这枚只是静物。 */
+  width: 144px;
+  height: 108px;
   color: var(--line-strong);
   pointer-events: none;
 }

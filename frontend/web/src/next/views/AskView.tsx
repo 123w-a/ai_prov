@@ -122,10 +122,13 @@ export function AskView({
               aria-hidden="true"
               focusable="false"
             >
+              {/* strokeWidth 是 1.1 而不是篇首那枚的 1.7：这一枚的 viewBox(96) 放大到
+                  144px 显示（缩放 1.5），等比缩放下 1.7 会变成 2.55px，比碗筷的
+                  1.38px 粗近一倍，两件器物就成了两套笔法。1.1 → 约 1.65px，同一手感。 */}
               <g
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="1.7"
+                strokeWidth="1.1"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
