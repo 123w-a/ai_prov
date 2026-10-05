@@ -33,6 +33,7 @@ import './styles/service.css'
 // 候选卡样式（2026-10-05）：夹具台有 candidates 用例，这一片**会**命中，
 // 必须与 main.tsx 同步——否则候选卡在夹具台量到的几何不是正式页的。
 import './styles/candidate.css'
+import './styles/profile.css'
 
 import { RunResult } from './views/ResultView.tsx'
 import { WaitCard } from './blocks/WaitCard.tsx'

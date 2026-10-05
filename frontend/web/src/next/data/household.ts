@@ -43,8 +43,18 @@ export function familyFacts(
     if (b.height_cm && b.weight_kg) bits.push(`${b.height_cm}cm · ${b.weight_kg}kg`)
     return bits.length > 0 ? `${m.name} · ${bits.join(' · ')}` : m.name
   })
-  const dislikes = [...new Set(family.members.flatMap((m) => m.profile.dislikes))]
-  return { members, shared: dislikes.length > 0 ? `共同忌口 ${dislikes.join('、')}` : null }
+  // 「共同忌口」必须是**交集**，不是并集（2026-10-05 修正）。
+  //
+  // 这里原来写的是 flatMap 去重——那是并集，却挂着"共同"两个字。当前真实档案
+  // 两人恰好都忌芹菜，并集与交集相等，所以这个错一直没露出来；一旦只有一个人忌
+  // 香菜，起手页与等待页就会写着「共同忌口 香菜」，把个人忌口说成全家的。
+  // 后端没有"家户级忌口"这种字段，全家都忌只能从"每个人都忌"推出来——那才是交集。
+  //
+  // 单人家庭不产生共同项：一个人的忌口是他自己的，不是全家的。所以阈值是 ≥2 人。
+  const sets = family.members.map((m) => new Set(m.profile.dislikes))
+  const sharedDislikes =
+    sets.length >= 2 ? [...sets[0]].filter((d) => sets.every((s) => s.has(d))) : []
+  return { members, shared: sharedDislikes.length > 0 ? `共同忌口 ${sharedDislikes.join('、')}` : null }
 }
 
 /** 只读取一次的家庭档案 + 冰箱。任何一侧失败都退化成 null / 空数组，不抛错、不编造。

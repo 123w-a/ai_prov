@@ -60,6 +60,10 @@ import './styles/panels.css'
    注意它**必须**同时登记到 fixture-main.tsx：夹具台有 candidates 这个用例，
    漏登记就会重演「夹具几何≠正式页几何」那个坑。 */
 import './styles/candidate.css'
+/* 身体档案房样式（2026-10-05 新增）。只定义 .pf-* 新类名，与前面所有片不相交，
+   所以登记为末层、排在 candidate.css 之后——check-layers 的 f_样式顺序要求
+   main.tsx 里的相对顺序与 STYLE_ORDER 完全一致，插在中间会直接判违规。 */
+import './styles/profile.css'
 
 import Shell from './app/Shell.tsx'
 import TonightApp from './app/TonightApp.tsx'

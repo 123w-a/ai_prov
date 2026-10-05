@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { switchActiveMember } from '../../api/client.ts'
 import { familyFacts, notifyMemberSwitched, useHousehold } from '../data/household.ts'
+import { ProfileView } from '../views/ProfileView.tsx'
 
 /**
  * 全局导航壳（2026-09-29 户型图第 2 步）。
@@ -24,11 +25,15 @@ import { familyFacts, notifyMemberSwitched, useHousehold } from '../data/househo
  *     而正在等待中的这一轮是 live:false 快照，不改口（绑定启动时的档案）。
  */
 
-const ROOMS = ['tonight', 'weekly', 'fav', 'svc'] as const
+/** 房间顺序（2026-10-05 加入 profile）：身体档案紧跟今晚这一顿。
+ *  放在这里而不是列尾，理由是它不是"管理工具"而是**每一轮推荐的前提**——
+ *  放在收藏与服务之后，读起来会像一堆杂项里的最后一件。其余四项相对顺序没动。 */
+const ROOMS = ['tonight', 'profile', 'weekly', 'fav', 'svc'] as const
 type RoomId = (typeof ROOMS)[number]
 
 const ROOM_LABEL: Record<RoomId, string> = {
   tonight: '今晚这一顿',
+  profile: '身体档案',
   weekly: '周报',
   fav: '收藏',
   svc: '服务',
@@ -144,6 +149,20 @@ export default function Shell({
         <div className="shell-room" hidden={room !== 'tonight'}>
           {tonight}
         </div>
+        {/* 身体档案房：与周报/收藏/服务同属"按需挂载"——它没有跨房状态。
+            档案本身由本组件的 useHousehold 读一次再传下去（live=true，切换后自会刷新），
+            房间内不许自己再拉一份。 */}
+        {room === 'profile' && (
+          <div className="shell-room">
+            <ProfileView
+              family={family}
+              shared={facts?.shared ?? null}
+              onPick={(id) => void pick(id)}
+              switching={switching}
+              switchErr={switchErr}
+            />
+          </div>
+        )}
         {room === 'weekly' && <div className="shell-room">{weekly}</div>}
         {/* 收藏房同周报房：按需挂载。它唯一的跨房动作（点条目回今晚）走
             自定义事件，不需要自己常驻——常驻的只有今晚房。 */}
