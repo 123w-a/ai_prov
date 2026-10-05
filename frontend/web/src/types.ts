@@ -80,6 +80,11 @@ export interface GuardrailItem {
   rule?: string
   status: string
   reason?: string
+  /** 出处（指南名 + 页码），由后端从确定性规则库注入，不是模型填的。
+   *  形如「成人高血压食养指南（2023年版）p6-7」。没有对应规则的条件
+   *  （过敏原、成员冲突、档案不可用）为空串——空表示「本产品没给出处」，
+   *  前端应显示为无出处，而不是补一个默认值。 */
+  source?: string
 }
 
 export interface DishMatrixItem {

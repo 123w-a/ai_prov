@@ -139,6 +139,14 @@ class GuardrailItem(BaseModel):
         description="pass/warn/adjusted/blocked/member_conflict"
     )
     reason: str = Field(default="", description="原因")
+    # 出处：**由后端从确定性规则库机械注入，不是模型填的**。
+    # 取 domain/nutrition_rules.py 的 RULES[condition]["source"]，形如
+    # 「成人高血压食养指南（2023年版）p6-7」；该字段是慢病/孕期规则在代码里的固定组成部分，
+    # 可以对着指南原文逐条核对。前端据此把「结论」与「依据」对上，不必让模型自述来源
+    # ——模型自述的出处既可能为空（实测多数轮次不填 SourceRef），也可能引错页码。
+    # 没有对应规则的条件（如过敏原、家庭成员冲突、档案不可用）留空字符串：
+    # 宁可显示"没有出处"，也不要给它编一个。
+    source: str = Field(default="", description="该约束的出处（指南名 + 页码），来自确定性规则库")
 
 
 class DishMatrixItem(BaseModel):

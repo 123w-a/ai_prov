@@ -2226,6 +2226,10 @@ def _build_guardrails(
     items = []
     for cond in conditions:
         rule_msg = RULES.get(cond, {}).get("message", "")
+        # 出处与 message 取自同一个规则字典，保证「结论」和「依据」是同一份规则的
+        # 两个字段，不会出现"结论来自 A 规则、出处写 B 指南"的错配。过敏原这类
+        # 不走 RULES 的条件没有 source，保持空串（前端据此显示"无出处"）。
+        rule_src = RULES.get(cond, {}).get("source", "")
         if not rule_msg and str(cond).startswith("过敏原:"):
             rule_msg = f"必须完全不含{str(cond).split(':', 1)[-1]}，包括调料与隐含来源"
         # 分支顺序不可调换：blocked 必须先判，否则会落进 adjusted 分支，
@@ -2239,7 +2243,11 @@ def _build_guardrails(
             status, reason = "adjusted", "初始方案命中硬禁忌，已由健康护栏自动调整至合规：" + rule_msg
         else:
             status, reason = "pass", "已符合" + cond + "膳食原则"
-        items.append(GuardrailItem(condition=cond, rule=rule_msg, status=status, reason=reason))
+        items.append(
+            GuardrailItem(
+                condition=cond, rule=rule_msg, status=status, reason=reason, source=rule_src
+            )
+        )
     # 同餐成员冲突必须以矩阵为准：没有健康标签不等于没有冲突。
     items.extend(_family_conflict_guardrails(dish_matrix))
     # 档案不可用时护栏必然降级：必须让用户看见，不能让"没有约束"冒充"全部通过"。
