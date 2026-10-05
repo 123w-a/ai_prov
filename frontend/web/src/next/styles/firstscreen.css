@@ -380,6 +380,45 @@
   color: var(--accent-ink);
 }
 
+/* 首屏示例问法（2026-10-05，主卡下半部）。
+   与候选页药丸（.cand-chip）参数一致但**故意各写一份**：它们属于两个不同的
+   页面，将来任一边要调（比如候选页要更紧凑）不该牵动另一边；把两条规则合成
+   一个选择器组反而会让"改这里动了那里"成为默认状态。
+   点下去只把话放进输入框，所以形状是"半句话"的药丸，不是按钮。 */
+.ask-examples {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-examples-label {
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+
+.ask-example {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-family: var(--sans);
+  font-size: var(--fs-data);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.ask-example:hover {
+  border-color: var(--accent);
+}
+
 .rail-src-note[data-tone='weak'] {
   opacity: 0.78;
 }
