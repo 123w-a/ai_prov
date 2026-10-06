@@ -17,27 +17,35 @@ export function WaitFacts({ facts, fridge }: { facts: Facts | null; fridge: stri
   return (
     <div className="wait-facts">
       <Panel variant="outline">
-        {fridge.length > 0 && (
-          <section className="wait-fact">
-            <h3 className="wait-fact-label"><Icon name="fridge" />冰箱现有</h3>
-            <ul className="wait-chips">
-              {fridge.map((item) => (
-                <li key={item}>{item}</li>
+        {/* 两条「已知输入」并排成链：冰箱与档案是同一层级的两路依据，共用左侧一根竖线。
+            竖线只覆盖这两段——它是「并行依据」的记号，不是装饰。 */}
+        <div className="wait-chain">
+          {fridge.length > 0 && (
+            <section className="wait-fact">
+              <h3 className="wait-fact-label"><Icon name="fridge" />冰箱现有</h3>
+              <ul className="wait-chips">
+                {fridge.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {facts && (
+            <section className="wait-fact">
+              <h3 className="wait-fact-label">家庭档案</h3>
+              {facts.members.map((line) => (
+                <p className="wait-fact-row" key={line}>
+                  {line}
+                </p>
               ))}
-            </ul>
-          </section>
-        )}
-        {facts && (
-          <section className="wait-fact">
-            <h3 className="wait-fact-label">家庭档案</h3>
-            {facts.members.map((line) => (
-              <p className="wait-fact-row" key={line}>
-                {line}
-              </p>
-            ))}
-            {facts.shared && <p className="wait-fact-shared">{facts.shared}</p>}
-          </section>
-        )}
+            </section>
+          )}
+        </div>
+        {/* 「共同忌口」是冰箱 ∩ 档案求出来的**交集**（data/household.ts 用 sets.every 求的），
+            不是家庭档案的一个属性。此前它渲染在档案段的内部、长得像那一节的尾巴，
+            等于把这一屏最有力的一处结构藏了起来：两路依据收束成一条约束。
+            现在它跳出链的缩进、不挂竖线、保留 --accent-ink，读作「收束」。 */}
+        {facts?.shared && <p className="wait-fact-shared">{facts.shared}</p>}
         <p className="wait-caveat">以上只表示系统已经知道什么，菜单尚未确定。</p>
       </Panel>
     </div>

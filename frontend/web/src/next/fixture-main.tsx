@@ -82,6 +82,22 @@ if (query.get('stroke') === '0') {
   document.head.append(s)
 }
 
+/* ?anim=0 —— 关掉全部入场动画再截图。
+ *
+ * 为什么要这个开关：等待页的工位行与痕迹是 320ms 一次性入场
+ * （animation: bench-in … both），而截图工具在 load 之后立刻抓帧，
+ * 抓到的常常是动画的头几十毫秒——整块内容几乎透明，看上去像"页面没渲染"。
+ * 那不是缺陷，是抓帧时机的问题；但也不该因此就说它没问题——
+ * 判据仍然是 getComputedStyle 的计算值，这个开关只让**观感复核**能在终态下进行。
+ *
+ * 注意 animation:none 之后 both 不再填充，元素回到自身基础样式（opacity 默认 1），
+ * 所以看到的是终态而不是 from 帧。 */
+if (query.get('anim') === '0') {
+  const s = document.createElement('style')
+  s.textContent = '*, *::before, *::after { animation: none !important; transition: none !important }'
+  document.head.append(s)
+}
+
 /* ?fontlab=1 —— 字形实验室。
  *
  * 同一标题在若干**设备像素尺寸**下并排渲染，每档上下两行：

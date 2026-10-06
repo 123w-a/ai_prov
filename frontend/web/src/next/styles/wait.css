@@ -106,9 +106,15 @@
 
 /* 等待页唯一会随真实事件改口的一行。
  * 320ms 一次性入场：不位移过多、不缩放、不弹跳、不光晕、不循环。
- * 用 rise(8px) 对一行字来说太大了，所以单独一个 bench-in（3px）。 */
+ * 用 rise(8px) 对一行字来说太大了，所以单独一个 bench-in（3px）。
+ *
+ * 左侧 2px 短竖（2026-10-06 视觉增强）：让「正在…」从**一段文字**变成一个**字段**，
+ * 与右下角终态说明（.wait-orphan/.wait-error 的 2px 竖线）同族但更淡——
+ * 它是进行时的记号，不是警告。沉默超时后连同文字一起降级，不单独留一根亮线。 */
 .bench-now {
   margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent-line);
   font-size: 20px;
   line-height: 1.5;
   font-weight: 400;
@@ -121,6 +127,7 @@
  * 不该和"正在做事"看起来一样重。 */
 .bench-now.is-quiet {
   color: var(--ink-faint);
+  border-left-color: var(--line);
 }
 
 /* 真实到达过的工位。原样保留重复，不合并、不编号、不显示总数。 */
@@ -188,13 +195,33 @@
    styles/primitives.css 的 .p-panel[data-variant='outline']，两页共用同一份。
    这里保留的是等待页的节奏——离上一块 30px，那是这一页的版式，不是原语的属性。 */
 .wait-facts {
-  margin-top: 30px;
+  /* 30 → 24（2026-10-06）：工位行与事实框是同一件事的两个时间面——工位是「正在读」，
+     事实是「已读入」。它们该挨得更近，原来那 30px 把同一件事拆成了两段。 */
+  margin-top: 24px;
+}
+
+/* ── 事实框内部：把「两路依据 → 一处收束 → 一个未定」的结构显出来 ──────────
+ *
+ * 2026-10-06 改动。原来的做法是两段之间加一条横线（.wait-fact + .wait-fact
+ * 的 border-top），并且把「共同忌口」渲染在家庭档案那一段的**内部**。
+ *
+ * 但「共同忌口」不是家庭档案的属性：data/household.ts 里它是
+ * 冰箱 ∩ 档案 用 sets.every 求出来的**交集**。渲染成档案段的尾巴，
+ * 等于把这一屏最有力的一处结构藏了起来——读者会以为它是档案的一个字段。
+ *
+ * 所以改成一条链：
+ *   .wait-chain 用一根左侧竖线罩住两段**并行的依据**（横线读作「上下两节」，
+ *   竖线读作「并排两路」，而后者才是事实）；
+ *   .wait-fact-shared 跳出链的缩进、不挂竖线，读作**收束**；
+ *   .wait-caveat 留在链外最淡处，读作**出口**（菜单尚未确定）。
+ * 全程没有箭头、没有图形、没有分母，几何自己把话说完。 */
+.wait-chain {
+  padding-left: 16px;
+  border-left: 1px solid var(--accent-line);
 }
 
 .wait-fact + .wait-fact {
-  margin-top: 22px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
+  margin-top: 18px;
 }
 
 .wait-fact-label {
@@ -236,9 +263,9 @@
 }
 
 .wait-fact-shared {
-  margin: 14px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  /* 收束节点：与链内间距（18px）刻意拉开——24px 说的是「这里已经不是并列的一员了」，
+     同时**不能**再用横线，那会把它重新读成「第三段」。--accent-ink 保留。 */
+  margin: 24px 0 0;
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--accent-ink);
@@ -273,7 +300,9 @@
   display: grid;
   justify-items: start;
   gap: 18px;
-  margin-top: 26px;
+  /* 26 → 34（2026-10-06）：这一页原来的纵向节奏是「上松下紧」——依据内部松、
+     读完之后紧，方向恰好反了。进入依据收紧到 24，从「读」到「决定」放开到 34。 */
+  margin-top: 34px;
 }
 
 .act {
@@ -406,4 +435,9 @@
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
+
+
+
+
+
 
