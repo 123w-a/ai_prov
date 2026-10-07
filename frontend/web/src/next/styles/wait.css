@@ -395,11 +395,35 @@
   color: var(--ink-faint);
 }
 
-/* 正在写出的正文：半截 markdown 边收边重排会一直跳，所以过程稿按纯文本渲染。 */
+/* 正在写出的正文：半截 markdown 边收边重排会一直跳，所以过程稿按纯文本渲染。
+ *
+ * ── 2026-10-06 重心转移 ────────────────────────────────────────────────
+ * 这一屏有两个时间面：
+ *   正文出现**之前**，主角是上面的核对卡片——它回答「你凭什么开始做」；
+ *   正文出现**之后**（实测约 106 秒），主角应该是这里——因为它是整屏唯一
+ *   会持续生长的东西，而卡片从那一刻起已经不再变化了。
+ *
+ * 原来的处理恰好反了：正文是 14.5px 的 --ink-soft，与卡片里的档案行同级，
+ * 还顶着一根和卡片同样的发丝线，读起来像卡片下面的一段附注。
+ * 于是一屏里最「活」的部分，成了最不起眼的部分。
+ *
+ * 改动只动层级，不动布局（布局一动，页面会在第 106 秒整体跳一次）：
+ *   · 顶部间距 34 → 44，与卡片明确分开，读作两块而不是一块的下半截；
+ *   · 那根线从 --line 换成 --accent-line——它不再是「卡片继续」的记号，
+ *     而是「另一件事开始了」的记号；
+ *   · 标题降一档（14 → 13px、--ink-soft → --ink-faint）并加字距：
+ *     它是元信息（「已经写出的内容 · 16 字」），不该和正文抢；
+ *   · 正文本体提一档（14.5 → 16.5px、--ink-soft → --ink、行距 1.85 → 1.9），
+ *     拿到这一页最重的墨色。 */
 .wait-body-wrap {
-  margin-top: 34px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
+  /* 与 .wait-card 同一个 620px。正文块挂在卡片**外面**，因此不受 .wait-card
+     那条 max-width 的约束——不补这一条，正文的右边界就会比上面的卡片多出
+     一大截，"两块"读起来一宽一窄。620 与 .wait-card 是同一条理由：
+     三视图共用一个左侧内容边界，宽度照结果页正文栏的 636 取齐。 */
+  max-width: 620px;
+  margin-top: 44px;
+  padding-top: 24px;
+  border-top: 1px solid var(--accent-line);
 }
 
 .wait-body-title {
@@ -407,9 +431,10 @@
   align-items: baseline;
   gap: 10px;
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
 }
 
 .wait-body-count {
@@ -420,13 +445,13 @@
 
 .wait-body {
   white-space: pre-wrap;
-  font-size: 14.5px;
-  line-height: 1.85;
-  color: var(--ink-soft);
+  font-size: 16.5px;
+  line-height: 1.9;
+  color: var(--ink);
 }
 
 .wait-body-note {
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   font-size: 12.5px;
   color: var(--ink-faint);
 }
@@ -435,6 +460,7 @@
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
+
 
 
 
