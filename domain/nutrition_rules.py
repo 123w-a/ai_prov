@@ -104,14 +104,25 @@ _REVERSED_QUALIFIERS = (
 )
 
 
+# 限定词与关键词之间允许隔一个动词（「拒绝饮酒」「避免喝酒」），否定语义
+# 不应被单字动词打断；动词集收窄保证「拒绝不了喝」这类反向句不被误豁免。
+_VERB_BRIDGE = ("饮", "吃", "喝")
+
+
 def _qualified_by_suffix(before: str, qualifiers) -> bool:
     for qualifier in sorted(qualifiers, key=len, reverse=True):
-        if not before.endswith(qualifier):
-            continue
-        preceding = before[:-len(qualifier)]
-        if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
-            return False
-        return True
+        if before.endswith(qualifier):
+            preceding = before[:-len(qualifier)]
+            if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+                return False
+            return True
+        if (len(before) >= len(qualifier) + 1
+                and before[-1] in _VERB_BRIDGE
+                and before[:-1].endswith(qualifier)):
+            preceding = before[:-(len(qualifier) + 1)]
+            if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+                return False
+            return True
     return False
 
 
@@ -124,8 +135,15 @@ def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
             continue
         if mode == "salt" and _qualified_by_suffix(before, _SALT_QUALIFIERS):
             continue
-        if mode == "forbidden" and _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
-            continue
+        if mode == "forbidden":
+            if _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
+                continue
+            # 后置否定（2026-10-08 对照实验发现的真漏判）：「任何酒都不喝」这类
+            # 否定在关键词**之后**，只查前缀限定词会把安全文本误报成违禁，
+            # 重生成轮里模型写合规否定句时会白白再拦一轮。窗口取后 4 字符。
+            after = compact[match.end():match.end() + 4]
+            if after.startswith(("都不", "都别", "绝不", "从不")):
+                continue
         return True
     return False
 
@@ -191,6 +209,9 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
 
     返回元素：{"condition","keyword","message","source","todo_source"?}
     """
+    # None 防御（2026-10-08 实验实测：LLM 空回复 content=None 会把下游
+    # _total_g 的 re.finditer 打崩）——空文本按无违禁处理，护栏不因空回复崩溃。
+    text = text or ""
     violations: List[Dict] = []
     seen = set()
     for cond in conditions:

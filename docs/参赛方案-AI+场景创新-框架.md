@@ -68,6 +68,7 @@
 - 【已有】完整链路（`docs/01-architecture.md` 已画 ASCII 版）：
   前端 SSE 流式对话 → FastAPI → LangGraph Agent（工具循环/结构化输出 ChefAnswer）→ 规则护栏（`domain/nutrition_rules.py` 营养红线 / `allergen_rules.py` 过敏原 / `constraint_rules.py` 画像约束）+ RAG（Chroma + bge 嵌入 + BM25 + reranker，27 份指南 PDF）→ 本地 JSON 数据层。
 - 【需写】把「大模型 + RAG + 确定性规则护栏」三者如何互补讲成场景融合逻辑：**大模型负责生成、RAG 负责有据可查、规则负责兜底拦命**——这是本方案技术适配性的核心叙事。
+- 【已有·2026-10-08】三个算法核心的公式、代码定位、公平性标注与创新点论证已成稿：`docs/参赛-算法核心与实验数据.md`（技术路线图可直接从该文取材）。
 
 ### 2. 系统架构图
 - 【缺】正式架构图（官方要求展示数据层/算法层/应用层及数据交互）。现成的 `docs/01-architecture.md` 分层文本可直接重绘，半天工作量。
@@ -107,11 +108,11 @@
 
 ## （五）测试与验证 【主体已有，需补报告】（10 分）
 
-- 【已有·实测 2026-10-07】**后端 474 项 unittest**（tests/ 下 domain/api/agent/rag/storage/integration 六层）：466 通过、1 失败、4 错误、7 跳过——红项明细见《参赛缺口清单》，**提交前必须修绿**。
-- 【已有·实测 2026-10-07】**前端 36 项 node --test 全部通过**（`src/next/data/*.test.ts`，样本取自真实线上故障）。
+- 【已有·实测 2026-10-08】**后端 488 项 unittest 全绿**（tests/ 下 domain/api/agent/rag/storage/integration 六层，7 skip 为环境依赖）。
+- 【已有·实测 2026-10-08】**前端 38 项 node --test 全部通过**（`src/next/data/*.test.ts`，样本取自真实线上故障）。
 - 【已有】专项指标测试：RAG 召回指标（`tests/rag/test_recall_metric.py`）、护栏真实案例回归（`test_allergen_real_cases.py`）、安全回归（`test_safety_regressions.py`）、验证矩阵（`test_validation_matrix.py`）。
 - 【缺】一份**面向评委的测试报告**：测试方案（功能/性能/可靠性三层用例设计）+ 结果图表 + 改进措施。
-- 【缺】**应用级效果指标**（比单测更重要）：护栏拦截正确率、RAG 引用有据率、推荐满意度——需要设计评估集并跑出数字。
+- 【已有·2026-10-08】**应用级效果指标已补齐四组实验**：护栏 A/B（70+30 例）、语境判定对照（17/17）、LLM 端到端闭环对照、检索 recall@3=1.0——全部数字、复跑命令与公式见 `docs/参赛-算法核心与实验数据.md` 第二节。
 
 ## （六）应用效果与成果 【最大缺口】（15 分）
 

@@ -81,6 +81,37 @@ class TestAuditGoodMenu(unittest.TestCase):
         vs = audit("老火汤炖猪肝配啤酒", [])
         self.assertEqual(vs, [])
 
+    def test_trailing_negation_is_not_flagged(self):
+        # 2026-10-08 对照实验（experiments/ab_context_qualifier.py）发现的真漏判：
+        # 否定落在关键词之后（「酒都不喝」），只查前缀限定词会把安全文本误报成违禁，
+        # 重生成轮里模型写合规否定句时会白白再拦一轮。
+        vs = audit("拒绝饮酒，任何酒都不喝", ["高血压"])
+        self.assertEqual(vs, [])
+
+    def test_trailing_negation_window_does_not_hide_real_hits(self):
+        # 后置否定窗口是 4 字符且只认否定词表，真实违禁不受影响（阳性保护）
+        vs = audit("晚餐配一瓶冰啤酒", ["痛风"])
+        self.assertTrue(vs)
+        vs2 = audit("他喝酒", ["痛风"])
+        self.assertTrue(vs2)
+
+    def test_verb_bridged_negation_is_not_flagged(self):
+        # 对照实验（ab_context_qualifier 2026-10-08）：限定词与关键词隔一个动词
+        # （「拒绝**饮**酒」）时否定语义不被单字打断，安全文本不误报
+        vs = audit("拒绝饮酒，任何酒都不喝", ["高血压"])
+        self.assertEqual(vs, [])
+        vs2 = audit("避免喝酒", ["痛风"])
+        self.assertEqual(vs2, [])
+
+    def test_verb_bridge_does_not_exempt_reversed_sentences(self):
+        # 「拒绝不了喝」是反向句（实际会喝），桥接只认紧贴的动词不认「不了」续接
+        vs = audit("他拒绝不了喝酒", ["痛风"])
+        self.assertTrue(vs)
+
+    def test_none_text_is_treated_as_empty(self):
+        # LLM 空回复（content=None）不得打崩审计；空文本按无违禁
+        self.assertEqual(audit(None, ["痛风"]), [])
+
 
 class TestAuditBadMenu(unittest.TestCase):
     """违禁菜单应被精准拦下"""
