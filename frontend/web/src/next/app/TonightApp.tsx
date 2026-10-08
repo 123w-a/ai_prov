@@ -197,7 +197,7 @@ export default function TonightApp() {
     return () => window.clearInterval(t)
   }, [run.status, run.orphaned])
 
-  const send = useCallback(async (override?: unknown) => {
+  const send = useCallback(async (override?: unknown, opts?: { image?: { dishName: string; index: number; revision: boolean } }) => {
     if (!sessionId || run.status === 'running') return
     // override 供候选卡「选这个方案」直接发送。它**不能**走 setText 再 send：
     // 同一帧里 text 还是旧值，发出去的会是上一轮那句话。
@@ -206,6 +206,15 @@ export default function TonightApp() {
     const message = (typeof override === 'string' ? override : text).trim()
     if (!message) return
 
+    // opts.image = 菜名右侧「配图 / 换一张图」发的图片轮：它不是新一轮对话，
+    // 是给当前这张卡补/换配图——卡片身份（谁问的/何时问的/答是什么/落在哪条记录）
+    // 必须原样活着，起跑就擦成 EMPTY_RUN 会让用户点完按钮回来时卡片凭空消失。
+    const img = opts?.image
+    const base = runRef.current
+    const imgBase = img && base.status === 'succeeded' && base.origin && base.answer ? base : null
+    const target = imgBase?.origin      // 钉卡片用的落点；没有它就不该发这一轮
+    if (img && !imgBase) return
+
     abortRef.current?.abort()
     const ac = new AbortController()
     abortRef.current = ac
@@ -213,24 +222,62 @@ export default function TonightApp() {
     startedAt.current = Date.now()
     // askedAt 用 startedAt.current（不是再读一次钟）：它就摆在上一行，
     // 两处各读一次 Date.now() 会让"发送时刻"和"计时起点"差出几毫秒。
-    setRun({ ...EMPTY_RUN, status: 'running', request: message, askedAt: startedAt.current })
+    // 图片轮反过来：原话与询问时刻保留卡的（AskEcho 那句「记录于」说的是这道菜
+    // 被问出来的时刻，不是按下配图按钮的时刻）；过程面从零重新起。
+    setRun({
+      ...EMPTY_RUN,
+      status: 'running',
+      request: imgBase?.request ?? message,
+      askedAt: imgBase ? (imgBase.askedAt ?? null) : startedAt.current,
+      answer: imgBase?.answer ?? null,
+      origin: imgBase?.origin,
+    })
 
     let sawFinish = false
-    let answer: ChefAnswer | null = null
-    // finish 是这两个编号的唯一权威来源；不记下来，结果页的★/评分就永远没有落点。
-    let origin: { sessionId: string; recordId: number } | undefined = undefined
+    // 图片轮：answer 从卡的原答案起（image 事件就贴在它上面），origin 锁死为卡的
+    // 落点——普通轮里它是 finish 的唯一权威，但图片轮 finish 给的编号是那条确认话
+    // 新记录的号，采纳它会把★/评分/动作条引到一条只有确认话的空记录上。
+    let answer: ChefAnswer | null = imgBase?.answer ?? null
+    let origin: { sessionId: string; recordId: number } | undefined = imgBase?.origin
     let firstTokenAt: number | null = null
     let events: TraceEvent[] = []
     let heartbeats: number[] = []
     let currentStage: StreamStage | null = null
     let body = ''
+    // 图片轮的本轮实话先攒着（等待页不该把上一轮的正文放出来）：图贴上了它就多余
+    // （图本身就是交代），没贴上才并进说明。
+    let imgTokens = ''
+    let sawImage = false
 
     const push = (patch: Partial<RunState>) => {
       setRun((prev) => ({ ...prev, ...patch }))
     }
 
+    // 图片轮的失败统一去处：不拆卡。图是这顿饭的附加物，它失败不该让卡片消失——
+    // 卡片与它的落点原样保留，本轮实话并进说明（说明 = 原说明 + 本轮实话）。
+    // 返 false = 不是图片轮，调用方按普通轮的失败路径走。
+    const keepCardAfterImageFailure = (extra: string): boolean => {
+      if (!imgBase) return false
+      const done: RunState = { ...imgBase, status: 'succeeded', answer, body: imgBase.body + extra }
+      saveRun(done, text)
+      setRun(done)
+      return true
+    }
+
     try {
-      for await (const ev of streamChat({ sessionId, message, wantImage: false }, ac.signal)) {
+      for await (const ev of streamChat(
+        {
+          sessionId,
+          message,
+          wantImage: false,
+          // 图片轮三件套：钉到这条卡的这条记录（后端按 record+index 找，不吃菜名
+          // 相似度的亏）。普通轮不带——后端只在三件套齐时走钉卡分支。
+          ...(img && target
+            ? { targetRecordId: target.recordId, targetRecipeIndex: img.index, targetDishName: img.dishName }
+            : {}),
+        },
+        ac.signal,
+      )) {
         const at = Date.now() - startedAt.current
 
         switch (ev.kind) {
@@ -249,6 +296,12 @@ export default function TonightApp() {
           }
 
           case 'token':
+            // 图片轮的实话攒着不进等待页正文（见 imgTokens 注释），计时照推。
+            if (img) {
+              imgTokens += ev.text
+              push({ elapsed: at })
+              break
+            }
             if (firstTokenAt === null) firstTokenAt = at
             body += ev.text
             push({ body, firstTokenAt, elapsed: at })
@@ -261,19 +314,43 @@ export default function TonightApp() {
 
           case 'finish':
             sawFinish = true
-            if (typeof ev.sessionId === 'string' && typeof ev.recordId === 'number') {
+            // 普通轮：finish 是落点的唯一权威，不记下来★/评分就永远没有定位。
+            // 图片轮不采纳它——那编号是确认话新记录的号，不是这张卡的落点
+            // （起跑时 origin 已锁为卡的，这里自然不再改）。
+            if (!img && typeof ev.sessionId === 'string' && typeof ev.recordId === 'number') {
               origin = { sessionId: ev.sessionId, recordId: ev.recordId }
             }
             break
 
           case 'image': {
-            const base: ChefAnswer = answer ?? { recipes: [] }
-            answer = { ...base, image_url: ev.url, image_ai_generated: ev.aiGenerated }
+            if (img) {
+              // 贴回原卡：与后端 update_answer_image_at_index 落在同一条记录同一个
+              // 下标——recipes[index] 换新三件，index 0 还要同步顶层（图注读顶层）。
+              const card = answer ?? { recipes: [] }
+              const recipes = card.recipes.map((r, i) =>
+                i === ev.index
+                  ? { ...r, image_url: ev.url, image_ai_generated: ev.aiGenerated, image_note: ev.note }
+                  : r,
+              )
+              const next: ChefAnswer = { ...card, recipes, image_requested: true }
+              if (ev.index === 0) {
+                next.image_url = ev.url
+                next.image_ai_generated = ev.aiGenerated
+                next.image_note = ev.note
+              }
+              answer = next
+              sawImage = true
+              break   // 只改局部量：卡片在收尾一次性落定，中途不 push
+            }
+            const card: ChefAnswer = answer ?? { recipes: [] }
+            answer = { ...card, image_url: ev.url, image_ai_generated: ev.aiGenerated }
             push({ answer, elapsed: at })
             break
           }
 
           case 'error':
+            // 图片轮不拆卡：把后端这句话并进说明，卡片与落点原样保留。
+            if (keepCardAfterImageFailure(`${imgTokens}${ev.message}`)) return
             push({ status: 'failed', error: ev.message, elapsed: at })
             return
 
@@ -293,6 +370,11 @@ export default function TonightApp() {
           // fav-open）也会 abort 一个已经不在跑的控制器，此时 prev 是别处刚设置的
           // 状态（预填话头或恢复详情）——那种情况下盖上去会把别人的状态抹掉。
           if (prev.status !== 'running') return prev
+          // 图片轮被取消：卡片本来就完整，标成"中断"是冤枉这顿饭——原样还回。
+          if (imgBase) {
+            saveRun(imgBase, text)
+            return imgBase
+          }
           const stopped: RunState = {
             ...prev,
             orphaned: true,
@@ -306,6 +388,8 @@ export default function TonightApp() {
       }
       const message = err instanceof Error ? err.message : String(err)
       const httpStatus = err instanceof ChatStreamError ? err.httpStatus : undefined
+      // 图片轮失败不拆卡：图没贴上就说实话，卡片与落点原样保留（HTTP 状态一并交代）。
+      if (keepCardAfterImageFailure(`${imgTokens}配图没能完成：${message}${httpStatus ? `（HTTP ${httpStatus}）` : ''}`)) return
       setRun((prev) => ({
         ...prev,
         status: 'failed',
@@ -319,6 +403,8 @@ export default function TonightApp() {
     if (!sawFinish) {
       // 半个流：连接在 finish 之前结束了。**绝不能当成成功**——
       // 把中断的结果恢复成"已完成"，比丢掉它更糟。
+      // 图片轮同理但不拆卡：没跑完就说没跑完，卡与落点原样。
+      if (keepCardAfterImageFailure(`${imgTokens}配图这一轮没有跑完：连接在结束标记之前断了，图可能没贴上。`)) return
       setRun((prev) => ({
         ...prev,
         status: 'failed',
@@ -329,23 +415,53 @@ export default function TonightApp() {
     }
 
     setRun((prev) => {
-      const done: RunState = {
-        ...prev,
-        status: 'succeeded',
-        answer,
-        body,
-        events,
-        heartbeats,
-        currentStage,
-        firstTokenAt,
-        elapsed: Date.now() - startedAt.current,
-        // 后端没给编号就不写（宁缺勿假），动作条会按「没有落点」整体隐藏。
-        origin,
-      }
-      saveRun(done, message)
+      const done: RunState = imgBase
+        ? {
+            // 图片轮整卡还回：事件/心跳/耗时/原话全是这张卡自己的（图片轮的过程面
+            // 是临时的，不该顶掉卡片的真实账目），只换答案与状态。
+            ...imgBase,
+            status: 'succeeded',
+            answer,
+            // 图贴上了：图本身就是交代，把"已补上配图"再印一遍是同一件事说两遍；
+            // 没贴上（走到确认话之前的分支）才把本轮实话并进说明。
+            body: sawImage ? imgBase.body : imgBase.body + imgTokens,
+            origin: imgBase.origin,
+          }
+        : {
+            ...prev,
+            status: 'succeeded',
+            answer,
+            body,
+            events,
+            heartbeats,
+            currentStage,
+            firstTokenAt,
+            elapsed: Date.now() - startedAt.current,
+            // 后端没给编号就不写（宁缺勿假），动作条会按「没有落点」整体隐藏。
+            origin,
+          }
+      // 图片轮落盘时草稿传当前草稿 text：message 是按钮句（给「X」配张图），
+      // 把它回填进输入框等于替用户打了一句话。
+      saveRun(done, imgBase ? text : message)
       return done
     })
   }, [sessionId, text, run.status])
+
+  /**
+   * 菜名右侧「配图 / 换一张图」入口。三件套把这轮钉到卡上（后端按 record+index 找，
+   * 不吃菜名相似度的亏）；没有落点的轮按钮本就不可见（上层按动作条同一可见性挡），
+   * 这里再守一道：宁可不发，也不把图挂到错的记录上。
+   * index 恒 0：首屏主菜就是 recipes[0]（buildResultVM 的 lead 定义）。
+   */
+  const requestImage = useCallback(
+    (dishName: string, revision: boolean) => {
+      const cur = runRef.current
+      if (cur.status !== 'succeeded' || cur.restored || !cur.origin || !cur.answer) return
+      const msg = revision ? `给「${dishName}」换一张图` : `给「${dishName}」配张图`
+      void send(msg, { image: { dishName, index: 0, revision } })
+    },
+    [send],
+  )
 
   const reset = useCallback(() => {
     localStorage.removeItem(RUN_KEY)
@@ -543,6 +659,7 @@ export default function TonightApp() {
           onSend={() => void send()}
           blocked={blocked}
           onPickCandidate={(t) => void send(t)}
+          onRequestImage={requestImage}
           /* 候选页右栏那三块（第 F 项）：与首屏读**同一份**已算好的数据，
              不重新拉接口——两处若各拉一次，"首屏说的人"和"候选页说的人"
              会在档案刚改过的那一瞬间不一致。cand 不传：待确认块是首屏专属。 */
@@ -566,4 +683,7 @@ export default function TonightApp() {
     </div>
   )
 }
+
+
+
 

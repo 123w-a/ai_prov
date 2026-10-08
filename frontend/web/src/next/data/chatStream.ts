@@ -28,7 +28,7 @@ export type ChatStreamEvent =
   | { kind: 'token'; text: string }
   | { kind: 'structuring' }
   | { kind: 'answer'; answer: ChefAnswer }
-  | { kind: 'image'; recordId?: number; turnId?: string; index: number; url: string; aiGenerated: boolean }
+  | { kind: 'image'; recordId?: number; turnId?: string; index: number; url: string; aiGenerated: boolean; note: string }
   | { kind: 'image_failed'; recordId?: number; turnId?: string; indexes: number[] }
   | { kind: 'finish'; sessionId?: string; recordId?: number }
   | { kind: 'error'; message: string }
@@ -46,6 +46,15 @@ export interface SendChatParams {
   mode?: string
   wantImage?: boolean
   locationContext?: string | null
+  /**
+   * 「给这道菜配图 / 换一张图」专用：把这一轮钉到某条已存在的菜谱记录上。
+   * 三项对应 /api/chat 的 Form 参数（api/routes/chat_route.py:941-943），
+   * 后端按 record + index 找卡、不吃菜名相似度的亏；缺 recordId 就会退回按菜名找，
+   * 所以要么三项一起给，要么一项都不给。
+   */
+  targetRecordId?: number
+  targetRecipeIndex?: number
+  targetDishName?: string
 }
 
 type Envelope = Record<string, unknown>
@@ -74,6 +83,10 @@ export async function* streamChat(
   body.append('mode', params.mode ?? 'home')
   body.append('want_image', params.wantImage ? '1' : '0')
   if (params.locationContext) body.append('location_context', params.locationContext)
+  // 图片轮的三件套（缺哪项都退回按菜名找 → 钉不住就不该发这一轮，见调用处）。
+  if (typeof params.targetRecordId === 'number') body.append('target_record_id', String(params.targetRecordId))
+  if (typeof params.targetRecipeIndex === 'number') body.append('target_recipe_index', String(params.targetRecipeIndex))
+  if (params.targetDishName) body.append('target_dish_name', params.targetDishName)
 
   let resp: Response
   try {
@@ -138,6 +151,7 @@ function toEvent(envelope: Envelope): ChatStreamEvent | null {
       index: number
       url: string
       ai_generated: boolean
+      note?: string
     }
     return {
       kind: 'image',
@@ -146,6 +160,9 @@ function toEvent(envelope: Envelope): ChatStreamEvent | null {
       index: img.index,
       url: img.url,
       aiGenerated: Boolean(img.ai_generated),
+      // note 跟着图走（后端与落库同一份：真图空串、AI 图那句固定说明）。
+      // 贴回卡片时连图注一起写，前端不自己推——推出来的会与刷新后的存档漂移。
+      note: img.note ?? '',
     }
   }
 
@@ -200,3 +217,6 @@ async function readErrorText(resp: Response): Promise<string> {
     return fallback
   }
 }
+
+
+

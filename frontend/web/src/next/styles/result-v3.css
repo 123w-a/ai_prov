@@ -337,6 +337,20 @@
   white-space: nowrap;
 }
 
+/* 配图入口：与标签同排同级，但它是可点的——用 --accent 描边+文字标出「可动作」，
+   hover 反转填色。位置（紧挨菜名右侧）是用户拍板的，标签仍在它之后。 */
+.dish-imgbtn {
+  padding: 2px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  line-height: 1.65;
+  cursor: pointer;
+}
+.dish-imgbtn:hover { background: var(--accent); color: var(--surface); }
+
 /* ── 顶部需求回显框 .ask-echo 已移到 styles/base.css（2026-10-04）──────
  * 本文件加到 1003 行、破了 check-layers 的 1000 行上限。
  * 搬去 base.css 而不是新起一片：echo 与书写面 .ask-field 是同一句话的两个形态，

@@ -6,41 +6,86 @@
   margin-bottom: 34px;
 }
 
-/* 调料。实测一条答案最多 8 条，且 amount 常常是整句话
-   （`约3小颗单晶冰糖, 只用于炒色`），单行 flex 会挤成一整段密集小字，
-   成为全页最难看的一块。两列网格把高度和密度都压下来。 */
-.seasoning-line {
-  margin: 0 0 18px;
+/* ── 做法：用料横排在上、步骤全宽在下（2026-10-07 下午改）────────────────
+ *
+ * 上午照用户裁定预期图 B 排成「左用料 260px / 右步骤 386px」。用户看过真实页
+ * 判「结果页不好看」：真实步骤 6 条、每条 50~70 字，压到 386px 后约 18~20 字/行，
+ * 整块高约 790px，比左栏用料卡（约 450px）高一截，左短右长，步骤也窄得难读。
+ *
+ * 改法只动排布：食材 / 调味料 各自成卡横排在步骤上方，步骤回到整栏宽。
+ * 用料仍然独立成面——B 稿要解决的「名称 + 克数没地方放」没被退回
+ * （后端 Recipe.ingredients 带着真实克数，amount 常常是整句话，
+ *  如 `约3小颗单晶冰糖, 只用于炒色`，chips 一行放不下）。
+ *
+ * B 稿「左栏占四成」的理由作废：它是拿步骤的行宽换来的，实测这个交换是亏的。
+ * 上一版的 .steps-cols / .is-steps-only 随这次改动静默失效，一并删掉，
+ * 不留死规则。 */
+.steps-mise-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 7px 28px;
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--ink-soft);
+  /* 窄屏自动落回竖排：两列各 ≥230px 才并排，否则单列。 */
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 22px;
+}
+
+/* 用料面。与 .steps 用同一层描边、同一层底、同一个阴影：
+   两块并排时不能一块是卡片、另一块是裸文。 */
+.steps-mise {
+  /* 只来一组（后端没给调料）时卡片不跟着整栏被拉宽：行内还是
+     「名称—用量」的短行，不摊成 672px 的空行。 */
+  max-width: 340px;
+  padding: 14px 18px;
   background: var(--surface);
   border: 1px solid var(--surface-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-paper);
-  padding: 14px 20px;
 }
 
-/* 同 .steps.is-compact 的理由：折叠区里不再套面。 */
-.fold-body .seasoning-line {
-  background: none;
-  border: 0;
-  box-shadow: none;
+.steps-mise-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+/* 2026-10-07 下午：两组改成两张卡之后，这条「同卡内两段之间留一口气」的规则
+   连同它的理由一起作废（卡片间距由 .steps-mise-row 的 gap 承担），删除不留死规则。 */
+
+.steps-mise-list {
+  margin: 0;
   padding: 0;
-  border-radius: 0;
+  list-style: none;
 }
 
-.seasoning {
+/* 一行 = 名称 + 用量：名称靠左、用量靠右。
+   flex-wrap 是必需的：amount 实测可以是整句话，260px 里放不下时整块落到下一行
+   （margin-left:auto 让它在那行仍靠右），而不是把名称挤成竖排或溢出列宽。 */
+.steps-mise-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 4px 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.steps-mise-name {
   min-width: 0;
 }
 
-.seasoning b {
-  margin-left: 5px;
+.steps-mise-amount {
+  margin-left: auto;
+  /* 允许收缩 + min-width:0：整句话的用量落到自己那一行时能在列内换行，不溢出。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
   font-weight: 600;
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 2026-10-04：从「纸上一列裸文 + 发丝线」升成一张家具。结果页其余块
@@ -157,6 +202,9 @@
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
 }
+
+
+
 
 
 

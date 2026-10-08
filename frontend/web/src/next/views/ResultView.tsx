@@ -121,7 +121,12 @@ function OpeningFold({ opening, body }: { opening: string; body: string }) {
   )
 }
 
-function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
+function StructuredResult({ vm, body, onRequestImage }: {
+  vm: ResultVM
+  body: string
+  /** 见 RunResult：无落点时上层已置 undefined，这里只管透传。 */
+  onRequestImage?: (dishName: string, revision: boolean) => void
+}) {
   // 这一版只做一件事：把原来散在这里的判断换成读 vm。判断本身一个字没改，
   // 全部照抄进了 viewModel.ts（含"空右栏整块不渲染"这种踩过坑才补上的外层条件）。
   const sources = vm.sources
@@ -143,7 +148,7 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
       {/* 下面四个 id 是章节轨道的锚点。包一层不带样式的 div 只为挂 id：
           本文件里不存在 `.result-main > X` 这类直接子选择器（已核），
           子元素各自的 margin 也不受影响，所以布局一个像素没动。 */}
-      <div id="sec-dish"><DishHero vm={vm} /></div>
+      <div id="sec-dish"><DishHero vm={vm} onRequestImage={onRequestImage} /></div>
 
       {/* 营养数值表（第 5 项）：通栏排在首屏两栏之下——它讲的是「这顿」，
           不属于左图或右文任何一栏。没有 nutrition_facts 字段时组件自己返回 null，
@@ -169,7 +174,7 @@ function StructuredResult({ vm, body }: { vm: ResultVM; body: string }) {
 
       {isShown(vm.steps) && (
         <div id="sec-steps">
-          <Steps steps={vm.steps.data} seasonings={vm.seasonings} />
+          <Steps steps={vm.steps.data} seasonings={vm.seasonings} ingredients={vm.ingredients} />
         </div>
       )}
 
@@ -246,6 +251,7 @@ export function RunResult({
   onSend,
   blocked,
   onPickCandidate,
+  onRequestImage,
   fam,
   week,
   fridge,
@@ -263,6 +269,9 @@ export function RunResult({
    *  必须走 send(text) 而不是 setText 后再 send——后者要等 React 状态落地，
    *  同一帧里调用会读到旧文本，发出去的是上一轮那句话。 */
   onPickCandidate: (text: string) => void
+  /** 菜名右侧「配图 / 换一张图」（图片轮，无落点不发）。可见性不在这里判：
+   *  与★/评分同一道闸（useResultActions.visible）在下面统一放行。 */
+  onRequestImage?: (dishName: string, revision: boolean) => void
   /** 候选页右栏那三块的数据（第 F 项）。只有候选轮用得上，其余形态传 null
    *  ——普通散文轮与结构化轮不该因为这次改动多出一个右栏。 */
   fam?: { members: FamilyMemberRow[]; shared: string[] } | null
@@ -309,7 +318,13 @@ export function RunResult({
       <AskEcho text={run.request} at={run.askedAt} />
 
       {vm ? (
-        <StructuredResult vm={vm} body={run.body} />
+        <StructuredResult
+          vm={vm}
+          body={run.body}
+          /* 配图入口与★/评分同一道闸：restored（收藏详情只读）与无 origin（没有
+             落点）的轮按钮根本不出现——图没地方落就不该给发图的机会。 */
+          onRequestImage={actions.visible ? onRequestImage : undefined}
+        />
       ) : useCards ? (
         /* 候选轮（第 F 项）：从"一列正文"变成"选择区 + 右栏方案依据"，
            与预期图 cand-expect-v2.png 同构。右栏复用首屏那三块——

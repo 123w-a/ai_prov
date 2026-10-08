@@ -17,28 +17,33 @@ export function WaitFacts({ facts, fridge }: { facts: Facts | null; fridge: stri
   return (
     <div className="wait-facts">
       <Panel variant="outline">
-        {/* 两条「已知输入」并排成链：冰箱与档案是同一层级的两路依据，共用左侧一根竖线。
-            竖线只覆盖这两段——它是「并行依据」的记号，不是装饰。 */}
-        <div className="wait-chain">
+        {/* 两路「已知输入」排成一张两列表：标签一列、值一列，行间一条发丝线。
+            2026-10-07（预期图 B）：上一版是「标签在上 + 两段共用一根左竖线」的链式排版，
+            那是给 620px 窄框画的；框放宽到通栏之后，竖线罩着一屏空框、字全挤在左下角，
+            框本身成了空壳。表格把值挪到同一条起线上，也让宽度真的用起来。 */}
+        <div className="wait-table">
           {fridge.length > 0 && (
-            <section className="wait-fact">
+            <div className="wait-fact">
               <h3 className="wait-fact-label"><Icon name="fridge" />冰箱现有</h3>
               <ul className="wait-chips">
                 {fridge.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
-            </section>
+            </div>
           )}
           {facts && (
-            <section className="wait-fact">
+            <div className="wait-fact">
               <h3 className="wait-fact-label">家庭档案</h3>
-              {facts.members.map((line) => (
-                <p className="wait-fact-row" key={line}>
-                  {line}
-                </p>
-              ))}
-            </section>
+              {/* 值列包一层：多行值若不包，第二个成员会被栅格排到下一行的标签列里去。 */}
+              <div className="wait-fact-body">
+                {facts.members.map((line) => (
+                  <p className="wait-fact-row" key={line}>
+                    {line}
+                  </p>
+                ))}
+              </div>
+            </div>
           )}
         </div>
         {/* 「共同忌口」是冰箱 ∩ 档案求出来的**交集**（data/household.ts 用 sets.every 求的），

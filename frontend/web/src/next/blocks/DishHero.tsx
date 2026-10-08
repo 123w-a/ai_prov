@@ -19,14 +19,26 @@ import { isShown, type ResultVM } from '../data/viewModel.ts'
  * 顺带把首屏文字改成左对齐：两栏之后居中文字会失去阅读方向（像海报）。
  * 窄屏由 @media 落回竖排。
  */
-export function DishHero({ vm }: { vm: ResultVM }) {
+/** 配图入口（紧挨菜名右侧）：落点可见性上层已闸，这里只管画与回调。 */
+export function DishHero({ vm, onRequestImage }: { vm: ResultVM; onRequestImage?: (dishName: string, revision: boolean) => void }) {
+  const lead = vm.lead
   return (
     <div className="dish-top">
-      {vm.lead && <DishFigure recipe={vm.lead} note={vm.imageNote} />}
+      {lead && <DishFigure recipe={lead} note={vm.imageNote} />}
 
       <header className="dish-hero">
         <div className="dish-title">
           <h1 className="dish-name">{vm.lead?.name ?? '今晚这一顿'}</h1>
+          {/* 位置用户拍板（紧挨菜名右侧）；文案必须短：文字栏实测371，菜名306+长文案68+gap12=386会换行到菜名下方。请求句仍发"给「X」换一张图"（后端按它判换图）。 */}
+          {onRequestImage && lead && (
+            <button
+              type="button"
+              className="dish-imgbtn"
+              onClick={() => onRequestImage(lead.name, Boolean(lead.image_url))}
+            >
+              {lead.image_url ? '换图' : '配图'}
+            </button>
+          )}
           {/* 口味标签（第 6 项）：紧挨菜名右侧。
               数据来自整理阶段对正文的提取，不是前端按菜名猜的——正文没说风格时整行不渲染，
               所以这里不做"兜底标签"。 */}
@@ -53,10 +65,12 @@ export function DishHero({ vm }: { vm: ResultVM }) {
               <b className="metric-value">{wordOf(vm.nutrition.data, '偏低', '适中', '高')}</b>
             </Metric>
           )}
-          {/* 用时为空串 = 收藏恢复态（收藏没存真实用时）⇒ 这一格整块不画，
-              绝不画「0 秒」冒充。难度/营养照旧来自 answer 里的真实字段。 */}
+          {/* 这一格是**这一轮的生成耗时**（ResultView 传的是 run.elapsed），不是做菜用时：
+              answer 里根本没有烹饪用时字段，原标签「用时」会被读成"这道菜要 1 分 24 秒"。
+              改标「生成耗时」——数是真的，标签得说清它是谁的时间。
+              空串 = 收藏恢复态（收藏没存那一刻的用时）⇒ 整格不画，绝不画「0 秒」冒充。 */}
           {vm.elapsed && (
-            <Metric icon="clock" label="用时">
+            <Metric icon="clock" label="生成耗时">
               <b className="metric-value">{vm.elapsed}</b>
             </Metric>
           )}
@@ -82,12 +96,14 @@ function DishFigure({ recipe, note }: { recipe: Recipe; note?: string }) {
   const image = recipe.image_url
   if (!image) return null
   const text = usableNote(note) || usableNote(recipe.image_note)
-  const fallback = recipe.image_ai_generated || note != null
-  if (!text && !fallback) return null
+  // 有图就画：缺的是「图注这句话」，不该连图一起扣下。后端真图的 note 本来就是
+  // 空串，旧规则（两个事实都缺 → 整图不渲染，图注还兜底写「AI 生成示意图」）
+  // 会让真图要么消失、要么被标成 AI。AI 图没有自己的图注时才用这句默认说明。
+  const caption = text || (recipe.image_ai_generated ? 'AI 生成示意图' : '')
   return (
     <figure className="dish-figure">
       <img src={image} alt={recipe.name} />
-      <figcaption>{text || 'AI 生成示意图'}</figcaption>
+      {caption && <figcaption>{caption}</figcaption>}
     </figure>
   )
 }
@@ -127,4 +143,5 @@ function Metric({ icon, label, children }: { icon: IconName; label: string; chil
     </span>
   )
 }
+
 

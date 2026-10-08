@@ -28,6 +28,7 @@ import type {
   DishMatrixItem,
   GuardrailItem,
   HealthLight,
+  Ingredient,
   NutritionFacts,
   Recipe,
   Seasoning,
@@ -259,6 +260,46 @@ function cleanTags(tags: string[] | undefined): string[] {
   return out
 }
 
+/** 食材与调味料同名去重：同一个名字两边都出现时，只留在**有量**的那一边。
+ *
+ *  实测后端会把「大蒜」同时写进两张清单，而且两边不一定都有量：
+ *    · 2026-10-07 真实一轮：ingredients 大蒜 amount_g=null，seasonings「大蒜 3瓣，切末分两份」
+ *    · 夹具 typical：ingredients 大蒜 10g，seasonings「大蒜 4 瓣」
+ *  两张清单各渲染一次 = 同一份用料写了两遍，而且「10g」与「4 瓣」并排会被读成两个用量。
+ *
+ *  规则按"哪边有信息"定，不按栏位定：
+ *    · 食材这边有克数 → 留食材那条（它是营养数值表的输入，删了台账就对不上），调味料那条删掉；
+ *    · 食材这边没克数、调味料有文本量 → 留调味料那条，食材那条删掉。
+ *      旧实现无条件留食材那条，于是上面第一种真实数据里「3瓣，切末分两份」整条消失，
+ *      页面上只剩一个没有用量的「大蒜」——那是丢真实数据，不是排版取舍。
+ *
+ *  undefined 原样透传：`list()` 靠它区分「后端没给」与「给了但是空」，
+ *  这里不许把两者压成一个空数组。 */
+function splitPantry(
+  ingredients: Ingredient[] | undefined,
+  seasonings: Seasoning[] | undefined,
+): { ingredients: Ingredient[] | undefined; seasonings: Seasoning[] | undefined } {
+  if (!ingredients?.length || !seasonings?.length) return { ingredients, seasonings }
+  const seasoningNames = new Set(seasonings.map((s) => s.name))
+  // 名字重复、且食材这边**没有**克数 → 这一条让给调味料。
+  const duplicated = ingredients.filter((i) => seasoningNames.has(i.name))
+  // 早退只允许在「根本没有重名」时用：重名且留食材那条，动的正是调味料那一半。
+  // 第一版这里按「有没有让给调味料的」早退，结果夹具里 大蒜 10g 与 大蒜 4 瓣 并排还在。
+  if (duplicated.length === 0) return { ingredients, seasonings }
+  // 食材这边**没有**克数 → 这一条让给调味料（食材那边删掉）。
+  const handedToSeasonings = new Set(
+    duplicated.filter((i) => i.amount_g === null).map((i) => i.name),
+  )
+  // 食材这边**有**克数 → 调味料那条删掉，避免同一份用量列两次。
+  const keptOnIngredients = new Set(
+    duplicated.filter((i) => i.amount_g !== null).map((i) => i.name),
+  )
+  return {
+    ingredients: ingredients.filter((i) => !handedToSeasonings.has(i.name)),
+    seasonings: seasonings.filter((s) => !keptOnIngredients.has(s.name)),
+  }
+}
+
 export interface ResultVM {
   form: 'structured' | 'prose'
   isStructured: boolean
@@ -275,6 +316,12 @@ export interface ResultVM {
   rest: Display<Recipe[]>
   steps: Display<string[]>
   seasonings: Display<Seasoning[]>
+  /** 主食材与克数（后端 Recipe.ingredients）。做法区上方那张「食材」卡用它。
+   *  后端把它与调料分开是有理由的：调料是「一汤匙」这类生活化量，
+   *  只有主食材有克数——那张营养数值表正是按这个列表算出来的。
+   *  所以用料是两张卡，不合并成一张看不出差别的清单。
+   *  同名会用 splitPantry 去重（留"有量"的那边），这里拿到的是去过重的结果。 */
+  ingredients: Display<Ingredient[]>
 
   difficulty: Display<number>
   nutrition: Display<number>
@@ -444,6 +491,9 @@ export function buildResultVM(
   const members = buildMembersVM(rows, adjustments)
   const nutritionVM = buildNutritionVM(a?.nutrition_facts)
 
+  // 两张用料清单的同名去重必须一次算好：两行各自调一次会各拿到半边结果。
+  const pantry = splitPantry(lead?.ingredients, lead?.seasonings)
+
   return {
     form: 'structured',
     isStructured: true,
@@ -460,7 +510,8 @@ export function buildResultVM(
     rest: list(recipes.slice(1), '只有一道菜'),
     // 传**原始值**（不预先 ?? []），否则"后端没给"会被压成"给了空数组"，五态就白判了。
     steps: list(lead?.steps, '这道菜没有步骤'),
-    seasonings: list(lead?.seasonings, '这道菜没有调料'),
+    seasonings: list(pantry.seasonings, '这道菜没有调料'),
+    ingredients: list(pantry.ingredients, '这道菜没有食材克重'),
 
     difficulty: value(lead?.difficulty, '没有难度字段'),
     nutrition: value(lead?.nutrition, '没有营养字段'),
@@ -538,6 +589,10 @@ export function buildProseVM(body: string, request: string): ProseVM {
     chars: body.length,
   }
 }
+
+
+
+
 
 
 
