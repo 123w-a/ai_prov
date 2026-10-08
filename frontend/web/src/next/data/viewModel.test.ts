@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { cleanOpening, echoRequest, guardText, sameSource, srcTitle, stripDishPrefix, usableNote } from './clean.ts'
-import { buildMembersVM, buildProseVM, buildResultVM, classify, hide, isShown, show } from './viewModel.ts'
+import { buildMembersVM, buildProseVM, buildResultVM, classify, hide, isShown, leadBodyPhrase, show } from './viewModel.ts'
 import type { ChefAnswer } from '../types.ts'
 
 /* ── 契约本身 ─────────────────────────────────────────────────────────── */
@@ -318,4 +318,20 @@ test('散文：空白行开头的标题也能被认出来', () => {
   const vm = buildProseVM('\n\n# 标题\n正文', 'x')
   assert.equal(isShown(vm.heading) && vm.heading.data, '标题')
   assert.equal(vm.text, '正文')
+})
+
+/* ── 首屏主标题人数措辞（2026-10-08 用户裁决「改成按人数动态」） ─────── */
+
+test('标题措辞按成员数动态：1 人单数、2 人保持原句、≥3 用每个人的', () => {
+  assert.equal(leadBodyPhrase(1), '你的身体')
+  assert.equal(leadBodyPhrase(2), '两个人的身体')
+  assert.equal(leadBodyPhrase(3), '每个人的身体')
+  assert.equal(leadBodyPhrase(8), '每个人的身体')
+})
+
+test('标题措辞：数据未加载与边界值兜底「每个人」，不闪错误人数', () => {
+  assert.equal(leadBodyPhrase(null), '每个人的身体')
+  assert.equal(leadBodyPhrase(undefined), '每个人的身体')
+  assert.equal(leadBodyPhrase(0), '每个人的身体')
+  assert.equal(leadBodyPhrase(-1), '每个人的身体')
 })

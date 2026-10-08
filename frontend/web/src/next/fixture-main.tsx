@@ -40,6 +40,7 @@ import { WaitCard } from './blocks/WaitCard.tsx'
 import { AskRail } from './blocks/AskRail.tsx'
 import { AskComposer } from './blocks/AskComposer.tsx'
 import { CASES, CASE_IDS } from './fixtures.ts'
+import { leadBodyPhrase } from './data/viewModel.ts'
 
 /**
  * 只读夹具台（/fixture.html）。
@@ -196,7 +197,7 @@ if (rootEl.childElementCount === 0) {
             <div className="ask-layout">
               <div className="ask-main">
                 <h2 className="ask-lead">
-                  今晚这一顿，按<em>两个人的身体</em>来定。
+                  今晚这一顿，按<em>{leadBodyPhrase(current.rail?.fam?.members.length)}</em>来定。
                 </h2>
 
                 {/* 书写面**直接复用 AskComposer 组件**，不再照抄一份 markup。

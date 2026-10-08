@@ -590,6 +590,27 @@ export function buildProseVM(body: string, request: string): ProseVM {
   }
 }
 
+/* ── 首屏主标题 ──────────────────────────────────────────────────────── */
+
+/**
+ * 首屏大标题 em 内的人数措辞（2026-10-08 用户裁决「改成按人数动态」）。
+ *
+ * 原来「两个人的身体」是写死的 JSX 字面量——与成员数据无关，永远显示「两个」。
+ * 与 2026-10-05 的图形红线同源：**人数一变，写死的说法就是错信息**。矛盾实证：
+ * 夹具台有单人用例（ask-single）、household.ts 有单人家庭逻辑、成员可增删（≤8）。
+ *
+ * 兜底语义：null / 未知 / ≥3 一律「每个人的身体」——它对任何家庭都成立，
+ * 数据未加载的瞬间也不会闪出一个错误人数。
+ *
+ * 放在本模块而不是 firstScreen.ts：那是数据拉取层（import 链含 api/client，
+ * 顶层读 import.meta.env，node --test 直接加载会崩），本文件是纯投影、可测。
+ */
+export function leadBodyPhrase(memberCount: number | null | undefined): string {
+  if (memberCount === 1) return '你的身体'
+  if (memberCount === 2) return '两个人的身体'
+  return '每个人的身体'
+}
+
 
 
 

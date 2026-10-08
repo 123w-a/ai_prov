@@ -1,5 +1,6 @@
 import type { RunState } from '../data/model.ts'
 import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
+import { leadBodyPhrase } from '../data/viewModel.ts'
 import { AskRail } from '../blocks/AskRail.tsx'
 import { AskComposer } from '../blocks/AskComposer.tsx'
 
@@ -82,7 +83,8 @@ export function AskView({
         <div className="ask-main">
           <h2 className="ask-lead">
             {/* 篇首图形（2026-10-05，用户要求"更具体的图形"，由 lave1 的设计师模型出稿）。
-                造型＝一只碗 + 一双斜搭的筷子，不重复文案里的"两个人"——那已由 em 强调。
+                造型＝一只碗 + 一双斜搭的筷子，不重复文案里的人数——人数措辞由 em 强调，
+                且 2026-10-08 起按成员数动态（data/firstScreen.ts leadBodyPhrase），
                 **这里是矢量重绘而不是位图**：设计师交付的是 1024² 位图线稿，缩到 52px 后
                 线条淡到几乎看不见（64px 最近邻放大预览实测已证），而 SVG 在任何尺寸都
                 保持 1.7 单位线宽，并且能用 currentColor 跟令牌走色。构图沿用设计师选定的
@@ -110,7 +112,7 @@ export function AskView({
                 <path d="M3 20.5L61 31.5" />
               </g>
             </svg>
-            今晚这一顿，按<em>两个人的身体</em>来定。
+            今晚这一顿，按<em>{leadBodyPhrase(fam?.members.length)}</em>来定。
             {/* 卡片右上角的菜篮：设计师（lave1 / gpt-image-2）的 P2 稿，**直接用位图**。
                 我按同一张稿手绘了六版 SVG path（提手高度、篮身扁度、菜的大小反复调），
                 始终追不上原稿——与其交付一个"像但不如"的仿作，不如用设计师给的图。
