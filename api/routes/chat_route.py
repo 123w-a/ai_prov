@@ -332,14 +332,29 @@ def _wants_image(message: str, want_image: str | None) -> bool:
     return any(phrase in text for phrase in strong_phrases)
 
 
-def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
-    """调用层图片缓存：不改 agent_tools，也避免同菜反复搜图/生图。"""
+def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool, refresh: bool = False):
+    """调用层图片缓存：不改 agent_tools，也避免同菜反复搜图/生图。
+
+    refresh=True（换图）：读侧写侧两层缓存全绕开，只走重新生成——本缓存的
+    7 天 TTL、dish_image_cache.json 的「命中秒出」、以及搜图对同一菜名的确定性，
+    三条都会原样返回原来那张，用户点了「换一张图」却什么都没变。
+    成功才写回缓存（失败不写：别把一次失败钉成一段时间内的事实）。
+    """
     name = str(recipe_name or "").strip()
     if not name:
         return None, "none"
     key = (name.lower(), bool(allow_ai_fallback))
     now = time.time()
     ttl = _AI_IMAGE_CACHE_TTL if allow_ai_fallback else _SEARCH_IMAGE_CACHE_TTL
+    if refresh:
+        from services.image_gen import generate_dish_image
+        image_url = generate_dish_image(name, skip_cache=True)
+        if not image_url:
+            return None, "none"
+        with _RECIPE_IMAGE_CACHE_LOCK:
+            _RECIPE_IMAGE_CACHE[key] = (image_url, "ai", now)
+            _prune_recipe_image_cache_locked(now)
+        return image_url, "ai"
     with _RECIPE_IMAGE_CACHE_LOCK:
         _prune_recipe_image_cache_locked(now)
         cached = _RECIPE_IMAGE_CACHE.get(key)
@@ -1105,6 +1120,9 @@ async def chat(
         final_answer = ""
         try:
             from storage.sessions import find_recent_recipe_for_image, find_recipe_for_image_target, update_answer_image_at_index
+            # 换图 vs 补图：换图要的是「另一张」，下面的「已有图」拒绝与两层缓存
+            # 都得为它让路。判定只看用户这句原话，不新增任何入参。
+            is_revision = _is_image_revision_request(message, want_image)
             requested_dish = _extract_requested_dish(message)
             target = None
             if target_record_id is not None:
@@ -1148,7 +1166,9 @@ async def chat(
                     return
                 yield f"data: {json.dumps({'stage': 'generating_image'}, ensure_ascii=False)}\n\n"
                 try:
-                    image_url, source = _find_recipe_image_cached(dish_hint, allow_ai_fallback=True)
+                    image_url, source = _find_recipe_image_cached(
+                        dish_hint, allow_ai_fallback=True, refresh=is_revision
+                    )
                 except Exception:
                     image_url, source = None, "none"
                 if not image_url:
@@ -1183,9 +1203,11 @@ async def chat(
                 current_recipe.get("image_url")
                 or (target.get("answer", {}).get("image_url") if recipe_index == 0 else None)
             )
-            if existing_image_url:
+            if existing_image_url and not is_revision:
                 # 方案A·就地补图：这张卡片本来就有图，只回一句话，不再新增一张同菜卡片
                 # （否则同一道菜在会话里出现两次，用户无法判断以哪个为准）。
+                # 换图不落这句：那是在显式要「另一张」，继续往下走重新生成，
+                # 新图贴回**同一张**卡片——不新增卡片，同菜两条的问题并不存在。
                 final_answer = f"「{dish_name}」上一轮已经有配图了，就在上面那张卡片里。"
                 yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
                 return
@@ -1195,7 +1217,9 @@ async def chat(
                 return
             yield f"data: {json.dumps({'stage': 'generating_image'}, ensure_ascii=False)}\n\n"
             try:
-                image_url, source = _find_recipe_image_cached(dish_name, allow_ai_fallback=True)
+                image_url, source = _find_recipe_image_cached(
+                    dish_name, allow_ai_fallback=True, refresh=is_revision
+                )
             except Exception:
                 image_url, source = None, "none"
             if _is_image_cancelled(session_id, turn_id):
@@ -1212,10 +1236,16 @@ async def chat(
                     image_ai,
                     note,
                 )
-                yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'turn_id': turn_id, 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai}}, ensure_ascii=False)}\n\n"
+                # note 一并下发：前端把图贴回卡片时要连图注一起写。按前端自己的规则
+                # 重推会与落库的这条记录漂移（真图为空串、AI 图为那句固定说明）。
+                yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'turn_id': turn_id, 'index': target['recipe_index'], 'url': image_url, 'ai_generated': image_ai, 'note': note}}, ensure_ascii=False)}\n\n"
                 # 方案A·就地补图：图通过 image 事件贴回原来那张卡片，这里只回一句确认话。
                 # 以前同时再推一份 answer（新卡片）会把同一道菜变成两条，前端「补图 + 新卡片 + 回填上一轮」叠在一起。
-                final_answer = f"已为「{dish_name}」补上配图，就在上面那张卡片里。"
+                final_answer = (
+                    f"已为「{dish_name}」换了一张配图，就在上面那张卡片里。"
+                    if is_revision
+                    else f"已为「{dish_name}」补上配图，就在上面那张卡片里。"
+                )
                 yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
             else:
                 # 没有可靠图时如实说，并推 image_failed 让原卡片进入明确失败态——
@@ -1645,3 +1675,9 @@ async def chat(
         else event_generator(),
         media_type="text/event-stream",
     )
+
+
+
+
+
+

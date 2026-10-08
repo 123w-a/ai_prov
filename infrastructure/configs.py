@@ -16,6 +16,13 @@ MODEL_CONFIGS = {#模型配置
         "base_url": os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
         "model_name": os.getenv("DEEPSEEK_MODE_NAME"),
     },
+    # 2026-10-08 用户指令「切成mimo」：走本机 commandcode-proxy（与 DSH 同一网关），
+    # key 从 DSH 凭据库搬入 .env 的 MIMO_API_KEY（值不在源码/日志中出现）。
+    "mimo": {
+        "api_key": os.getenv("MIMO_API_KEY"),
+        "base_url": os.getenv("MIMO_BASE_URL") or "http://127.0.0.1:3050/v1",
+        "model_name": os.getenv("MIMO_MODE_NAME") or "xiaomi/mimo-v2.6-flash",
+    },
 }
 
 VISION_CONFIGS = {
