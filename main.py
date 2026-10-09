@@ -417,6 +417,17 @@ def _stream_agent(message, session_id):
                         used = (update or {}).get("tool_calls_in_turn")
                         if used is not None:
                             print(f"[agent-metrics] tool_calls_in_turn={used}")
+                    elif node == "ingredient_confirm":
+                        msgs = (update or {}).get("messages") or []
+                        if msgs and type(msgs[-1]).__name__ == "AIMessage":
+                            content = _normalize_stream_content(
+                                msgs[-1].content
+                            ).strip()
+                            event = _stream_update_content(content)
+                            if event:
+                                emitted_output = True
+                                yield event
+                        continue
                     elif node == "tool_budget_finalize":
                         print("[agent-metrics] tool_budget_exhausted=true")
                         msgs = (update or {}).get("messages") or []
