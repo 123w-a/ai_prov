@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小膳管家 · 项目实施甘特图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f6f8fa; color: #1f2937;
+    padding: 36px 40px 44px;
+  }
+  .head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .head .dot { width: 12px; height: 12px; border-radius: 50%; background: #0e96a8; display: inline-block; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: .5px; }
+  .sub { color: #6b7280; font-size: 13px; }
+  .meta-line { color: #6b7280; font-size: 12.5px; margin: 10px 0 18px; }
+  .meta-line b { color: #374151; }
+
+  .board {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    padding: 22px 26px 18px; box-shadow: 0 1px 3px rgba(15,23,42,.05);
+  }
+  .legend { display: flex; gap: 22px; font-size: 12.5px; color: #4b5563; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .lg { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 26px; height: 12px; border-radius: 6px; display: inline-block; }
+  .sw.done { background: linear-gradient(90deg,#0e96a8,#14b8a6); }
+  .sw.doing { background: repeating-linear-gradient(45deg,#0e96a8,#0e96a8 6px,#38bdf8 6px,#38bdf8 12px); }
+  .sw.plan { background: #f1f5f9; border: 1.5px dashed #94a3b8; }
+  .sw.ms { width: 12px; height: 12px; background: #f59e0b; transform: rotate(45deg); border-radius: 2px; }
+
+  .grid { display: grid; grid-template-columns: 268px 1fr; column-gap: 14px; position: relative; }
+  .rowlab { font-size: 13.5px; color: #374151; height: 42px; padding-top: 4px; line-height: 1.3; }
+  .rowlab strong { display: block; font-weight: 600; }
+  .rowlab small { display: block; color: #9ca3af; font-size: 11.5px; }
+  .track { position: relative; height: 42px; border-bottom: 1px dashed #eef2f7; }
+  .track:last-child { border-bottom: none; }
+
+  .axis { position: relative; height: 30px; margin-left: 282px; border-bottom: 1px solid #d1d5db; }
+  .tick { position: absolute; top: 0; font-size: 12px; color: #6b7280; transform: translateX(-50%); padding-top: 8px; }
+  .tick::before { content:""; position: absolute; left: 50%; top: 0; width: 1px; height: 6px; background: #9ca3af; }
+  .mline { position: absolute; top: 0; bottom: 0; width: 1px; background: #e5e7eb; }
+
+  .bar {
+    position: absolute; top: 9px; height: 24px; border-radius: 12px;
+    font-size: 11.5px; color: #fff; display: flex; align-items: center;
+    padding: 0 10px; white-space: nowrap; overflow: hidden; z-index: 2;
+  }
+  .bar.done { background: linear-gradient(90deg,#0e96a8,#14b8a6); box-shadow: 0 1px 2px rgba(14,150,168,.35); }
+  .bar.doing { background: repeating-linear-gradient(45deg,#0e96a8,#0e96a8 7px,#0ea5e9 7px,#0ea5e9 14px); box-shadow: 0 1px 2px rgba(14,150,168,.35); }
+  .bar.plan { background: #f8fafc; border: 1.5px dashed #94a3b8; color: #475569; }
+  .bar.alt.done { background: linear-gradient(90deg,#7c6ee6,#a78bfa); box-shadow: 0 1px 2px rgba(124,110,230,.3); }
+  .bar.green.done { background: linear-gradient(90deg,#059669,#34d399); box-shadow: 0 1px 2px rgba(5,150,105,.3); }
+  .bar.amber.done { background: linear-gradient(90deg,#d97706,#fbbf24); box-shadow: 0 1px 2px rgba(217,119,6,.3); }
+  .bar.rose.done { background: linear-gradient(90deg,#e11d48,#fb7185); box-shadow: 0 1px 2px rgba(225,29,72,.3); }
+  .btxt { position: absolute; top: 12px; font-size: 11.5px; color: #6b7280; white-space: nowrap; z-index: 2; }
+
+  .today { position: absolute; top: 0; bottom: 0; width: 2px; background: #dc2626; z-index: 3; left: calc(282px + 14px + (100% - 282px - 14px) * 0.753); }
+  .today::after { content: "今天 10-09"; position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+    background: #dc2626; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 8px; white-space: nowrap; }
+
+  .msrow { position: relative; height: 48px; margin-left: 282px; margin-top: 4px; border-top: 1px solid #eef2f7; }
+  .msrow > .ms { position: absolute; top: 8px; transform: translateX(-50%); text-align: center; }
+  .ms .dia { width: 13px; height: 13px; background: #f59e0b; transform: rotate(45deg); border-radius: 2px; margin: 0 auto 4px; box-shadow: 0 1px 2px rgba(245,158,11,.5); position: relative; }
+  .ms .no { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-52%); font-size: 9px; font-weight: 700; color: #78350f; z-index: 2; }
+  .ms .dt { font-size: 10.5px; color: #6b7280; white-space: nowrap; }
+  .ms.high .dia { background: #dc2626; }
+  .ms.high .no { color: #fff; }
+  .mskey { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-left: 282px; font-size: 12px; color: #4b5563; }
+  .mskey span b { color: #b45309; font-weight: 600; }
+  .mskey span.red b { color: #dc2626; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; }
+  .card h3 { font-size: 13.5px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .card h3 i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; font-style: normal; }
+  .card ul { list-style: none; font-size: 12.5px; color: #4b5563; line-height: 1.75; }
+  .card li::before { content: "· "; color: #9ca3af; }
+  .foot { margin-top: 14px; font-size: 12px; color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<div class="head"><span class="dot"></span><h1>小膳管家 · 项目实施甘特图</h1>
+  <span class="sub">2026-07-31 仓库建立 → 2026-11-01 省赛提交</span></div>
+<div class="meta-line">进度真实性依据：<b>git 198 次提交时间线</b>（07:6 · 08:113 · 09:16 · 10:63）；实线条为已交付，斜纹为进行中，虚线条为计划项（截至 2026-10-09）。</div>
+
+<div class="board">
+  <div class="legend">
+    <span class="lg"><span class="sw done"></span>已交付</span>
+    <span class="lg"><span class="sw doing"></span>进行中</span>
+    <span class="lg"><span class="sw plan"></span>计划（未开始，如实标注）</span>
+    <span class="lg"><span class="sw ms"></span>里程碑</span>
+    <span class="lg" style="color:#dc2626">│ 今天</span>
+  </div>
+
+  <div class="axis" id="axis">
+    <span class="mline" style="left:1.1%"></span>
+    <span class="mline" style="left:33.3%"></span>
+    <span class="mline" style="left:65.6%"></span>
+    <span class="mline" style="left:100%"></span>
+    <span class="tick" style="left:1.1%">08-01</span>
+    <span class="tick" style="left:33.3%">09-01</span>
+    <span class="tick" style="left:65.6%">10-01</span>
+    <span class="tick" style="left:96.5%">11-01</span>
+  </div>
+
+  <div class="grid">
+    <div class="rowlab"><strong>平台基座</strong><small>FastAPI · LangGraph · 前端骨架</small></div>
+    <div class="track"><div class="bar done" style="left:0.5%;width:33.5%">07-31 → 08-31 · 113 提交主峰</div></div>
+
+    <div class="rowlab"><strong>知识库与检索链路</strong><small>27 份 PDF · 双通道+RRF+重排</small></div>
+    <div class="track"><div class="bar green done" style="left:1.1%;width:49%">08-01 → 09-15 · 召回 39/39 已验收</div></div>
+
+    <div class="rowlab"><strong>硬护栏闭环</strong><small>过敏拦截 · 语境判定 · 数值账单</small></div>
+    <div class="track"><div class="bar rose done" style="left:16%;width:45.6%">08-15 → 09-30 · E4 三轮 0 残留</div></div>
+
+    <div class="rowlab"><strong>需求调研设计</strong><small>问卷 22 题 · 试点计划 T1-T7</small></div>
+    <div class="track"><div class="bar amber done" style="left:71%;width:3.2%"></div><span class="btxt" style="left:75%">10-05 → 10-08</span></div>
+
+    <div class="rowlab"><strong>实验与性能评测</strong><small>E1-E6 · 召回/护栏/性能基线</small></div>
+    <div class="track"><div class="bar done" style="left:72%;width:3.3%"></div><span class="btxt" style="left:76.3%">10-06 → 10-09</span></div>
+
+    <div class="rowlab"><strong>校赛材料产出</strong><small>框架 · 算法文档 · 架构图 · 测试报告</small></div>
+    <div class="track"><div class="bar alt doing" style="left:73.1%;width:3.3%"></div><span class="btxt" style="left:77.6%">10-07 → 10-10 · 进行中</span></div>
+
+    <div class="rowlab"><strong>问卷发放与回收</strong><small>计划 · 学生/家庭样本</small></div>
+    <div class="track"><div class="bar plan" style="left:76.3%;width:4.3%"></div><span class="btxt" style="left:81.6%">10-10 → 10-13</span></div>
+
+    <div class="rowlab"><strong>家庭试点评估</strong><small>计划 · 5 家庭分层 T1-T7</small></div>
+    <div class="track"><div class="bar plan" style="left:77.4%;width:8.6%"></div><span class="btxt" style="left:87%">10-11 → 10-18</span></div>
+
+    <div class="rowlab"><strong>省赛冲刺</strong><small>计划 · 材料完善与答辩准备</small></div>
+    <div class="track"><div class="bar plan" style="left:82.8%;width:17.2%">10-16 → 11-01</div></div>
+
+    <span class="today"></span>
+  </div>
+
+  <div class="msrow">
+    <div class="ms" style="left:0.5%"><div class="dia"><span class="no">①</span></div><div class="dt">07-31</div></div>
+    <div class="ms" style="left:75.3%"><div class="dia"><span class="no">②</span></div></div>
+    <div class="ms high" style="left:76.6%"><div class="dia"><span class="no">③</span></div></div>
+    <div class="ms" style="left:79.6%"><div class="dia"><span class="no">④</span></div></div>
+    <div class="ms high" style="left:81.9%"><div class="dia"><span class="no">⑤</span></div></div>
+    <div class="ms high" style="left:99%"><div class="dia"><span class="no">⑥</span></div><div class="dt">11-01</div></div>
+  </div>
+  <div class="mskey">
+    <span><b>①</b> 仓库建立 07-31</span>
+    <span><b>②</b> 实验基线冻结 10-09</span>
+    <span class="red"><b>③</b> 校赛材料截止 10-10</span>
+    <span><b>④</b> 问卷回收截止 10-13</span>
+    <span class="red"><b>⑤</b> 省赛报名 20:00 · 10-15</span>
+    <span class="red"><b>⑥</b> 省赛提交截止 11-01</span>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card"><h3><i style="background:#0e96a8"></i>阶段一 · 平台与知识底座（7-31 → 9 月中）</h3>
+    <ul>
+      <li>后端 FastAPI + LangGraph 10 节点图编排，前端 React/Vite</li>
+      <li>27 份国家指南 PDF 切片入库，双通道检索 + 重排上线</li>
+      <li>git 主峰 8 月 113 次提交，对应平台快速成型期</li>
+    </ul>
+  </div>
+  <div class="card"><h3><i style="background:#e11d48"></i>阶段二 · 护栏与实验（8 月中 → 10-09）</h3>
+    <ul>
+      <li>过敏硬拦截 → 语境判定 → 数值账单三轮演进</li>
+      <li>E1-E6 六组实验收口：召回 39/39、闭环 0 残留、audit &lt;1ms</li>
+      <li>10-09 实验基线冻结，数字进参赛文档</li>
+    </ul>
+  </div>
+  <div class="card"><h3><i style="background:#f59e0b"></i>阶段三 · 调研与竞赛交付（10-05 → 11-01）</h3>
+    <ul>
+      <li>问卷与试点计划已定稿，10-10 起进入真实用户执行</li>
+      <li>校赛材料 10-10 收口；省赛报名 10-15、提交 11-01</li>
+      <li>虚线条为未开始的计划项，交付前按实测回填</li>
+    </ul>
+  </div>
+</div>
+
+<div class="foot">数据来源：git log 提交时间线（198 提交）+ 竞赛时间节点；计划项将在完成后以实测回填，不提前标记完成。</div>
+</body>
+</html>
