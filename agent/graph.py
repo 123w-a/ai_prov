@@ -742,8 +742,13 @@ def _extract_selected_candidate(text) -> str:
 
 
 def _strip_internal_request_markers(text):
-    """移除仅用于后端控制、不能回显给用户的内部标记。"""
-    cleaned = _SELECTED_CANDIDATE_PATTERN.sub("", str(text or ""))
+    """移除仅用于后端控制、不能回显给用户的内部标记。
+
+    必须**整块**剥离：`【已选定候选：X】` 紧跟的那句后端控制说明（括号句）也是控制
+    信令。只删标签会把括号句留在正文里 —— 兜底句又原样引用「用户本轮原话」，
+    于是「本轮必须围绕它展开」这类内部说明被直接推给用户（实测「3吧」选菜轮复现）。
+    """
+    cleaned = _SELECTION_CONTROL_BLOCK_RE.sub("", str(text or ""))
     for marker in _INTERNAL_REQUEST_MARKERS:
         cleaned = cleaned.replace(marker, "")
     return cleaned.strip()
@@ -1641,9 +1646,15 @@ def _extract_candidate_names(text) -> list:
         name = re.sub(r"[，。！？；;,!.?;]+$", "", name).strip()
         if not (2 <= len(name) <= 14):
             continue
+        # 候选菜名是「食材名词」而不是句子：名字内部出现中文句读就一定是做法/说明行。
+        # 实测 user_777df48ed8 第 5 轮：`6. 趁热吃，凉了腥味回潮。` 被当成候选菜名登记，
+        # 下一轮序号指代就锚到了这行散文上。菜名后接「 —— 理由」时理由已被上面的
+        # 分列切走，不会误伤「炒青菜 / 蒸鲈鱼」这类合法候选。
+        if re.search(r"[，。！？；、]", name):
+            continue
         # 裸编号行只接受像菜名的短主体。带理由的动作型菜名仍按既有规则保留。
         if not separator and re.match(
-            r"^(?:切|放|加|下|倒|淋|撒|盖|转|关|取|把|用|将|盛|备)",
+            r"^(?:切|放|加|下|倒|淋|撒|盖|转|关|取|把|用|将|盛|备|打|调|搅|趁|留|装|摆|剁|拍)",
             name,
         ):
             continue
@@ -1651,6 +1662,7 @@ def _extract_candidate_names(text) -> list:
         # 「炒青菜 / 蒸鲈鱼 / 拌黄瓜」仍是合法候选。
         if separator in {":", "："} and re.match(
             r"^(?:切|放|加|下|倒|淋|撒|盖|转|关|取|把|用|将|盛|备|想|要|"
+            r"打|调|搅|"
             r"煮|炒|煎|蒸|炖|焖|腌|爆|拌|烤|烧|炸|卤|熘|烩)",
             name,
         ):
@@ -2003,6 +2015,30 @@ def _remaining_tool_slots(state: "ChefState") -> int:
     used = int(state.get("tool_calls_in_turn", 0) or 0)
     budget = int(state.get("tool_budget", 0) or 0) or MAX_TOOL_CALLS_PER_TURN
     return max(0, budget - used)
+
+
+def _retry_tool_slot_patch(state: "ChefState") -> dict:
+    """重试回炉时补回「至少一次取证」的额度，避免重试必然落兜底句。
+
+    为什么必须补：verify 判 retry 说明方案确实踩了硬禁忌，必须重新取证再生成；
+    但选定轮的并发宽度只有 2（`PICK_TURN_TOOL_BUDGET`），模型出答案时早就用光，
+    余额 0 时 chef_think 再要工具会被 `chef_route_with_tool_budget` 判成
+    `tool_budget_exhausted`，直接落 `tool_budget_finalize`，把用户已经看到的
+    好答案替换成兜底句（实测「2吧…我的父亲高血压，可以吃这个吗」）。
+
+    边界（只补「一次」，不是放开采纳）：
+      · 并发宽度每次重试只回退 1 格 → 重试后余额恰好为 1；
+      · 圈数上限最多回退到 `MAX_TOOL_ROUNDS - 1` → 只再给一圈，不会回到无限循环；
+      · 外层还有 `MAX_VERIFY` 次重试封顶，补额次数与重试次数同阶。
+    仅在「余额已空」或「圈数已封顶」时打补丁，余额还有剩余时维持原状。
+    """
+    patch = {}
+    if _remaining_tool_slots(state) <= 0:
+        used = int(state.get("tool_calls_in_turn", 0) or 0)
+        patch["tool_calls_in_turn"] = max(0, used - 1)
+    if int(state.get("tool_rounds", 0) or 0) >= MAX_TOOL_ROUNDS:
+        patch["tool_rounds"] = MAX_TOOL_ROUNDS - 1
+    return patch
 
 
 def chef_route_with_tool_budget(state: "ChefState") -> str:
@@ -2915,7 +2951,11 @@ def structure_answer_node(state: MessagesState):#结构化回答节点
             [recipe.name for recipe in answer.recipes],
         )
         if safe_retry_opening:
-            opening = safe_retry_opening
+            # 前置说明，不替换：模型写好的完整讲解必须原样保留。替换式实测会把整段
+            # 讲解压成一句说明，而说明自身只有几十字，短于前端
+            # `streamedText.length > opening.length + 80` 的兜底阈值 ——
+            # 结果两种长度下「说明」和「讲解」必被吞掉一个。
+            opening = f"{safe_retry_opening}\n\n{opening}".strip()
         payload = {
             # 最后一道护栏：opening 若仍是 JSON/围栏形态（模型双层包裹），换确定性兜底句，
             # 绝不让前端把一坨 JSON 渲染成正文。
@@ -3071,9 +3111,12 @@ def verify_answer_node(state: ChefState):
             + feedback_text
             + "\n" + retry_instruction
         ))
+        # 打回重生成时补回一次取证额度：否则余额为 0 的重试会直接落兜底句，
+        # 用户看到的好答案被替换成「这次没查到足够具体的做法」。
+        retry_patch = _retry_tool_slot_patch(state)
         return {"verify_status": "retry", "verify_attempts": attempts + 1,
                 "verify_violated": sorted(set(previous_violations) | set(violated_conditions)),
-                "messages": [feedback]}
+                "messages": [feedback], **retry_patch}
     # 已达上限仍不通过：放行但附安全警示，绝不静默放行
     warn = "⚠️ 健康护栏提示：本方案经多次重生成仍含需注意项——" + "；".join(
         f"{v['condition']}忌{v['keyword']}" for v in violations

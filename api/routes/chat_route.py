@@ -650,7 +650,21 @@ def _prev_record_has_card(session_id: str, record_id) -> bool:
         text = str(prev.get("answer") or "")
         if str(prev.get("image_url") or "") not in ("", "None", "null"):
             return True
-        return ("**【做法】**" in text) or ("## " in text and "食材" in text)
+        # 真实卡片有两种落库形态：结构化 JSON（recipes 非空）或 Markdown 正文。
+        # 实测 Markdown 卡片的标题是 `**做法**` / `**食材（2-3人份）**`，旧判据的
+        # `**【做法】**` 永远匹配不上 —— 于是这张闸门对「无图卡片」形同虚设。
+        try:
+            answer_json = json.loads(text)
+        except Exception:
+            answer_json = None
+        if isinstance(answer_json, dict) and answer_json.get("recipes"):
+            return True
+        return (
+            ("**做法**" in text)
+            or ("**食材" in text)
+            or ("**【做法】**" in text)
+            or ("## " in text and "食材" in text)
+        )
     except Exception:
         return False
 

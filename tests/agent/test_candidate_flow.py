@@ -228,6 +228,37 @@ class CandidateNameExtractTest(unittest.TestCase):
         )
         self.assertEqual(g._extract_candidate_names(text), [])
 
+    def test_colon_action_step_title_is_not_candidate(self):
+        """回归：卡片正文的「调汁：…」步骤标题不能被登记成候选菜名。
+
+        实测 user_777df48ed8 第 5 轮：模型给的「清蒸鲈鱼 · 低盐版」正文里，
+        `5. 调汁：生抽5ml＋热水30ml＋白糖1g搅匀…` 被写进会话的 candidates 字段
+        （前导动词表里没有「调」），下一轮序号指代就锚到了「调汁」上。
+        """
+        text = "1. 调汁：生抽15ml＋白糖2g＋热水2汤匙，搅到糖化开。"
+        self.assertEqual(g._extract_candidate_names(text), [])
+
+    def test_numbered_prose_line_is_not_candidate(self):
+        """回归：编号散文句（含中文句读）不是菜名。
+
+        同轮的另一条污染：`6. 趁热吃，凉了腥味回潮。` 既不以前导动词开头、
+        也不以步骤后缀收尾，旧规则放行后被登记成候选。
+        """
+        text = "6. 趁热吃，凉了腥味回潮。"
+        self.assertEqual(g._extract_candidate_names(text), [])
+
+    def test_full_card_body_yields_no_candidates(self):
+        """整体回归：真实卡片正文一行候选都不该抽出来。"""
+        text = (
+            "1. 鱼刮鳞、去腮、去内脏，鱼身两侧各划2刀。\n"
+            "2. 盘底横架2根筷子把鱼架空，鱼肚里塞姜片和葱段。\n"
+            "3. **水烧到大开再放鱼**，加盖大火蒸8分钟。\n"
+            "4. 端出来立刻倒掉盘中腥水，重新铺上葱丝、姜丝。\n"
+            "5. 调汁：生抽5ml＋热水30ml＋白糖1g搅匀，沿盘边淋入。\n"
+            "6. 趁热吃，凉了腥味回潮。"
+        )
+        self.assertEqual(g._extract_candidate_names(text), [])
+
 
 class CandidateTurnTest(unittest.TestCase):
     """泛推荐轮才进候选阶段；点名一道菜、要图、健康问答都不进"""
@@ -482,6 +513,28 @@ class CandidateTurnTest(unittest.TestCase):
         cleaned = g._strip_internal_request_markers(injected)
         self.assertNotIn("已选定候选", cleaned)
         self.assertIn("选第 2 个", cleaned)
+
+    def test_selected_candidate_control_sentence_is_stripped_too(self):
+        """回归：信令后面那句后端控制说明也必须整块剥掉，不只删标签。
+
+        端到端实测：「3吧」选菜轮工具预算耗尽时，兜底句会原样引用「用户本轮原话」，
+        只删 `【已选定候选：X】` 标签会把括号说明留在正文里，于是
+        「（用户用序号选定了上一轮候选清单里的这一道…）」被直接推给用户。
+        """
+        injected = (
+            "【已选定候选：青椒炒鸡丝】\n"
+            "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
+            "不得改名、不得替换成别的菜。）\n\n"
+            "【配图开关：开启】\n3吧"
+        )
+        cleaned = g._strip_internal_request_markers(injected)
+        self.assertNotIn("已选定候选", cleaned)
+        self.assertNotIn("本轮必须围绕它展开", cleaned)
+        self.assertNotIn("不得替换成别的菜", cleaned)
+        self.assertNotIn("配图开关", cleaned)
+        self.assertEqual(cleaned, "3吧")
+        # 剥完仍是用户本轮的真实需求：兜底句引用它时不会带出内部说明。
+        self.assertEqual(g._current_request_text(injected), "3吧")
 
     def test_no_injection_keeps_candidate_turn_for_generic_request(self):
         """没有注入信令时，泛推荐请求照旧走候选阶段（不能误伤）。"""
@@ -1449,6 +1502,56 @@ class CandidatesStoreTest(unittest.TestCase):
             )
             self.assertIsNone(sessions_store.find_recent_candidates("s_cand"))
 
+    def test_find_crosses_consumed_card_back_to_its_list(self):
+        """卡片是「上一份清单被选定后消费出来的」时，序号锚点仍指向那份清单。
+
+        实测 user_777df48ed8：5 道候选 → 用户选第 5 道出卡片 → 下一轮「还是第 1 道」。
+        旧实现只读最后一条记录（卡片，无 candidates）→ 返回 None → 路由层不注入菜名
+        → 模型自由发挥静默换了鱼种（香煎龙利鱼 → 清蒸鲈鱼）。
+        """
+        self.session["messages"] = [
+            {
+                "id": 1,
+                "user_text": "继续推荐几道菜品",
+                "candidates": ["香煎龙利鱼", "番茄炖豆腐", "白灼芥蓝"],
+            },
+            {
+                "id": 2,
+                "user_text": "那就第3道菜品吧，可以甜一点",
+                "answer": json.dumps(
+                    {"recipes": [{"name": "白灼芥蓝 · 微甜蒜香改版"}]},
+                    ensure_ascii=False,
+                ),
+                "image_url": "http://x/y.png",
+            },
+        ]
+        with self._patch():
+            found = sessions_store.find_recent_candidates("s_cand")
+        self.assertEqual(found["record_id"], 1)
+        self.assertEqual(
+            found["candidates"], ["香煎龙利鱼", "番茄炖豆腐", "白灼芥蓝"]
+        )
+        self.assertEqual(found["dish_name"], "香煎龙利鱼")
+
+    def test_find_stops_at_card_that_did_not_come_from_the_list(self):
+        """中间卡片跟上一份清单无关时，不许把旧清单当成实时候选。"""
+        self.session["messages"] = [
+            {
+                "id": 1,
+                "user_text": "推荐几道",
+                "candidates": ["番茄炒蛋", "番茄鸡蛋汤"],
+            },
+            {
+                "id": 2,
+                "user_text": "我想吃土豆丝",
+                "answer": json.dumps(
+                    {"recipes": [{"name": "酸辣土豆丝"}]}, ensure_ascii=False
+                ),
+            },
+        ]
+        with self._patch():
+            self.assertIsNone(sessions_store.find_recent_candidates("s_cand"))
+
 
 class CandidateAnchorFallbackTest(unittest.TestCase):
     """结构事件缺失时，落库正文仍能建立候选锚点，且不误收普通菜谱步骤。"""
@@ -2146,6 +2249,112 @@ class ToolBudgetTruncationTest(unittest.TestCase):
                 self._state(tool_calls_in_turn=g.PICK_TURN_TOOL_BUDGET)
             ),
             "tool_budget_exhausted",
+        )
+
+
+class RetryToolSlotTest(unittest.TestCase):
+    """verify 判 retry 后必须至少留一次取证，否则重试必然被兜底句顶掉（P1）。
+
+    实测链路（2026-10-09，选定轮「2吧…我的父亲高血压，可以吃这个吗」）：
+    本轮并发宽度被收紧到 `PICK_TURN_TOOL_BUDGET=2`，且已被 web_search +
+    nutrition_kb_search 并排用光；正文里真写了「生抽2大勺、盐5g」→ verify 判 retry →
+    chef_think 再要工具时余额为 0 → 路由判 `tool_budget_exhausted` →
+    `tool_budget_finalize` 把用户已经看到的好答案替换成
+    「这次没查到足够具体的做法…」。所以回炉时必须补回一次取证额度。
+
+    边界：只补「一次」，`MAX_TOOL_ROUNDS` / `MAX_VERIFY` 的封顶一个都不能绕过。
+    """
+
+    ANSWER = "番茄牛肉面：面条煮熟，加生抽2大勺、盐5g调味，铺上牛肉即可。"
+    # 重试后模型并排提 3 个：补的额度只该放行 1 个，不是敞开
+    RETRY_CALLS = [
+        {"id": "retry-t1", "name": "nutrition_kb_search", "args": {"query": "低钠 面食"}},
+        {"id": "retry-t2", "name": "web_search", "args": {"query": "少盐 面条"}},
+        {"id": "retry-t3", "name": "nutrition_kb_search", "args": {"query": "高血压 外卖"}},
+    ]
+
+    def _state(self, **overrides):
+        state = {
+            "messages": list(add_messages([], [
+                HumanMessage(content="我有鸡胸肉和青菜"),
+                AIMessage(content=json.dumps(
+                    _candidates_payload(["番茄牛肉面", "蒜香鸡胸"]), ensure_ascii=False)),
+                HumanMessage(content="2吧，我的父亲高血压，可以吃这个吗，要吃的话该注意些什么"),
+                AIMessage(content=self.ANSWER),
+            ])),
+            "verify_attempts": 0,
+            "tool_calls_in_turn": g.PICK_TURN_TOOL_BUDGET,
+            "tool_budget": g.PICK_TURN_TOOL_BUDGET,
+            "tool_rounds": 1,
+            "tool_budget_exhausted": False,
+        }
+        state.update(overrides)
+        return state
+
+    def _retry_then_ask_tools(self, state):
+        """跑 verify 拿到 retry，把补丁并回 state，再让 chef_think「重试后又要工具」。"""
+        out = g.verify_answer_node(state)
+        self.assertEqual(out["verify_status"], "retry")
+        merged = {**state, **{k: v for k, v in out.items() if k != "messages"}}
+        merged["messages"] = add_messages(state["messages"], out.get("messages") or [])
+        merged["messages"] = add_messages(
+            merged["messages"], [AIMessage(content="", tool_calls=self.RETRY_CALLS)]
+        )
+        return merged
+
+    def test_retry_grants_one_slot_when_balance_empty(self):
+        merged = self._retry_then_ask_tools(self._state())
+        self.assertEqual(g._remaining_tool_slots(merged), 1)
+        self.assertEqual(g.chef_route_with_tool_budget(merged), "tools")
+
+    def test_retry_leaves_state_alone_when_balance_left(self):
+        # 余额还有剩就不许动计数，避免每次重试都无谓放宽额度
+        out = g.verify_answer_node(self._state(tool_calls_in_turn=0, tool_rounds=0))
+        self.assertEqual(out["verify_status"], "retry")
+        self.assertNotIn("tool_calls_in_turn", out)
+        self.assertNotIn("tool_rounds", out)
+
+    def test_retry_grants_one_round_when_round_cap_hit(self):
+        # 余额还有 1 但圈数已封顶：同样要留一次取证，否则照样落兜底句
+        merged = self._retry_then_ask_tools(self._state(
+            tool_calls_in_turn=g.MAX_TOOL_CALLS_PER_TURN - 1,
+            tool_budget=g.MAX_TOOL_CALLS_PER_TURN,
+            tool_rounds=g.MAX_TOOL_ROUNDS,
+        ))
+        self.assertEqual(merged["tool_rounds"], g.MAX_TOOL_ROUNDS - 1)
+        self.assertEqual(g.chef_route_with_tool_budget(merged), "tools")
+
+    def test_retry_slot_executes_only_one_tool(self):
+        class _FakeExecutor:
+            def __init__(self):
+                self.seen_ids = []
+
+            def invoke(self, state):
+                calls = list(getattr(state["messages"][-1], "tool_calls") or [])
+                self.seen_ids = [c["id"] for c in calls]
+                return {"messages": [
+                    ToolMessage(content="{}", tool_call_id=c["id"], name=c["name"])
+                    for c in calls
+                ]}
+
+        merged = self._retry_then_ask_tools(self._state())
+        executor = _FakeExecutor()
+        with patch.object(g, "tool_executor", executor):
+            out = g.run_tools_node(merged)
+        self.assertEqual(executor.seen_ids, ["retry-t1"])
+        self.assertEqual(out["tool_calls_in_turn"], g.PICK_TURN_TOOL_BUDGET)
+
+    def test_retry_does_not_bypass_round_cap(self):
+        # 补的那一圈用掉后仍然收口：计数回到封顶值时路由依旧判耗尽
+        merged = self._retry_then_ask_tools(self._state(
+            tool_calls_in_turn=g.MAX_TOOL_CALLS_PER_TURN - 1,
+            tool_budget=g.MAX_TOOL_CALLS_PER_TURN,
+            tool_rounds=g.MAX_TOOL_ROUNDS,
+        ))
+        merged["tool_rounds"] = g.MAX_TOOL_ROUNDS
+        merged["tool_calls_in_turn"] = g.MAX_TOOL_CALLS_PER_TURN
+        self.assertEqual(
+            g.chef_route_with_tool_budget(merged), "tool_budget_exhausted"
         )
 
 

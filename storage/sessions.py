@@ -593,14 +593,61 @@ def set_message_candidates(sid, record_id, candidates):
     return False
 
 
-def find_recent_candidates(sid, limit=8):
-    """取会话「紧邻本轮之前那一轮」登记的候选菜名，供「就第2个」这类序号指代解析。
+def _record_card_dish_names(record) -> list:
+    """若这条记录是「已交付的菜谱卡片」，返回卡片里的菜名；否则返回空列表。
 
-    ⚠️ 只认最后一条记录，**故意不做倒序回溯**：候选清单之后只要又发生过别的对话轮次，
-    旧序号就不再被当作本轮选定。这条产品规则由 `tests/agent/test_candidate_flow.py`
-    的 `test_stale_candidates_after_newer_turn_are_not_confirm` 冻结，且必须与
-    `agent_graph._recent_candidates` 同源——路由层若放宽到回溯，就会出现
-    「后端开了配图开关、前端却没有卡片」的空转（见 chat_route._should_enable_image_pipeline）。
+    判据与 `agent_graph._has_delivered_card` 同口径：answer 是带非空 recipes 的
+    JSON 卡片。**只**用于 `find_recent_candidates` 里「跨过消费该清单的卡片轮」这一处，
+    不参与任何其它判定。
+    """
+    if not isinstance(record, dict):
+        return []
+    raw = str(record.get("answer") or "").strip()
+    if not raw.startswith("{"):
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    recipes = data.get("recipes")
+    if not isinstance(recipes, list):
+        return []
+    names = []
+    for recipe in recipes:
+        if not isinstance(recipe, dict):
+            continue
+        name = str(recipe.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _card_comes_from_list(card_names, list_names) -> bool:
+    """卡片里的菜是否来自这份候选清单（菜名允许带「· 微甜蒜香改版」这类后缀）。"""
+    dishes = [str(name).strip() for name in list_names if str(name).strip()]
+    if not dishes:
+        return False
+    for card in card_names:
+        name = str(card).strip()
+        if not name or not any(name == dish or dish in name for dish in dishes):
+            return False
+    return True
+
+
+def find_recent_candidates(sid, limit=8):
+    """取会话里「用户最近看到的那份候选清单」，供「就第2个」这类序号指代解析。
+
+    回溯规则（与 `agent_graph._recent_candidates` 的冻结语义一致，只多走一步）：
+      · 最新一条是候选清单 → 直接采用；
+      · 最新一条是**由该清单选定后消费出来的卡片**（卡片菜名都来自那份清单）
+        → 跨过卡片，继续找那份清单。用户说「还是第 1 道」时，锚点必须是用户
+        最近看到的那份编号清单，否则模型会静默换一道菜（实测 user_777df48ed8）；
+      · 其它任何记录（闲聊 / 健康问答 / 与清单无关的卡片）→ 立即返回 None：
+        候选清单跨轮失效，旧序号不再算选定。这条产品规则由
+        `tests/agent/test_candidate_flow.py::test_stale_candidates_after_newer_turn_are_not_confirm`
+        与 `test_find_ignores_stale_candidates_after_a_newer_turn` 冻结。
 
     返回 {'record_id', 'candidates', 'dish_name'}；没有候选时返回 None。
     """
@@ -609,23 +656,31 @@ def find_recent_candidates(sid, limit=8):
     if data is None:
         return None
     messages = data.get("messages") or []
-    if not messages:
+    consumed_card_names: list = []
+    for record in reversed(messages):
+        if not isinstance(record, dict):
+            return None
+        names = [
+            str(name).strip()
+            for name in (record.get("candidates") or [])
+            if str(name).strip()
+        ]
+        if names:
+            if consumed_card_names and not _card_comes_from_list(
+                consumed_card_names, names
+            ):
+                return None
+            return {
+                "record_id": record.get("id"),
+                "candidates": names[:limit],
+                "dish_name": names[0],
+            }
+        card_names = _record_card_dish_names(record)
+        if card_names:
+            consumed_card_names.extend(card_names)
+            continue
         return None
-    latest = messages[-1]
-    if not isinstance(latest, dict):
-        return None
-    names = [
-        str(name).strip()
-        for name in (latest.get("candidates") or [])
-        if str(name).strip()
-    ]
-    if not names:
-        return None
-    return {
-        "record_id": latest.get("id"),
-        "candidates": names[:limit],
-        "dish_name": names[0],
-    }
+    return None
 
 
 def star_message(sid, record_id, starred: bool):
