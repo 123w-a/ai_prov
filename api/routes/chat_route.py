@@ -25,12 +25,14 @@ from agent.turn_decision import (
     classify_turn_intent as _classify_turn_intent_shared,
     is_recipe_change_request as _is_recipe_change_request,
     is_restaurant_ordering_scene as _is_restaurant_ordering_scene,
+    is_taste_adjustment_request as _is_taste_adjustment_request,
     looks_like_dining_request as _looks_like_dining_request,
     looks_like_home_service_request as _looks_like_home_service_request,
 )
 from agent_tools import find_recipe_image
 from infrastructure.model_name import is_provider_failure
 from infrastructure.upload_guard import validate_image_upload
+from services.image_notes import build_image_note
 from storage.sessions import append_message
 import time
 from datetime import datetime
@@ -56,6 +58,8 @@ _ACTIVE_TURN_RECORD_TTL_S = 6 * 60 * 60
 _MAX_ACTIVE_TURN_RECORDS = 5000
 _IMAGE_THREAD_POLL_TIMEOUT_S = 5.0
 _IMAGE_THREAD_MAX_WAIT_S = float(os.getenv("CHEF_IMAGE_THREAD_MAX_WAIT_S", "180"))
+# run_agent 结束后等 SSE 消费端完成落库；超时才按客户端断连走线程侧兜底。
+_PERSIST_CONSUMER_WAIT_S = float(os.getenv("CHEF_PERSIST_CONSUMER_WAIT_S", "10"))
 
 # —— 并发护栏：同会话串行 + 全局 Agent 背压 ——
 # 同 session_id 同时跑两轮，会以同一个 thread_id 同时写 LangGraph checkpoint，
@@ -376,12 +380,17 @@ def _reusable_confirmation_answer(session_id: str, message: str) -> dict | None:
     """
     if is_execute_plan_request(message) and not _is_pure_execute_plan_request(message):
         return None
+    # 口味/口感/版本差异意味着用户要的已经不是上一张成品卡。
+    # 这里必须放弃复用，让后续 Agent 链路重新生成调整后的方案。
+    if _is_taste_adjustment_request(message):
+        return None
     try:
         from storage.sessions import find_recent_recipe_for_image
 
         requested_name = _extract_requested_dish(message)
-        target = find_recent_recipe_for_image(session_id, requested_name)
-        if not target and requested_name:
+        if requested_name:
+            target = find_recent_recipe_for_image(session_id, requested_name)
+        else:
             target = find_recent_recipe_for_image(session_id, None)
         if not target:
             return None
@@ -537,28 +546,9 @@ def _count_reasoned_candidate_lines(text) -> int:
     `—— 高蛋白低脂，10分钟出锅`、`—— 清淡好消化，5分钟`。真正的分水岭是
     **菜名位置是不是做法动作**（加粗包裹 + 动词开头），候选菜名永远是食材名词。
     """
-    count = 0
-    for line in str(text or "").splitlines():
-        line = line.strip()
-        match = re.match(r"^(?:[-*•]\s*)?(\d{1,2})\s*[.、)）．:：]\s*(.+)$", line)
-        if not match:
-            continue
-        body = match.group(2).strip()
-        parts = re.split(r"\s*(?:——|—|--|–|：|:|\||｜)\s*", body, maxsplit=1)
-        if len(parts) < 2:
-            continue
-        raw_head = parts[0].strip()
-        # 步骤行特征：菜名位置被 ** 包裹（加粗的步骤标题）
-        if raw_head.startswith("**") or raw_head.endswith("**"):
-            continue
-        head = raw_head.strip("*`「」『』\"'“”").strip()
-        if not (2 <= len(head) <= 14):
-            continue
-        # 菜名位置以做法动词开头 → 是步骤标题，不是菜名
-        if re.match(r"^(切|放|加|下|倒|淋|撒|盖|转|关|开|取|把|用|将|煮|炒|煎|蒸|炖|焖|腌|盛|打|调|备)", head):
-            continue
-        count += 1
-    return count
+    from agent.graph import _extract_candidate_names
+
+    return len(_extract_candidate_names(text))
 
 
 def _register_candidate_anchor(session_id: str, record_id, message: str, answer: str) -> bool:
@@ -991,6 +981,7 @@ async def chat(
             message,
             family.get("members") or [],
             session_id=session_id,
+            active_member_id=str(family.get("active_id") or ""),
         )
         remember_candidates(candidates)
         memory_candidate_ids = [str(item.get("id") or "") for item in candidates]
@@ -1243,6 +1234,8 @@ async def chat(
         events = queue.Queue()
         finished = object()
         saved_flag = [False]  # 兜底落库幂等标记
+        consumer_persisted = threading.Event()
+        _img_lock = threading.Lock()
 
         def _persist_once():
             """把入口预落的 __pending__ 记录更新为最终态（幂等）。
@@ -1252,6 +1245,12 @@ async def chat(
             if saved_flag[0]:
                 return
             saved_flag[0] = True
+            # 图片线程会在锁内更新 answer_dict / final_answer 并回写同一记录。
+            # 最终落库必须与它互斥，否则后到的旧 final_answer 会把图片覆盖掉。
+            with _img_lock:
+                _persist_once_locked()
+
+        def _persist_once_locked():
             answer = final_answer if final_answer else "".join(full_parts)
             print(f"[persist] sid={session_id} rec={pending_rec_id} answer_len={len(answer or '')} parts={len(full_parts)}")
             if not (answer and answer.strip()) or answer.strip() == "__pending__":
@@ -1271,7 +1270,7 @@ async def chat(
                 except Exception:
                     pass
             if not (answer and answer.strip()):
-                answer = "（本轮回答未能完成：上游模型超时或连接中断，请重问一次。）"
+                answer = "（本轮没有生成可展示的回答，请再试一次。）"
             if _is_image_cancelled(session_id, turn_id):
                 if pending_rec_id is not None:
                     try:
@@ -1320,7 +1319,6 @@ async def chat(
 
         answer_dict = None  # structure 产出的 ChefAnswer dict；图片线程原地补图后重新序列化落库
         img_thread = None
-        _img_lock = threading.Lock()
         image_failed_sent = False  # image_failed 去重：补图线程早到 / done 分支补发只发一次
 
         def _fill_images():
@@ -1331,6 +1329,7 @@ async def chat(
 
         def _fill_images_once():
             """后台补图：先复用资产/搜现成图，找不到时统一允许 AI 兜底。"""
+            nonlocal final_answer
             # 默认推荐也必须保持“有菜就尽量有图”的原有体验；
             # 全局资产命中时不会走到生图，只有没有可用资产和现成图时才消耗 AI 兜底。
             allow_ai_fallback = True
@@ -1387,15 +1386,17 @@ async def chat(
                     if index == 0:
                         answer_dict["image_url"] = image_url
                         answer_dict["image_ai_generated"] = ai_flag
-                    note = str(recipe.get("image_note") or answer_dict.get("image_note") or "")
-                    if ai_flag:
-                        note = ("AI 生成示意图：" + note) if note and "AI 生成示意图" not in note else (note or "AI 生成示意图（非真实成品照，仅供样式参考）")
-                    elif not note:
-                        note = ""
+                    note = build_image_note(
+                        ai_flag,
+                        str(recipe.get("image_note") or answer_dict.get("image_note") or ""),
+                    )
                     if note:
                         recipe["image_note"] = note
                         if index == 0:
                             answer_dict["image_note"] = note
+                    # 图片线程与最终落库共享同一把锁和同一份最新 payload：
+                    # 无论哪边先拿到锁，后写者看到的都是已经带图片的答案。
+                    final_answer = json.dumps(answer_dict, ensure_ascii=False)
                     # 回写落库：AI 生图瀑布可达 170s，远超 finish 前的 25s join 窗口；
                     # 图好后立即更新 __pending__ 记录，客户端断开/已刷新也能在重进会话时看到图。
                     if pending_rec_id is not None:
@@ -1469,17 +1470,21 @@ async def chat(
                 except Exception as exc2:
                     events.put(("error", exc2))
             finally:
-                # 客户端断开时 generator 的 finally 不会执行（ASGI 取消 task 不 aclose
-                # sync generator），线程 finally 是落库的可靠兜底；幂等，双路径安全。
-                try:
-                    _persist_once()
-                except Exception:
-                    pass
+                # 先让消费端看到 done，并等它把队列里的 token 全部处理完后再落库。
+                # 旧顺序会在消费端尚未排空队列时抢先保存，导致正文停在最后一个
+                # 已处理 token 上（例如候选清单只落成「3.」）。
+                events.put(("done", finished))
                 # 生成器 finally 在客户端断开时可能不执行，轮次槽/并发槽必须在这里兜住；
                 # 两处都调用是幂等的（pop 带默认值、信号量释放有 ValueError 保护）。
                 _end_turn(session_id)
                 _release_agent_slot()
-                events.put(("done", finished))
+                # 客户端断开时 generator 的 finally 不会执行（ASGI 取消 task 不 aclose
+                # sync generator），超时后用线程侧兜底；正常消费则由消费端先落库。
+                if not consumer_persisted.wait(_PERSIST_CONSUMER_WAIT_S):
+                    try:
+                        _persist_once()
+                    except Exception:
+                        pass
 
         # 全局 Agent 背压：槽位满就立刻如实拒绝，不排队——排队会一直占着 HTTP 连接和心跳。
         if not _acquire_agent_slot():
@@ -1492,6 +1497,7 @@ async def chat(
         # 放到后台线程后，主生成器可以每隔几秒发送心跳，避免前端误判为断线。
         threading.Thread(target=run_agent, daemon=True).start()
         yield f"data: {json.dumps({'status': 'working'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'stage': 'initializing'}, ensure_ascii=False)}\n\n"
 
         started = time.time()
         image_wait_deadline = None
@@ -1532,7 +1538,11 @@ async def chat(
                     # done 只表示 Agent 主链结束，补图线程仍可能稍晚返回。
                     # 继续消费队列并保持心跳，直到 image_thread_done 到达。
                     agent_done_seen = True
-                    if img_thread is None or _is_image_cancelled(session_id, turn_id) or image_thread_done_seen:
+                    if (
+                        img_thread is None
+                        or _is_image_cancelled(session_id, turn_id)
+                        or image_thread_done_seen
+                    ):
                         break
                     image_wait_deadline = time.monotonic() + _IMAGE_THREAD_MAX_WAIT_S
                     continue
@@ -1552,11 +1562,23 @@ async def chat(
                     yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":
                     try:
-                        answer_dict = json.loads(payload)
+                        # _stream_agent 已将结构化消息解析成 dict；兼容旧调用方
+                        # 仍传 JSON 字符串，避免对 dict 再次 json.loads。
+                        answer_dict = (
+                            json.loads(payload)
+                            if isinstance(payload, (str, bytes, bytearray))
+                            else payload
+                        )
                     except Exception as _pe:
                         print(f"[flow] answer json-parse failed: {_pe}")
                         raise
-                    final_answer = payload
+                    if not isinstance(answer_dict, dict):
+                        raise TypeError(
+                            f"structured answer must be a dict, got {type(answer_dict).__name__}"
+                        )
+                    # 持久化和饮食记账仍使用 JSON 字符串；SSE 内部允许 dict，
+                    # 但不能把 dict 沿着落库兜底继续传下去。
+                    final_answer = json.dumps(answer_dict, ensure_ascii=False)
                     if isinstance(answer_dict, dict):
                         if answer_dict.get("answer_kind") == "candidates":
                             candidate_names = [
@@ -1624,12 +1646,14 @@ async def chat(
 
             # 正常路径落库（幂等；finally 亦兜底）
             _persist_once()
+            consumer_persisted.set()
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return
         finally:
             # 无论正常完成、后端异常还是客户端断开（GeneratorExit），都兜底落库一次
             _persist_once()
+            consumer_persisted.set()
             # 当前流已经结束，取消状态不能泄漏到下一轮。
             _clear_image_cancel_after_thread(session_id, turn_id, img_thread)
             _end_turn(session_id)

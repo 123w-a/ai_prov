@@ -10,7 +10,7 @@ from agent.graph import (
     _self_declared_conditions,
     profile_gate_node,
 )
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 
 class SelfDeclaredTest(unittest.TestCase):
@@ -19,7 +19,9 @@ class SelfDeclaredTest(unittest.TestCase):
             "我是孕妇，孕18周，还有妊娠期高血压": {"孕期", "高血压"},
             "我孕18周想吃面": {"孕期"},
             "血压偏高能吃什么": {"高血压"},
+            "我血压有点高，晚餐吃什么": {"高血压"},
             "血糖高的人喝什么汤": {"糖尿病"},
+            "我血糖有点高，能吃什么": {"糖尿病"},
             "尿酸偏高怎么吃": {"痛风"},
             "肾脏不好要不要限蛋白": {"慢性肾脏病"},
             "我想减肥，晚餐怎么安排": {"肥胖"},
@@ -62,6 +64,32 @@ class SelfDeclaredTest(unittest.TestCase):
             "profile_missing": [],
         }
         with patch("agent.graph._active_profile_conditions", return_value=["高血压"]):
+            result = profile_gate_node(state)
+        self.assertTrue(result["profile_ready"])
+        self.assertEqual(result["profile_missing"], [])
+
+    def test_explicit_blood_sugar_variant_does_not_repeat_question(self):
+        state = {
+            "messages": [HumanMessage(content="我血糖有点高，晚餐吃什么？")],
+            "profile_ready": True,
+            "profile_missing": [],
+        }
+        with patch("agent.graph._active_profile_conditions", return_value=[]):
+            result = profile_gate_node(state)
+        self.assertTrue(result["profile_ready"])
+        self.assertEqual(result["profile_missing"], [])
+
+    def test_answer_after_previous_gate_question_does_not_repeat(self):
+        state = {
+            "messages": [
+                HumanMessage(content="晚餐吃什么？"),
+                AIMessage(content="想确认一下，你是否涉及糖尿病？"),
+                HumanMessage(content="我血糖有点高"),
+            ],
+            "profile_ready": True,
+            "profile_missing": [],
+        }
+        with patch("agent.graph._active_profile_conditions", return_value=[]):
             result = profile_gate_node(state)
         self.assertTrue(result["profile_ready"])
         self.assertEqual(result["profile_missing"], [])

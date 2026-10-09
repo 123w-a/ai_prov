@@ -49,6 +49,155 @@ class TestHardBlocks(unittest.TestCase):
                 self.assertTrue(all(v["dimension"] == "allergen" for v in violations))
 
 
+class TestRequestedAllergenAddition(unittest.TestCase):
+    """画像里的过敏原被用户明确要求加入时，也要确定性命中（归一与否都适用）。"""
+
+    def test_explicit_requested_addition_is_detected(self):
+        text = "对第3道菜品进行改造，加入芒果这个水果，做成一个甜品可以吗"
+        self.assertEqual(
+            allergen_rules.requested_allergen_additions(text, ["芒果"]),
+            ["芒果及其制品"],
+        )
+
+    def test_negated_requested_addition_is_not_detected(self):
+        for text in (
+            "不要加芒果",
+            "不加芒果",
+            "避免放入芒果",
+            "芒果过敏，不能加入",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["芒果"]),
+                    [],
+                )
+
+    def test_member_profile_addition_is_not_treated_as_adding_food(self):
+        for text in (
+            "妹妹还没有加入家庭画像，请把她加入：对花生过敏，口味清淡",
+            "请把妹妹加入：对花生过敏，口味清淡",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["花生"]),
+                    [],
+                )
+
+    def test_food_addition_still_triggers(self):
+        for text in ("把花生加入这道菜", "加花生"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["花生"]),
+                    ["花生及其制品"],
+                )
+
+    def test_profile_addition_variants_never_block_as_food(self):
+        """画像加入是「给人建档」，不是「把过敏原下到菜里」。
+
+        这是线上真实翻车场景：用户在补采轮说
+        「妹妹还没有加入家庭画像，请把她加入：对花生过敏」，被误判成
+        「要求把花生放进菜」→ verify_answer 直接 blocked，用户看到的是
+        一道毫无理由的过敏拦截。以下五种说法都必须放行。
+        """
+        cases = (
+            "妹妹还没有加入家庭画像，请把她加入：对花生过敏，口味清淡",
+            "小雨还没有加入家庭画像，请把她加入：对花生过敏",
+            "请把妹妹加入：对花生过敏，口味清淡",
+            "添加家庭成员妹妹，她对花生过敏",
+            "给妹妹建档，花生过敏，口味清淡",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["花生"]),
+                    [],
+                )
+
+    def test_dish_addition_variants_all_block(self):
+        """收紧排除规则后，真正把过敏原下到菜里的说法一个都不能漏。
+
+        上一版 ``_PROFILE_ADDITION_RE`` 用了 ``(?:把|将)?`` 可选量词、
+        把 ``我`` 放进人物列表、并用 ``.{0,12}`` 跨词，导致
+        「我加入花生」这类主谓句被当成画像语境而漏拦。这里逐条钉死。
+        """
+        peanut_cases = (
+            "给我加点花生",
+            "把花生加进去",
+            "帮我放点花生碎",
+            "这道菜加入花生酱",
+            "加入花生",
+            "给这位加花生",
+            "我添加花生",
+            "我加入花生",
+            "添加花生到这个家庭的菜单",
+        )
+        for text in peanut_cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["花生"]),
+                    ["花生及其制品"],
+                )
+        # 归一后的水果类过敏原（芒果）同样要命中，不能被别名差异静默吞掉。
+        self.assertEqual(
+            allergen_rules.requested_allergen_additions("我要加芒果", ["芒果"]),
+            ["芒果及其制品"],
+        )
+
+    def test_negated_and_unrelated_phrases_stay_clean(self):
+        """护栏不能靠「多拦」换安全感：否定句与无关句必须放行。"""
+        cases = (
+            "不加花生",
+            "对第3道菜品进行改造，把花生换掉",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.requested_allergen_additions(text, ["花生"]),
+                    [],
+                )
+
+    def test_known_gap_include_verb_is_not_a_dish_verb(self):
+        """已知缺口（不是本次回归引入）：``纳入`` 不在菜品动词表内。
+
+        ``纳入`` 在中文里主要用于画像/档案语境（「把妹妹纳入家庭画像」），
+        因此**刻意**不加入 ``_ADDITION_REQUEST_RE``——补进去会把
+        「把芒果纳入推荐清单」一类说法也误判成下料请求，扩大误报面。
+        若将来要覆盖「纳入花生」，请连同误报评估一起评估，而不是只加一个词。
+        """
+        self.assertEqual(
+            allergen_rules.requested_allergen_additions("纳入花生", ["花生"]),
+            [],
+        )
+
+    def test_explicit_no_allergen_values_are_ignored(self):
+        for value in ("无", "没有过敏", "无过敏原"):
+            with self.subTest(value=value):
+                self.assertEqual(allergen_rules.normalize_allergens(value), [])
+                self.assertEqual(
+                    allergen_rules.unresolved_allergen_advisories([value]),
+                    [],
+                )
+
+    def test_pending_allergen_is_not_deduplicated_across_sessions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidates_path = Path(temp_dir) / "memory_candidates.json"
+            with patch.object(memory_candidates, "_CANDIDATES_PATH", candidates_path):
+                first = memory_candidates.extract_candidates(
+                    "我对花生过敏",
+                    [{"id": "me", "name": "我", "profile": {}}],
+                    session_id="session-a",
+                )
+                memory_candidates.remember_candidates(first)
+                second = memory_candidates.extract_candidates(
+                    "我对花生过敏",
+                    [{"id": "me", "name": "我", "profile": {}}],
+                    session_id="session-b",
+                )
+
+        self.assertEqual([item["value"] for item in first], ["花生"])
+        self.assertEqual([item["value"] for item in second], ["花生"])
+
+
 class TestChronicRegression(unittest.TestCase):
     def test_ten_existing_nutrition_rules_still_fire(self):
         cases = [
@@ -182,6 +331,25 @@ class TestMatchPriority(unittest.TestCase):
         self.assertIn("过敏原:大豆及其制品", conditions)
         self.assertIn("过敏原:含麸质的谷物及其制品", conditions)
 
+    def test_optional_mango_aliases_block_with_exclusion(self):
+        for text in ("芒果", "芒果干", "芒果汁", "杨枝甘露"):
+            with self.subTest(text=text):
+                result = allergen_rules.audit_allergens(
+                    text,
+                    ["mango"],
+                    use_optional=True,
+                )
+                self.assertTrue(result)
+                self.assertEqual(result[0]["condition"], "过敏原:芒果及其制品")
+        self.assertEqual(
+            allergen_rules.audit_allergens(
+                "芒果核",
+                ["mango"],
+                use_optional=True,
+            ),
+            [],
+        )
+
     def test_maybe_hidden_is_notice_only(self):
         hard = allergen_rules.audit_allergens("XO酱炒饭", ["crustacean"])
         notices = allergen_rules.audit_allergen_advisories("XO酱炒饭", ["crustacean"])
@@ -206,6 +374,24 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(
             allergen_rules.normalize_allergens("乳过敏"),
             ["milk"],
+        )
+
+    def test_compound_food_aliases_expand_to_all_relevant_categories(self):
+        self.assertCountEqual(
+            allergen_rules.normalize_allergens("酱油"),
+            ["gluten", "soy"],
+        )
+        self.assertCountEqual(
+            allergen_rules.normalize_allergens("沙拉酱"),
+            ["egg", "milk"],
+        )
+        self.assertEqual(
+            allergen_rules.normalize_allergens("麻酱"),
+            ["sesame"],
+        )
+        self.assertEqual(
+            allergen_rules.normalize_allergens("芒果汁"),
+            ["mango"],
         )
 
     def test_upper_term_does_not_hide_other_allergens(self):
@@ -390,11 +576,12 @@ class TestVerifyGraph(unittest.TestCase):
 
     def test_blocked_status_never_rendered_as_adjusted(self):
         """分支顺序回归：blocked 必须先判，否则会落进 adjusted 分支变成不实表述。"""
-        items = agent_graph._build_guardrails(
-            "今晚吃什么",
-            "blocked",
-            ["过敏原:甲壳纲类动物及其制品"],
-        )
+        with patch("agent.graph._allergens_for_audit", return_value=[]):
+            items = agent_graph._build_guardrails(
+                "今晚吃什么",
+                "blocked",
+                ["过敏原:甲壳纲类动物及其制品"],
+            )
         allergen_items = [i for i in items if i.condition.startswith("过敏原:")]
         self.assertEqual(len(allergen_items), 1)
         self.assertEqual(allergen_items[0].status, "blocked")
@@ -429,6 +616,40 @@ class TestVerifyGraph(unittest.TestCase):
 
 
 class TestStructuredReaudit(unittest.TestCase):
+    def test_safe_retry_result_explains_rejected_requested_dish(self):
+        answer = ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="芝麻酱拌面",
+                    intro="无花生替代",
+                    difficulty=1,
+                    nutrition=3,
+                    seasonings=[Seasoning(name="纯芝麻酱", amount="10g")],
+                    steps=["煮面后拌匀即可。"],
+                )
+            ],
+            chef_tip="",
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="请给我推荐一道花生酱拌面"),
+                AIMessage(content="已重新生成安全替代"),
+            ],
+            "session_id": "allergen-opening-test",
+            "verify_violated": ["过敏原:花生及其制品"],
+        }
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._build_structure_context", return_value=("可结构化上下文", None, False)),
+            patch("agent.graph.build_structured_answer", return_value=answer),
+        ):
+            result = agent_graph.structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertIn("不能推荐", payload["opening"])
+        self.assertIn("花生酱", payload["opening"])
+        self.assertIn("芝麻酱拌面", payload["opening"])
+        self.assertNotIn("opening_authoritative", payload)
+
     def test_structured_card_is_dropped_if_model_reintroduces_allergen(self):
         answer = ChefAnswer(
             recipes=[
@@ -479,6 +700,26 @@ class TestGuardrailVisibilityAndStream(unittest.TestCase):
         self.assertEqual(len(allergen_items), 1)
         self.assertEqual(allergen_items[0].status, "adjusted")
         self.assertIn("不含", allergen_items[0].rule)
+
+    def test_build_guardrails_includes_pending_session_allergen(self):
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["芒果"]),
+            patch(
+                "storage.memory_candidates.get_session_allergens",
+                return_value=["花生"],
+            ),
+        ):
+            items = agent_graph._build_guardrails(
+                "推荐一道不含花生的菜",
+                "ok",
+                [],
+                session_id="session-with-pending-allergen",
+            )
+        conditions = {item.condition for item in items}
+        self.assertIn("过敏原:芒果及其制品", conditions)
+        # 会话待确认过敏原并入时同样要过 allergen_label() 归一化，
+        # 显示名取自规则表 label（花生 -> 花生及其制品），与同文件其他用例一致。
+        self.assertIn("过敏原:花生及其制品", conditions)
 
     def test_blocked_message_is_forwarded_to_stream(self):
         def fake_stream(*args, **kwargs):

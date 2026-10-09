@@ -350,7 +350,11 @@ function hasPendingRecipeImages(answer: ChefAnswer, patch?: PendingImagePatch | 
   if (recipes.length === 0) return false
   return recipes.some((recipe, index) => {
     const imagePatch = patch?.images.find((item) => item.index === index)
-    return !recipe.image_url && !imagePatch?.url && !failedIndexes.has(index) && !recipe.image_note
+    // 第一道菜的图片和图注同时兼容顶层字段；模型在搜图失败时会先写
+    // answer.image_note，不能因为菜谱项里为空就继续无限显示“正在配图”。
+    const hasImage = Boolean(recipe.image_url || imagePatch?.url || (index === 0 && answer.image_url))
+    const hasNote = Boolean(recipe.image_note || (index === 0 && answer.image_note))
+    return !hasImage && !failedIndexes.has(index) && !hasNote
   })
 }
 
@@ -682,9 +686,14 @@ export default function App() {
                   ? applyPendingImagePatch(answerWithOpening, pendingImagePatchRef.current[assistantId])
                   : stripAnswerImages(answerWithOpening)
                 const imagePending = answerWantsImage && hasPendingRecipeImages(patchedAnswer, pendingImagePatchRef.current[assistantId])
+                // 安全拒绝/澄清类结构化答案可能没有 recipes。此时 RecipeCard 会按设计
+                // 不渲染，但 opening 仍是用户必须看到的正文，不能随 answer 接管一起清空。
+                const visibleAnswerText = patchedAnswer.recipes.length === 0
+                  ? patchedAnswer.opening || patchedAnswer.chef_tip || ''
+                  : ''
                 return {
                   ...message,
-                  text: '',
+                  text: visibleAnswerText,
                   answer: patchedAnswer,
                   streaming: false,
                   imagePending,
@@ -1103,6 +1112,8 @@ export default function App() {
                     const candidates = await fetchPendingMemoryCandidates(activeSession.session_id)
                     setMemoryCandidates((current) => ({ ...current, [activeSession.session_id]: candidates }))
                   }
+                } catch (error) {
+                  setAppError(error instanceof Error ? error.message : '加入长期画像失败，请稍后重试')
                 } finally {
                   setMemoryBusyId(null)
                 }
@@ -1115,6 +1126,8 @@ export default function App() {
                     ...current,
                     [activeSession?.session_id ?? '']: (current[activeSession?.session_id ?? ''] ?? []).filter((item) => item.id !== candidateId),
                   }))
+                } catch (error) {
+                  setAppError(error instanceof Error ? error.message : '仅本次记住失败，请稍后重试')
                 } finally {
                   setMemoryBusyId(null)
                 }

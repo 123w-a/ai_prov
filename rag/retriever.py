@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import threading
 import time
 from typing import Any, Callable, Optional, Sequence
 
@@ -327,12 +328,15 @@ class KnowledgeBaseRetriever:
 
 
 _DEFAULT_RETRIEVER: KnowledgeBaseRetriever | None = None
+_DEFAULT_RETRIEVER_LOCK = threading.Lock()
 
 
 def get_retriever() -> KnowledgeBaseRetriever:
     global _DEFAULT_RETRIEVER
     if _DEFAULT_RETRIEVER is None:
-        _DEFAULT_RETRIEVER = KnowledgeBaseRetriever()
+        with _DEFAULT_RETRIEVER_LOCK:
+            if _DEFAULT_RETRIEVER is None:
+                _DEFAULT_RETRIEVER = KnowledgeBaseRetriever()
     return _DEFAULT_RETRIEVER
 
 

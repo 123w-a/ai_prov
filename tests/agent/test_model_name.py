@@ -33,7 +33,12 @@ class ModelProviderTest(unittest.TestCase):
 
         self.assertIsInstance(model, ChatOpenAI)
         self.assertNotIsInstance(model, ChatDeepSeek)
-        self.assertEqual(model.model_name, "qwen3-vl-235b-a22b-instruct")
+        # 视觉模型名以 .env 的 VISION_MODEL_NAME 为准（可随成本/能力调整），
+        # 此处只校验仍为 Qwen 系且已成功解析，不锁死具体版本号。
+        self.assertTrue(
+            model.model_name.startswith("qwen"),
+            f"视觉模型应为 Qwen 系，实际为 {model.model_name!r}",
+        )
 
 
 class SummaryModelTest(unittest.TestCase):

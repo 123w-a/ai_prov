@@ -283,6 +283,7 @@ export interface MemoryCandidate {
   scope: 'always' | 'once'
   source_text: string
   status: 'pending' | 'once' | 'confirmed' | 'dismissed'
+  is_new_member?: boolean
 }
 
 export async function fetchPendingMemoryCandidates(sessionId: string): Promise<MemoryCandidate[]> {

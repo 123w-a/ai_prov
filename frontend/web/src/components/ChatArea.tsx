@@ -45,12 +45,21 @@ const QUICK_PROMPTS: Array<{ text: string; mode: DecisionMode; tag: string }> = 
 
 const STAGE_COPY = {
   thinking: '小膳思考中',
+  initializing: '正在初始化本轮决策服务',
   writing: '正在形成膳食建议',
   searching: '正在检索做法与营养依据',
   auditing: '正在做健康护栏审计',
   generating_image: '正在生成菜品图片',
   structuring: '正在完成健康审计与卡片整理',
   switching_model: '主模型超时，已切换备用模型重试',
+}
+
+const waitLabel = (message: ChatMessage, liveElapsed: number) => {
+  const elapsed = Math.max(liveElapsed, message.elapsed ?? 0)
+  if (elapsed < 3 || message.stage === 'writing' || message.stage === 'structuring') {
+    return ''
+  }
+  return ` · 已等待 ${elapsed}s`
 }
 
 const STRONG_IMAGE_REQUESTS = ['配图', '配张图', '补图', '换图', '换张图', '生成图片', '生成一张图', '来张图', '发图', '发张图', '发图片', '发个图', '出图', '出个图', '看看图', '看看图片', '看图片', '看图', '看一下图', '看一下图片', '看个图', '给我看图', '给我看看', '让我看看', '想看图片', '想看图', '图片欣赏', '成品图', '成品照', '实拍图', '示意图', '效果图', '样图', '参考图', '想看看', '长什么样', '什么样子', '啥样', '样式', '外观', '照片', '实拍', '再来一张', '换一张', '另一张']
@@ -317,14 +326,14 @@ export function ChatArea({
   }, [messages])
 
   useEffect(() => {
-    if (!sending) {
+    if (!sending && !hasImagePending) {
       setLiveElapsed(0)
       return
     }
     setLiveElapsed(0)
     const timer = window.setInterval(() => setLiveElapsed((value) => value + 1), 1000)
     return () => window.clearInterval(timer)
-  }, [sending])
+  }, [sending, hasImagePending])
 
   const handleFeedScroll = () => {
     const scroller = scrollRef.current
@@ -793,7 +802,12 @@ export function ChatArea({
                     {message.imageUrl && (
                       <img className="message-image" src={message.imageUrl} alt="本轮上传的食材图片" />
                     )}
-                    {message.text && (message.streaming || message.imagePending || !message.answer || message.error) && (
+                    {message.text && (
+                      message.streaming ||
+                      message.error ||
+                      !message.answer ||
+                      message.answer.recipes.length === 0
+                    ) && (
                       <div className="message-text">{renderRichText(message.text)}</div>
                     )}
                     {message.answer && <RecipeCard answer={message.answer} />}
@@ -805,7 +819,7 @@ export function ChatArea({
                           <i />
                         </span>
                         {STAGE_COPY[message.imagePending ? 'generating_image' : message.stage || 'thinking']}
-                        {liveElapsed >= 15 && message.stage !== 'writing' && message.stage !== 'structuring' && (` · 已等待 ${liveElapsed}s`)}
+                        {waitLabel(message, liveElapsed)}
                         {(message.streaming || message.imagePending) && (
                           <button
                             type="button"
@@ -1204,9 +1218,13 @@ export function ChatArea({
         {memoryCandidates.map((candidate) => (
           <div className="dislike-hint" role="status" key={candidate.id}>
             <span>
-              我记下了：{candidate.member || '这位成员'}{candidate.value}。
+              {candidate.is_new_member
+                ? `发现家庭画像中还没有「${candidate.member}」的档案：${candidate.value}。`
+                : `我记下了：${candidate.member || '这位成员'}${candidate.value}。`}
               <br />
-              要加入{candidate.member || '这位成员'}的长期饮食画像吗？
+              {candidate.is_new_member
+                ? `要把「${candidate.member}」加入家庭画像，并记录这条信息吗？`
+                : `要加入${candidate.member || '这位成员'}的长期饮食画像吗？`}
             </span>
             <span className="dislike-hint-actions">
               <button
@@ -1214,7 +1232,7 @@ export function ChatArea({
                 disabled={memoryBusyId === candidate.id}
                 onClick={() => void onConfirmMemory(candidate.id)}
               >
-                加入长期画像
+                {candidate.is_new_member ? '加入家庭画像' : '加入长期画像'}
               </button>
               <button
                 type="button"

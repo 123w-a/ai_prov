@@ -8,17 +8,11 @@ import re           # 解析 Bing 国内版返回 HTML 里的图片直链
 import csv          # 读取结构化营养表 nutrition_table.csv
 import json#工具返回值打包成结构化 JSON（文本与图片 URL 分字段）
 import requests#后端直接下载国内能访问的图片
+import threading
 from pathlib import Path#路径解析
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage  # 发送图片给视觉模型做内容校验
 from langchain_core.tools import tool  # 创键工具
-from langchain_tavily import TavilySearch#进行联网搜索
-from infrastructure.model_name import (  # 获取图片审核主模型与稳定备用模型
-    get_langchain_llm,
-    get_vision_llm,
-)
 from services.oss import upload_to_oss  # 把成品图上传到OSS并返回公网URL
-from services.image_gen import generate_dish_image  # 搜不到图时调通义万相生成「AI 示意图」兜底
 from domain.allergen_rules import audit_allergens
 
 load_dotenv()
@@ -33,6 +27,27 @@ def _tool_allergens() -> list:
     except Exception:
         # 档案缺失或运行环境未初始化时按无过敏原处理，工具本身不能因此报错。
         return []
+
+
+def get_langchain_llm(*args, **kwargs):
+    """按需加载稳定文字模型，保留模块级 patch 兼容点。"""
+    from infrastructure.model_name import get_langchain_llm as _get
+
+    return _get(*args, **kwargs)
+
+
+def get_vision_llm(*args, **kwargs):
+    """按需加载视觉模型，保留模块级 patch 兼容点。"""
+    from infrastructure.model_name import get_vision_llm as _get
+
+    return _get(*args, **kwargs)
+
+
+def generate_dish_image(*args, **kwargs):
+    """按需加载 AI 生图兜底，保留模块级 patch 兼容点。"""
+    from services.image_gen import generate_dish_image as _generate
+
+    return _generate(*args, **kwargs)
 
 
 def _allergen_filter_note(hits: list) -> str:
@@ -78,21 +93,45 @@ def _filter_restaurants_by_allergens(candidates: list, allergens: list | None = 
 
 
 # Tavily 搜索客户端（联网菜谱检索）。
-# 未配置 TAVILY_API_KEY 时优雅降级：tavily 置 None，web_search 返回友好提示、
-# 成品图自动走 Bing/Unsplash/AI 生图兜底链；在 .env 补上 key 重启即可恢复。
+# 延迟到首次调用时才导入并初始化：langchain_tavily 与模型依赖一起会拖慢后端启动，
+# 而普通候选轮/追问并不一定需要联网搜索。未配置 key 时仍优雅降级为 None。
 tavily = None
-try:
-    tavily = TavilySearch(
-        max_results=2,                # 最多返回2条搜索结果
-        search_depth="basic",         # 基础搜索深度（快速摘要，advanced会爬网页全文）
-        include_answer=False,         # 不返回Tavily自带的总结答案
-        include_raw_content=False,     # 不抓取网页原始完整HTML正文（省token、省钱）
-        include_images=False,         # 默认聊天不顺带抓图，配图仅在显式请求时走独立链路
-        include_image_descriptions=False,
-    )
-    print("[agent_tools] Tavily 已就绪，web_search 可用")
-except Exception as _tavily_exc:
-    print(f"[agent_tools] Tavily 未配置或不可用，web_search 已降级：{_tavily_exc}")
+_tavily_initialized = False
+_tavily_lock = threading.Lock()
+
+
+def _get_tavily():
+    """首次调用时创建 Tavily 客户端；后续调用复用模块级实例。"""
+    global tavily, _tavily_initialized
+    if _tavily_initialized:
+        return tavily
+    # 测试/调用方可以通过 patch 注入客户端；不要用真实初始化覆盖显式注入值。
+    if tavily is not None:
+        _tavily_initialized = True
+        return tavily
+    with _tavily_lock:
+        if _tavily_initialized:
+            return tavily
+        if tavily is not None:
+            _tavily_initialized = True
+            return tavily
+        try:
+            from langchain_tavily import TavilySearch
+
+            tavily = TavilySearch(
+                max_results=2,                # 最多返回2条搜索结果
+                search_depth="basic",         # 基础搜索深度（快速摘要，advanced会爬网页全文）
+                include_answer=False,         # 不返回Tavily自带的总结答案
+                include_raw_content=False,     # 不抓取网页原始完整HTML正文（省token、省钱）
+                include_images=False,         # 默认聊天不顺带抓图，配图仅在显式请求时走独立链路
+                include_image_descriptions=False,
+            )
+            print("[agent_tools] Tavily 已就绪，web_search 可用")
+        except Exception as _tavily_exc:
+            tavily = None
+            print(f"[agent_tools] Tavily 未配置或不可用，web_search 已降级：{_tavily_exc}")
+        _tavily_initialized = True
+    return tavily
 
 # 国内无法访问或容易返回视频/乱码的海外图源黑名单（省去无谓超时）
 BLOCKED_DOMAINS = (
@@ -122,6 +161,7 @@ def _recipe_image_matches(recipe_name: str, image_bytes: bytes, content_type: st
     这样宁可暂时无图，也不把建筑、风景或其他菜品错配到当前菜谱。
     """
     global _IMAGE_CHECK_LLM#用外部定义的语言模型
+    from langchain_core.messages import HumanMessage
     cache_key = (
         str(recipe_name).strip().casefold(),
         str(content_type or "").strip().casefold(),
@@ -386,7 +426,10 @@ def find_recipe_image(recipe_name: str, allow_ai_fallback: bool = False):#搜索
 
     image_friendly_query = f"{base_query} 菜品 美食 成品图"
     try:
-        result = tavily.invoke({"query": image_friendly_query})#去搜这个关键词
+        client = _get_tavily()
+        if client is None:
+            raise RuntimeError("Tavily 未配置")
+        result = client.invoke({"query": image_friendly_query})#去搜这个关键词
         image_url = to_data_url(
             result.get("images", []),
             recipe_name=base_query,
@@ -449,14 +492,15 @@ def web_search(query: str) -> str:
     base_query = query
     # 为提升成品图命中率，在查询中附加美食/成品图关键词（仍保留原意用于搜文字做法）
     image_friendly_query = f"{query} 美食 成品图"
-    if tavily is None:
+    client = _get_tavily()
+    if client is None:
         return json.dumps(
             {"text": "联网搜索未启用：缺少 TAVILY_API_KEY，请在 .env 中配置后重启后端。",
              "image_url": None, "image_source": "real"},
             ensure_ascii=False,
         )
     try:
-        result = tavily.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
+        result = client.invoke({"query": image_friendly_query})  # 接受搜索到的json结果,拿文本
     except Exception as exc:
         return json.dumps(
             {

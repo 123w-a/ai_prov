@@ -20,6 +20,25 @@ def _make_event_generator(answer_dict):
     return gen
 
 
+class _DelayedChatQueue(queue.Queue):
+    """让消费者处理前两条后暂停，稳定复现 SSE 队列尚未排空的持久化竞态。"""
+
+    def __init__(self):
+        super().__init__()
+        self._immediate_gets = 2
+        self.release_gets = threading.Event()
+
+    def get(self, block=True, timeout=None):
+        if self._immediate_gets > 0:
+            self._immediate_gets -= 1
+        else:
+            self.release_gets.wait(3)
+            import time
+
+            time.sleep(0.15)
+        return super().get(block=block, timeout=timeout)
+
+
 class FillImagesTest(unittest.TestCase):
     """直接跑 event_generator 内部闭包不现实；用可达路径：构造真实 SSE 流验证。
 
@@ -442,7 +461,9 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
 
         def stream_agent(_human_message, _session_id):
             yield "token", "番茄炒蛋做法如下。"
-            yield "answer", json.dumps(answer, ensure_ascii=False)
+            # _stream_agent 的真实协议会把结构化答案作为 dict 发出；
+            # 同时由另一条回归用例覆盖旧的 JSON 字符串调用方。
+            yield "answer", answer
 
         def delayed_image(_name, allow_ai_fallback):
             self.assertTrue(allow_ai_fallback)
@@ -499,6 +520,208 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
         image_index = next(i for i, event in enumerate(events) if "image" in event)
         self.assertLess(answer_index, image_index, events)
         self.assertTrue(any(event.get("finish") for event in events), events)
+
+    def test_failure_note_waits_for_late_image_and_persists_it(self):
+        answer = {
+            "opening": "目前没有可靠的成品图，先给你完整做法。",
+            "recipes": [
+                {
+                    "name": "番茄炒蛋",
+                    "intro": "少油少盐",
+                    "seasonings": [{"name": "盐", "amount": "少许"}],
+                    "steps": ["番茄切块", "炒熟出锅"],
+                    "image_url": None,
+                }
+            ],
+            "image_note": "没有检索到可靠的成品图，这里用文字描述口感。",
+        }
+        release_image = threading.Event()
+
+        def stream_agent(_human_message, _session_id):
+            yield "token", "目前没有可靠的成品图，先给你完整做法。"
+            yield "answer", json.dumps(answer, ensure_ascii=False)
+
+        def slow_image(_name, allow_ai_fallback):
+            self.assertTrue(allow_ai_fallback)
+            release_image.wait(3)
+            return "https://images.test/late.png", "ai"
+
+        update_answer = patch("storage.sessions.update_message_answer", return_value=True)
+        update_answer_mock = update_answer.start()
+        self.addCleanup(update_answer.stop)
+        patches = [
+            patch.object(chat_route, "stream_agent", stream_agent),
+            patch.object(chat_route, "_find_recipe_image_cached", slow_image),
+            patch.object(chat_route, "_find_global_dish_asset", return_value=None),
+            patch.object(chat_route, "_save_global_dish_assets", return_value=None),
+            patch.object(chat_route, "_handle_image", return_value=(None, None, None)),
+            patch.object(chat_route, "_classify_turn_intent", return_value="dish"),
+            patch.object(chat_route, "_resolve_picked_candidate", return_value=None),
+            patch.object(chat_route, "_should_enable_image_pipeline", return_value=True),
+            patch.object(chat_route, "_wants_image", return_value=False),
+            patch.object(chat_route, "_global_asset_prompt", return_value=None),
+            patch.object(chat_route, "build_human_message", return_value="test-message"),
+            patch.object(chat_route, "append_message", return_value=322),
+            patch.object(chat_route, "_IMAGE_THREAD_POLL_TIMEOUT_S", 0.05),
+            patch.object(chat_route, "_IMAGE_THREAD_MAX_WAIT_S", 2.0),
+            patch("storage.memory_candidates.extract_candidates", return_value=[]),
+            patch("storage.memory_candidates.remember_candidates", return_value=None),
+            patch("api.routes.reports_route.record_meal", return_value=None),
+        ]
+        for item in patches:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+
+        from api.main_app import app
+        import time
+
+        release_timer = threading.Timer(0.1, release_image.set)
+        release_timer.start()
+        started = time.monotonic()
+        try:
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/chat",
+                    data={
+                        "session_id": "failure-note-stream-test",
+                        "message": "就做番茄炒蛋，给我完整做法",
+                        "want_image": "1",
+                        "turn_id": "turn-failure-note",
+                    },
+                )
+        finally:
+            elapsed = time.monotonic() - started
+            release_image.set()
+            release_timer.cancel()
+
+        self.assertGreaterEqual(elapsed, 0.08, "SSE 不应在图片补图完成前提前结束")
+        self.assertEqual(response.status_code, 200)
+        events = self._events(response)
+        images = [event["image"] for event in events if "image" in event]
+        self.assertFalse([event for event in events if "image_failed" in event], events)
+        self.assertEqual(len(images), 1, events)
+        self.assertEqual(images[0]["url"], "https://images.test/late.png")
+        image_index = next(i for i, event in enumerate(events) if "image" in event)
+        finish_index = next(i for i, event in enumerate(events) if event.get("finish"))
+        self.assertLess(image_index, finish_index, events)
+
+        persisted_payloads = []
+        for call in update_answer_mock.call_args_list:
+            if len(call.args) < 3:
+                continue
+            try:
+                persisted_payloads.append(json.loads(call.args[2]))
+            except Exception:
+                continue
+        self.assertTrue(
+            any(
+                (payload.get("image_url") == "https://images.test/late.png")
+                and (payload.get("recipes") or [{}])[0].get("image_url")
+                == "https://images.test/late.png"
+                for payload in persisted_payloads
+            ),
+            update_answer_mock.call_args_list,
+        )
+
+
+class ChatRoutePersistenceOrderTest(unittest.TestCase):
+    """候选正文被 SSE 积压时，也必须等消费端排空后再落库，不能存半截。"""
+
+    def _events(self, response):
+        parsed = []
+        for line in response.text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                parsed.append(json.loads(line[6:]))
+            except Exception:
+                continue
+        return parsed
+
+    def test_candidate_third_item_is_persisted_after_sse_backlog_drains(self):
+        candidate_text = (
+            "1. 爆辣小龙虾拌车仔面 —— 香辣过瘾\n"
+            "2. 青椒朝天椒爆炒小龙虾尾 —— 快手下饭\n"
+            "3. 番茄辣炒小龙虾 —— 酸甜提鲜\n"
+        )
+        candidate_payload = {
+            "opening": candidate_text,
+            "answer_kind": "candidates",
+            "candidates": [
+                "爆辣小龙虾拌车仔面",
+                "青椒朝天椒爆炒小龙虾尾",
+                "番茄辣炒小龙虾",
+            ],
+            "recipes": [],
+        }
+        delayed_queue = _DelayedChatQueue()
+
+        def stream_agent(_human_message, _session_id):
+            try:
+                yield "token", "1. 爆辣小龙虾拌车仔面 —— 香辣过瘾\n"
+                yield "token", "2. 青椒朝天椒爆炒小龙虾尾 —— 快手下饭\n"
+                yield "token", "3. 番茄辣炒小龙虾 —— 酸甜提鲜\n"
+                yield "answer", json.dumps(candidate_payload, ensure_ascii=False)
+            finally:
+                delayed_queue.release_gets.set()
+
+        queue_module = type(
+            "_DelayedQueueModule",
+            (),
+            {"Queue": lambda: delayed_queue, "Empty": queue.Empty},
+        )
+        update_answer_patch = patch(
+            "storage.sessions.update_message_answer",
+            return_value=True,
+        )
+        patches = [
+            patch.object(chat_route, "queue", queue_module),
+            patch.object(chat_route, "_PERSIST_CONSUMER_WAIT_S", 2.0),
+            patch.object(chat_route, "stream_agent", stream_agent),
+            patch.object(chat_route, "_handle_image", return_value=(None, None, None)),
+            patch.object(chat_route, "_classify_turn_intent", return_value="recommend"),
+            patch.object(chat_route, "_resolve_picked_candidate", return_value=None),
+            patch.object(chat_route, "_should_enable_image_pipeline", return_value=False),
+            patch.object(chat_route, "_wants_image", return_value=False),
+            patch.object(chat_route, "_global_asset_prompt", return_value=None),
+            patch.object(chat_route, "build_human_message", return_value="test-message"),
+            patch.object(chat_route, "_register_candidate_anchor", return_value=False),
+            patch("storage.sessions.append_message", return_value=77),
+            update_answer_patch,
+            patch("storage.sessions.set_message_candidates", return_value=True),
+            patch("storage.memory_candidates.extract_candidates", return_value=[]),
+            patch("storage.memory_candidates.remember_candidates", return_value=None),
+        ]
+        update_answer = update_answer_patch.start()
+        for item in patches:
+            if item is not update_answer_patch:
+                item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+
+        from api.main_app import app
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat",
+                data={
+                    "session_id": "persist-candidate-backlog-test",
+                    "message": "我有小龙虾，想多点口味，推荐几种做法",
+                    "turn_id": "turn-persist-candidate-backlog",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = self._events(response)
+        self.assertEqual(
+            "".join(event["token"] for event in events if "token" in event),
+            candidate_text,
+        )
+        update_answer.assert_called_once()
+        self.assertEqual(update_answer.call_args.args[0], "persist-candidate-backlog-test")
+        self.assertEqual(update_answer.call_args.args[1], 77)
+        self.assertEqual(update_answer.call_args.args[2], candidate_text)
+        self.assertTrue(any(event.get("finish") for event in events), events)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

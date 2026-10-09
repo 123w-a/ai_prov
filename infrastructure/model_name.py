@@ -2,40 +2,72 @@ import os  # 读取 CHEF_PROVIDER 环境变量（主脑模型选择）
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from .configs import MODEL_CONFIGS, VISION_CONFIGS  # 传入模型参数（已从 .env 加载）
-from langchain_core.language_models import LanguageModelInput
-from langchain_deepseek import ChatDeepSeek  # DeepSeek 原生适配：保留 thinking/reasoning_content
-from langchain_openai import ChatOpenAI  # 创建 LangChain 的 OpenAI 兼容对象
+
+if TYPE_CHECKING:
+    # 仅类型提示使用；langchain_core.language_models 顶层会 import transformers+torch（~3s），
+    # 放到运行时只会拖慢启动，真正的模型构造在 _get_model_classes 里按需加载。
+    from langchain_core.language_models import LanguageModelInput
 
 
 logger = logging.getLogger(__name__)
+_MODEL_CLASSES_LOCK = threading.Lock()
+_MODEL_CLASSES = {}
 
 
-class PatchedChatDeepSeek(ChatDeepSeek):
-    """DeepSeek thinking 多轮补丁：把上一轮 assistant 的 reasoning_content 原样回传。"""
+def _get_model_classes():
+    """延迟加载重模型依赖，避免服务启动时被 langchain_openai/deepseek 拖慢。"""
+    if "deepseek" in _MODEL_CLASSES:
+        return _MODEL_CLASSES["deepseek"], _MODEL_CLASSES["openai"]
+    with _MODEL_CLASSES_LOCK:
+        if "deepseek" not in _MODEL_CLASSES:
+            from langchain_deepseek import ChatDeepSeek
+            from langchain_openai import ChatOpenAI
 
-    def _get_request_payload(
-        self,
-        input_: LanguageModelInput,
-        *,
-        stop: list[str] | None = None,
-        **kwargs,
-    ) -> dict:
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        source_messages = self._convert_input(input_).to_messages()
+            class _PatchedChatDeepSeek(ChatDeepSeek):
+                """DeepSeek thinking 多轮补丁：把上一轮 assistant 的 reasoning_content 原样回传。"""
 
-        for index, message in enumerate(payload.get("messages") or []):
-            if message.get("role") != "assistant":
-                continue
-            source = source_messages[index] if index < len(source_messages) else None
-            reasoning = getattr(source, "additional_kwargs", {}).get("reasoning_content")
-            # DeepSeek thinking 模式要求：带 tool_calls 的 assistant 历史必须
-            # 携带 reasoning_content，哪怕没有思维链也要回传空字符串。
-            if message.get("tool_calls"):
-                message["reasoning_content"] = reasoning or ""
+                def _get_request_payload(
+                    self,
+                    input_: "LanguageModelInput",
+                    *,
+                    stop: list[str] | None = None,
+                    **kwargs,
+                ) -> dict:
+                    payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                    source_messages = self._convert_input(input_).to_messages()
 
-        return payload
+                    for index, message in enumerate(payload.get("messages") or []):
+                        if message.get("role") != "assistant":
+                            continue
+                        source = source_messages[index] if index < len(source_messages) else None
+                        reasoning = getattr(source, "additional_kwargs", {}).get("reasoning_content")
+                        # DeepSeek thinking 模式要求：带 tool_calls 的 assistant 历史必须
+                        # 携带 reasoning_content，哪怕没有思维链也要回传空字符串。
+                        if message.get("tool_calls"):
+                            message["reasoning_content"] = reasoning or ""
+
+                    return payload
+
+            _PatchedChatDeepSeek.__name__ = "PatchedChatDeepSeek"
+            _MODEL_CLASSES["deepseek"] = _PatchedChatDeepSeek
+            _MODEL_CLASSES["openai"] = ChatOpenAI
+        return _MODEL_CLASSES["deepseek"], _MODEL_CLASSES["openai"]
+
+
+def __getattr__(name):
+    """兼容 ``from infrastructure.model_name import ChatOpenAI`` 等类访问。"""
+    if name == "PatchedChatDeepSeek":
+        return _get_model_classes()[0]
+    if name == "ChatDeepSeek":
+        from langchain_deepseek import ChatDeepSeek
+
+        return ChatDeepSeek
+    if name == "ChatOpenAI":
+        return _get_model_classes()[1]
+    raise AttributeError(name)
 
 
 # --------------------------------------------------------------------------- #
@@ -129,7 +161,8 @@ def _build_llm(
 
     # DeepSeek thinking 模型在工具调用后必须把 reasoning_content 原样回传。
     # 通用 ChatOpenAI 会丢弃该字段，第二轮请求直接 400；官方适配类会保留它。
-    llm_class = PatchedChatDeepSeek if chosen == "deepseek" else ChatOpenAI
+    patched_deepseek, openai_class = _get_model_classes()
+    llm_class = patched_deepseek if chosen == "deepseek" else openai_class
     llm = llm_class(**kwargs)
     return llm
 

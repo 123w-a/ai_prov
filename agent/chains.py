@@ -7,8 +7,8 @@ from langchain_core.exceptions import OutputParserException  # LangChain 解析�
 from pydantic import ValidationError  # Pydantic schema 越界/缺字段校验异常
 import os
 import json
+import threading
 
-from infrastructure.model_name import get_langchain_llm
 from .schemas import ChefAnswer#就是要回答的东西得到全部规范
 
 
@@ -73,17 +73,42 @@ STRUCTURE_PROMPT = ChatPromptTemplate.from_messages([#专门的对话式提示�
 
 # --------------------------------------------------------------------------- #
 #  3. 组装 LCEL 链：prompt | llm | parser
-#     温度调低保 JSON 稳定（不要创意要准确）；max_tokens 加大防多道菜时 JSON 被截断
-#     | 是 LCEL 管道运算符：前一环的输出自动成为后一环的输入
+#     延迟到首次结构化调用时才构建模型，避免后端启动被 langchain_openai /
+#     langchain_deepseek 的冷导入拖慢。提示词与解析器在模块导入时仍保持原样。
 # --------------------------------------------------------------------------- #
-structure_llm = get_langchain_llm(
-    os.getenv("STRUCTURE_PROVIDER") or "deepseek",
-    temperature=0.2,
-    max_tokens=2048,
-    model_name=os.getenv("STRUCTURE_MODEL_NAME") or None,
-)
+structure_llm = None
+chef_answer_chain = None
+_structure_lock = threading.Lock()
 
-chef_answer_chain = STRUCTURE_PROMPT | structure_llm | chef_parser#这里接受通过链后的 PydanticOutputParser类示例
+
+def _get_structure_llm():
+    """首次结构化调用时创建模型；后续复用同一实例。"""
+    global structure_llm
+    if structure_llm is not None:
+        return structure_llm
+    with _structure_lock:
+        if structure_llm is None:
+            from infrastructure.model_name import get_langchain_llm
+
+            structure_llm = get_langchain_llm(
+                os.getenv("STRUCTURE_PROVIDER") or "deepseek",
+                temperature=0.2,
+                max_tokens=2048,
+                model_name=os.getenv("STRUCTURE_MODEL_NAME") or None,
+            )
+    return structure_llm
+
+
+def _get_chef_answer_chain():
+    """首次结构化调用时组装 prompt | llm | parser，避免导入期构建链。"""
+    global chef_answer_chain
+    if chef_answer_chain is not None:
+        return chef_answer_chain
+    structure_model = _get_structure_llm()
+    with _structure_lock:
+        if chef_answer_chain is None:
+            chef_answer_chain = STRUCTURE_PROMPT | structure_model | chef_parser
+    return chef_answer_chain
 
 
 # --------------------------------------------------------------------------- #
@@ -133,12 +158,12 @@ def build_structured_answer(context: str) -> ChefAnswer:
         t0 = _time.time()
         try:
             if attempt == 0:
-                result = chef_answer_chain.invoke({"context": context})
+                result = _get_chef_answer_chain().invoke({"context": context})
                 print(f"[structure] attempt0 ok { _time.time()-t0:.1f}s")
                 return result
             # 重试：专用修正链，把上次错误反馈给模型自我修正
             print(f"[structure] attempt{attempt} retry after { _time.time()-t0:.1f}s err={str(last_err)[:80]}")
-            result = (_STRUCTURE_FIX_PROMPT | structure_llm | chef_parser).invoke(
+            result = (_STRUCTURE_FIX_PROMPT | _get_structure_llm() | chef_parser).invoke(
                 {"context": context, "error": str(last_err)}
             )
             print(f"[structure] attempt{attempt} fix ok { _time.time()-t0:.1f}s")

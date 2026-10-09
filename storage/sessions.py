@@ -34,6 +34,7 @@ from pathlib import Path
 from datetime import datetime
 
 from infrastructure.paths import SESSIONS_DIR as PROJECT_SESSIONS_DIR
+from services.image_notes import build_image_note
 
 from .utils import atomic_write_json
 
@@ -437,15 +438,17 @@ def update_answer_image_by_dish(sid, record_id, dish_name, image_url, image_ai, 
             if not ans.get("image_requested"):
                 return False
             changed = False
+            clean_note = build_image_note(bool(image_ai), note)
             for recipe in ans.get("recipes") or []:
                 if recipe.get("name") == dish_name and not recipe.get("image_url"):
                     recipe["image_url"] = image_url
                     recipe["image_ai_generated"] = bool(image_ai)
+                    recipe["image_note"] = clean_note
                     changed = True
             if changed:
                 ans["image_url"] = image_url
                 ans["image_ai_generated"] = bool(image_ai)
-                ans["image_note"] = note
+                ans["image_note"] = clean_note
                 m["answer"] = json.dumps(ans, ensure_ascii=False)
                 m["image_url"] = image_url  # 与实时链路的顶层字段保持一致
                 _write_session(data)
@@ -551,12 +554,12 @@ def update_answer_image_at_index(sid, record_id, recipe_index, image_url, image_
             recipe = recipes[recipe_index]
             recipe["image_url"] = image_url
             recipe["image_ai_generated"] = bool(image_ai)
-            recipe["image_note"] = note
+            recipe["image_note"] = build_image_note(bool(image_ai), note)
             ans["image_requested"] = True
             if recipe_index == 0:
                 ans["image_url"] = image_url
                 ans["image_ai_generated"] = bool(image_ai)
-                ans["image_note"] = note
+                ans["image_note"] = recipe["image_note"]
             m["answer"] = json.dumps(ans, ensure_ascii=False)
             if recipe_index == 0:
                 m["image_url"] = image_url

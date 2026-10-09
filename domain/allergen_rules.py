@@ -135,6 +135,13 @@ OPTIONAL_ALLERGENS: Dict[str, Dict] = {
         "maybe_hidden": [],
         "exclusions": [],
     },
+    "mango": {
+        "label": "芒果及其制品",
+        "aliases": ["芒果", "芒果干", "芒果汁", "杨枝甘露"],
+        "hidden": [],
+        "maybe_hidden": [],
+        "exclusions": ["芒果核"],
+    },
     "mollusc": {
         "label": "软体动物",
         "aliases": ["蛤", "牡蛎", "扇贝", "鱿鱼", "章鱼", "鲍鱼", "墨鱼"],
@@ -155,20 +162,24 @@ OPTIONAL_ALLERGENS: Dict[str, Dict] = {
 _NORMALIZATION_ALIASES = {
     "gluten": [
         "gluten", "麸质", "麸质过敏", "小麦过敏", "含麸质", "含麸质的谷物",
+        "酱油", "生抽", "老抽",
     ],
     "crustacean": [
         "甲壳纲", "甲壳类", "甲壳动物", "虾过敏", "蟹过敏", "海鲜过敏",
     ],
     "fish": ["鱼类", "鱼过敏", "海鲜", "海味", "河鲜"],
-    "egg": ["蛋类", "鸡蛋过敏", "蛋过敏"],
+    "egg": ["蛋类", "鸡蛋过敏", "蛋过敏", "沙拉酱"],
     "peanut": ["花生过敏"],
-    "soy": ["大豆过敏", "黄豆过敏", "豆制品", "大豆制品", "豆类制品"],
+    "soy": [
+        "大豆过敏", "黄豆过敏", "豆制品", "大豆制品", "豆类制品",
+        "酱油", "生抽", "老抽",
+    ],
     "milk": [
         "乳制品", "奶制品", "乳类", "乳糖不耐", "乳糖不耐受", "牛奶过敏",
-        "奶过敏", "乳过敏",
+        "奶过敏", "乳过敏", "沙拉酱",
     ],
     "nuts": ["坚果过敏", "树坚果", "果仁"],
-    "sesame": ["芝麻过敏"],
+    "sesame": ["芝麻过敏", "麻酱"],
     "mollusc": ["软体动物", "贝类"],
     "sulphite": ["亚硫酸盐", "二氧化硫"],
 }
@@ -182,11 +193,19 @@ _EXPANSIONS = {
 }
 
 _UNRESOLVED_ALREADY_LOGGED = set()
+_NO_ALLERGEN_RE = re.compile(
+    r"^(?:无|没有|无过敏|没有过敏|无过敏原|没有过敏原|未发现过敏)$"
+)
 
 
 def _clean(text: object) -> str:
     """统一空白、大小写和常见分隔符，避免输入格式影响归一结果。"""
     return re.sub(r"[\s,，、;；|/]+", "", str(text or "")).lower()
+
+
+def _is_no_allergen_value(text: object) -> bool:
+    """档案中的明确“无过敏”占位值不应进入规则或未解析告警。"""
+    return bool(_NO_ALLERGEN_RE.fullmatch(str(text or "").strip()))
 
 
 def _log_unresolved(text: object) -> None:
@@ -233,6 +252,8 @@ def normalize_allergens(text: object, log_unresolved: bool = True) -> List[str]:
     无法归一时记录告警与 allergen_unresolved.log（在项目外的日志目录），同时由调用方继续
     保留原提示词约束，不能静默失效。
     """
+    if _is_no_allergen_value(text):
+        return []
     compact = _clean(text)
     if not compact:
         return []
@@ -282,6 +303,8 @@ def normalize_allergen(text: str) -> str | None:
 
 def allergen_label(allergen: object) -> str:
     """把 code 或自由文本转成稳定的中文展示名。"""
+    if _is_no_allergen_value(allergen):
+        return ""
     codes = normalize_allergens(allergen, log_unresolved=False)
     if codes:
         return _all_rules(use_optional=True)[codes[0]].get("label", codes[0])
@@ -308,6 +331,7 @@ _NEGATION_HEAD = (
 _NEGATION_MODIFIER = r"(?:额外|继续|实际|主动|也|仍|与|和|同|会|要|能|可|再){0,4}"
 _NEGATION_ACTION = (
     r"(?:添加|加入|使用|采用|食用|饮用|保留|出现|含有|接触|共用|"
+    r"放入|放进|拌入|掺入|做成|制作成|改造为|改为|换成|"
     r"用煮过|用焯过|用泡过|煮过|焯过|泡过|碰|进入|进|加|放|含|吃|喝|用)?"
 )
 _NEGATION_QUANTITY = r"(?:任何|所有|各种|全部|一点|丝毫)*"
@@ -443,6 +467,85 @@ def _first_match(
     return matches[0][2]
 
 
+_ADDITION_REQUEST_RE = re.compile(
+    r"(?:加入|添加|放入|放进|拌入|掺入|做成|制作成|改造为|改为|换成|加|放)"
+)
+_PROFILE_ADDITION_RE = re.compile(
+    r"(?:家庭画像|家庭成员|成员画像|画像|家庭档案|建档|档案)"
+    r"|(?:把|将)(?:他|她|这位|爸爸|妈妈|爷爷|奶奶|哥哥|姐姐|弟弟|妹妹|孩子|成员|本人)"
+    r"\s*(?:加入|添加|纳入|建档)"
+    r"|(?:加入|添加|纳入)(?:到|至|进)?"
+    r"(?:家庭画像|家庭成员|成员画像|画像|家庭档案|建档|档案)"
+)
+
+
+def _allergen_search_terms(value: object) -> List[str]:
+    """把档案中的自由文本过敏原转成可匹配的原文词。"""
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    terms = [raw]
+    core = re.split(
+        r"(?:过敏史|过敏原|过敏|不耐受|忌口|禁忌)",
+        raw,
+        maxsplit=1,
+    )[0]
+    core = re.sub(r"^(?:对|是|为)", "", core).strip()
+    if core:
+        terms.append(core)
+    label = allergen_label(raw)
+    if label:
+        terms.append(label)
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def requested_allergen_additions(
+    text: object,
+    profile_allergens: Iterable[object],
+) -> List[str]:
+    """返回用户本轮明确要求加入、且命中家庭画像过敏原的展示名。
+
+    只做确定性原文匹配：未归一过敏原（例如“酒精”）也必须生效；同时排除
+    “不加/不要加/避免”等否定语境，避免把安全说明误判成新增风险。
+    """
+    source = str(text or "").strip()
+    if not source:
+        return []
+
+    hits: List[str] = []
+    for allergen in profile_allergens or []:
+        for term in _allergen_search_terms(allergen):
+            for match in re.finditer(re.escape(term), source):
+                if _is_negated_mention(source, match.start()):
+                    continue
+                if _is_postfix_negated_mention(source, match.end()):
+                    continue
+                left = max(
+                    (source.rfind(boundary, 0, match.start()) for boundary in "。；;！？!?\n，,"),
+                    default=-1,
+                )
+                right_candidates = [
+                    source.find(boundary, match.end())
+                    for boundary in "。；;！？!?\n，,"
+                    if source.find(boundary, match.end()) >= 0
+                ]
+                right = min(right_candidates) if right_candidates else len(source)
+                clause = source[left + 1:right]
+                # “把妹妹加入家庭画像：对花生过敏”是在新增画像，
+                # 不是要求把花生放进菜里。安全硬拦截只处理菜品加入语境。
+                if _PROFILE_ADDITION_RE.search(clause):
+                    continue
+                if not _ADDITION_REQUEST_RE.search(clause):
+                    continue
+                label = allergen_label(allergen)
+                if label and label not in hits:
+                    hits.append(label)
+                break
+            if hits and hits[-1] == allergen_label(allergen):
+                break
+    return hits
+
+
 # 未归一过敏原的统一话术：既不假装有确定性保护，也不硬猜词表造成误报。
 UNRESOLVED_ALLERGEN_ADVICE = "未纳入标准规则，仅按原文提醒，需人工确认"
 
@@ -463,6 +566,11 @@ def resolve_allergens(
     for raw in allergens or []:
         text = str(raw or "").strip()
         if not text:
+            continue
+        # 档案里的“无 / 没有过敏”是占位值，不是「未归一的过敏原」。
+        # 少了这道守卫，爸爸（allergens: ["无"]）每次都会被弹一条
+        # 「「无」未纳入标准过敏原规则」的假告警——既像 bug 又稀释真告警。
+        if _is_no_allergen_value(text):
             continue
         found = [code for code in normalize_allergens(text) if code in rules]
         if not found:

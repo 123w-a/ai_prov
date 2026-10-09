@@ -73,7 +73,11 @@ def _member_rows(members: list) -> list[dict]:
     return rows
 
 
-def _match_member(user_text: str, members: list[dict]) -> tuple[str, str]:
+def _match_member(
+    user_text: str,
+    members: list[dict],
+    active_member_id: str = "",
+) -> tuple[str, str]:
     for member in members:
         name = member["name"]
         if name and name in user_text:
@@ -83,8 +87,15 @@ def _match_member(user_text: str, members: list[dict]) -> tuple[str, str]:
             for member in members:
                 if member["name"] == canonical or any(alias in member["name"] for alias in aliases):
                     return member["id"], member["name"]
-            # 明确提到家庭成员但档案里没有该成员时，不能回退到 active member。
-            return "", ""
+            # 明确提到档案里没有的家庭成员时，保留名字，等待用户确认是否建档。
+            return "", canonical
+    if active_member_id:
+        active = next(
+            (member for member in members if member["id"] == active_member_id),
+            None,
+        )
+        if active is not None:
+            return active["id"], active["name"]
     if len(members) == 1:
         return members[0]["id"], members[0]["name"]
     return "", ""
@@ -104,6 +115,7 @@ def _candidate(
         "id": f"mc_{uuid.uuid4().hex[:10]}",
         "member": member,
         "member_id": member_id,
+        "is_new_member": bool(member and not member_id),
         "dimension": dimension,
         "value": value,
         "severity": severity,
@@ -117,13 +129,18 @@ def _candidate(
     }
 
 
-def extract_candidates(user_text: str, members: list, session_id: str = "") -> list[dict]:
+def extract_candidates(
+    user_text: str,
+    members: list,
+    session_id: str = "",
+    active_member_id: str = "",
+) -> list[dict]:
     """从持续性表达中提取候选；临时表达只作为 once，不生成长期候选。"""
     text = str(user_text or "").strip()
     if not text:
         return []
     rows = _member_rows(members)
-    member_id, member = _match_member(text, rows)
+    member_id, member = _match_member(text, rows, active_member_id=active_member_id)
     if any(word in text for word in _TEMPORARY_WORDS):
         return []
 
@@ -166,10 +183,21 @@ def extract_candidates(user_text: str, members: list, session_id: str = "") -> l
             found.append(("allergen", word, "hard"))
 
     existing = _load()
+    # 已确认画像是成员级长期事实，可跨会话去重；pending/once 只属于产生它的
+    # 会话，不能拿另一会话的待确认候选挡掉当前轮，否则当前会话的硬护栏读不到它。
     existing_keys = {
-        (str(item.get("member_id") or ""), str(item.get("dimension") or ""), str(item.get("value") or ""))
+        (
+            str(item.get("member_id") or "")
+            or f"name:{str(item.get('member') or '').strip()}",
+            str(item.get("dimension") or ""),
+            str(item.get("value") or ""),
+        )
         for item in existing
-        if item.get("status") in ("pending", "confirmed")
+        if item.get("status") == "confirmed"
+        or (
+            item.get("status") in ("pending", "once")
+            and str(item.get("session_id") or "") == str(session_id or "")
+        )
     }
     for member_row in rows:
         profile = member_row.get("profile") or {}
@@ -190,7 +218,7 @@ def extract_candidates(user_text: str, members: list, session_id: str = "") -> l
                     existing_keys.add((member_key, dimension, text_value))
     candidates = []
     for dimension, value, severity in found:
-        key = (member_id, dimension, value)
+        key = (member_id or f"name:{member}", dimension, value)
         if key in existing_keys:
             continue
         candidates.append(
@@ -300,6 +328,42 @@ def confirm(candidate_id: str) -> dict:
         ),
         None,
     )
+    if member is None and not member_id and member_name:
+        if len(family.get("members", [])) >= 8:
+            return {}
+        member = {
+            "id": f"m_{uuid.uuid4().hex[:8]}",
+            "name": member_name[:20],
+            "profile": {
+                "basic": {
+                    "height_cm": None,
+                    "weight_kg": None,
+                    "age": None,
+                    "sex": "",
+                },
+                "conditions": [],
+                "allergens": [],
+                "restricts": [],
+                "goal": "",
+                "diet_style": "",
+                "dislikes": [],
+                "taste_notes": [],
+            },
+        }
+        family["members"].append(member)
+        candidate["member_id"] = member["id"]
+        candidate["member"] = member["name"]
+    # 兼容旧版本未记录成员的候选。成员面板的当前激活对象是唯一可用的
+    # 确定性上下文，补齐候选归属后再写入画像。
+    if member is None and not member_id and not member_name:
+        active_id = str(family.get("active_id") or "")
+        member = next(
+            (item for item in family.get("members", []) if item.get("id") == active_id),
+            None,
+        )
+        if member is not None:
+            candidate["member_id"] = member["id"]
+            candidate["member"] = member["name"]
     if member is None:
         return {}
 

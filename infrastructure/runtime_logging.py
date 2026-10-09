@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
@@ -31,12 +32,35 @@ def configure_logging() -> None:
         formatter = logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s %(message)s"
         )
-        file_handler = RotatingFileHandler(
+        log_path = LOG_PATH
+        file_handler = None
+        candidates = (
             LOG_PATH,
-            maxBytes=MAX_BYTES,
-            backupCount=BACKUP_COUNT,
-            encoding="utf-8",
+            LOG_PATH.with_name(f"{LOG_PATH.stem}-{os.getpid()}{LOG_PATH.suffix}"),
+            Path(__file__).resolve().parents[1] / "logs" / f"app-{os.getpid()}.log",
         )
+        for candidate in candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                file_handler = RotatingFileHandler(
+                    candidate,
+                    maxBytes=MAX_BYTES,
+                    backupCount=BACKUP_COUNT,
+                    encoding="utf-8",
+                )
+                log_path = candidate
+                if candidate != LOG_PATH:
+                    print(
+                        f"[logging] {LOG_PATH} 不可用，当前进程改写入 {candidate}",
+                        flush=True,
+                    )
+                break
+            except PermissionError:
+                continue
+        if file_handler is None:
+            # 最后兜底仍保留日志，不让日志目录权限阻断应用导入或测试收集。
+            file_handler = logging.StreamHandler()
+            log_path = Path("")
         file_handler.setFormatter(formatter)
         file_handler.setLevel(logging.INFO)
 
@@ -44,7 +68,7 @@ def configure_logging() -> None:
         root.setLevel(logging.INFO)
         if not any(
             isinstance(handler, RotatingFileHandler)
-            and Path(getattr(handler, "baseFilename", "")) == LOG_PATH
+            and Path(getattr(handler, "baseFilename", "")) == log_path
             for handler in root.handlers
         ):
             root.addHandler(file_handler)

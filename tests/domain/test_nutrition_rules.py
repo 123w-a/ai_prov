@@ -13,6 +13,13 @@ class TestDetectConditions(unittest.TestCase):
     def test_hypertension(self):
         self.assertEqual(detect_conditions("我血压高"), ["高血压"])
 
+    def test_hypertension_variants(self):
+        for text in ("我血压偏高", "我血压有点高", "我血压不稳"):
+            self.assertEqual(detect_conditions(text), ["高血压"], text)
+
+    def test_weight_control(self):
+        self.assertEqual(detect_conditions("我想控制体重"), ["肥胖"])
+
     def test_pregnancy(self):
         self.assertEqual(detect_conditions("我是孕妇"), ["孕期"])
 

@@ -1,5 +1,6 @@
 """统一的本轮产品形态决策。"""
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -13,6 +14,34 @@ TURN_INTENTS = {
     "home_service",
     "other",
 }
+
+
+_TASTE_ADJUSTMENT_MARKERS = (
+    "更辣", "加辣", "多辣", "辣一点", "辣一些", "辣点", "少辣", "不辣",
+    "别太辣", "减辣", "更咸", "加盐", "多盐", "咸一点", "咸一些", "少盐",
+    "淡一点", "减盐", "少油", "低油", "低盐", "更甜", "加糖", "多甜",
+    "甜一点", "少糖", "更酸", "加酸", "酸一点", "更麻", "加麻", "麻一点",
+    "清淡一点", "清淡些", "清爽一点", "重口",
+    "加辣版", "少油版", "少盐版", "调整版", "改良版",
+)
+_TASTE_ADJUSTMENT_CONTEXT_PATTERN = re.compile(
+    r"(?:调整|改善|改变|改一下|改改|换个|换换|提升|降低|减少|增加|再|更|偏|有点|稍微|不太)"
+    r".{0,4}(?:口味|口感)"
+    r"|(?:口味|口感).{0,4}"
+    r"(?:调整|改善|改变|改一下|改改|换个|换换|提升|降低|减少|增加|"
+    r"重|淡|轻|嫩|脆|软|辣|咸|甜|酸|麻|清爽|清淡|柔和)"
+)
+
+
+def is_taste_adjustment_request(text: str) -> bool:
+    """识别围绕上一道菜的口味、口感或版本调整。"""
+    current = str(text or "").strip()
+    if not current:
+        return False
+    return (
+        any(marker in current for marker in _TASTE_ADJUSTMENT_MARKERS)
+        or bool(_TASTE_ADJUSTMENT_CONTEXT_PATTERN.search(current))
+    )
 
 
 def looks_like_dining_request(text: str) -> bool:
@@ -167,6 +196,11 @@ def classify_turn_intent(
         return "confirm_one"
     if has_prior_candidates and candidate_index:
         return "confirm_one"
+    if (
+        (has_prior_recipe or has_prior_candidates)
+        and is_taste_adjustment_request(current)
+    ):
+        return "change_one"
 
     confirm_words = ("就做", "就吃", "来这个", "做这个", "吃这个", "定这个", "选这个", "就它", "就这道")
     if any(word in current for word in confirm_words) or (

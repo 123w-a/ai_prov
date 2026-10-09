@@ -11,7 +11,6 @@ from services.oss import upload_to_oss  # 把图片上传到 OSS 并返回公网
 from agent_tools import get_file  # 复用工具读取本地偏好文件（沙箱已限制目录）
 from storage.feedback import recent_down_dishes  # 近期被踩菜名 → 推荐约束注入
 from pathlib import Path
-from services.vision import describe_image
 
 # 用户长期偏好文件路径（白名单目录 data/ 下）
 _PREFS_PATH = str(Path(__file__).resolve().parent / "data" / "preferences.txt")
@@ -170,6 +169,13 @@ def image_bytes_to_oss_url(image_bytes, mime_type="image/jpeg"):
     return upload_to_oss(image_bytes, mime_type)
 
 
+def describe_image(image_url: str, user_text: str = "") -> str:
+    """延迟加载视觉模型，同时保留模块级可替换入口。"""
+    from services.vision import describe_image as _describe_image
+
+    return _describe_image(image_url, user_text)
+
+
 def build_human_message(text, image_url=None, location_context=None, session_id=None):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
     所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
@@ -211,6 +217,7 @@ def build_human_message(text, image_url=None, location_context=None, session_id=
         )
     if image_url:
         try:
+            # 视觉模型只在真的带图请求时加载；纯文字对话无需承担其导入成本。
             vision_text = describe_image(image_url, text)
             text = (
                 f"{text}\n\n"
@@ -392,6 +399,9 @@ def _stream_agent(message, session_id):
     gate_asked = False  # 充分性门控已追问时，抑制后续节点的重复正文
     stream_gates: dict = {}  # 每个节点一份控制 JSON 门闸（见 _ControlJsonGate）
     turn_usage = new_turn_usage()  # 本轮 token 用量累计桶（收尾时落 usage.jsonl）
+    emitted_output = False
+    last_ai_content = ""
+    stream_failed = False
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
     # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
     # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
@@ -417,6 +427,7 @@ def _stream_agent(message, session_id):
                             if event:
                                 # 预算耗尽路线不会进入 structure_answer，收口正文必须
                                 # 在这里显式转发，否则前端与落库都会拿到空回答。
+                                emitted_output = True
                                 yield event
                         continue
                     elif node == "verify_answer":
@@ -425,10 +436,14 @@ def _stream_agent(message, session_id):
                         if status is not None:
                             print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
                     elif node in ("chef_think", "ask_user"):
+                        msgs = (update or {}).get("messages") or []
+                        if msgs and type(msgs[-1]).__name__ == "AIMessage":
+                            last_ai_content = _normalize_stream_content(msgs[-1].content).strip()
                         # 这一条消息已结束：门闸收尾（控制 JSON 丢弃、正常正文补发），
                         # 并释放状态，等下一条消息到来时重建。漏了这步会在换条时残留扣留。
                         pending_out = _flush_gate(stream_gates, node)
                         if pending_out:
+                            emitted_output = True
                             yield ("token", pending_out)
                     elif node == "allergen_block":
                         msgs = (update or {}).get("messages") or []
@@ -439,6 +454,7 @@ def _stream_agent(message, session_id):
                                 # 过敏原阻断节点不经过 structure_answer，必须在这里
                                 # 显式转发安全文案或结构化答案，否则前端会只看到空回答
                                 # 或把 ChefAnswer JSON 当成普通正文。
+                                emitted_output = True
                                 yield event
                         continue
                     if node != "structure_answer":
@@ -455,6 +471,7 @@ def _stream_agent(message, session_id):
                             raw = "".join(
                                 block.get("text", "") for block in raw if isinstance(block, dict)
                             )
+                        emitted_output = True
                         yield ("answer", raw)
                 continue
             message_chunk, metadata = payload
@@ -479,14 +496,37 @@ def _stream_agent(message, session_id):
                 gate_asked = True
                 guarded = _guarded_token(stream_gates, node, message_chunk, content)
                 if guarded:
+                    emitted_output = True
                     yield ("token", guarded)
             elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
                 if gate_asked:
                     continue
                 guarded = _guarded_token(stream_gates, node, message_chunk, content)
                 if guarded:
+                    emitted_output = True
                     yield ("token", guarded)
+    except Exception:
+        stream_failed = True
+        raise
     finally:
+        # 某些模型会把完整 ChefAnswer 只作为 chef_think 的消息输出，随后又被
+        # 控制 JSON 门闸按设计吞掉。若本轮没有任何可展示事件，交给既有的
+        # 结构化识别恢复一次，避免路由层把零输出误报成超时。
+        if not emitted_output and not stream_failed and last_ai_content:
+            fallback_event = _stream_update_content(last_ai_content)
+            if fallback_event:
+                # 候选 payload 平时不能走 answer 通道，否则前端会把控制 JSON
+                # 当成结构化卡片；只有零输出兜底时，把它的 opening 恢复成正文。
+                if (
+                    fallback_event[0] == "answer"
+                    and isinstance(fallback_event[1], dict)
+                    and fallback_event[1].get("answer_kind") == "candidates"
+                ):
+                    opening = str(fallback_event[1].get("opening") or "").strip()
+                    fallback_event = ("token", opening) if opening else None
+                if fallback_event:
+                    emitted_output = True
+                    yield fallback_event
         # 无论正常收尾还是中途异常，都要把本轮用量落盘（record_turn_usage 内部静默失败）
         record_turn_usage(turn_usage, session_id=session_id, node="_stream_agent")
 

@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from infrastructure.configs import KB_CONFIG
 from rag.store import resolve_project_path
+from infrastructure.startup_state import startup_status
 
 
 router = APIRouter()
@@ -76,3 +77,12 @@ def live():
 def ready():
     ok, payload = readiness_payload()
     return JSONResponse(status_code=200 if ok else 503, content=payload)
+
+
+@router.get("/health/status")
+def status():
+    """返回不阻塞的启动阶段，便于本地调试首问等待原因。"""
+    return {
+        "status": "ok",
+        "startup": startup_status(),
+    }

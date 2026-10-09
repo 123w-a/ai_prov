@@ -116,6 +116,29 @@ class TestToolBudgetStream(unittest.TestCase):
         self.assertIn(("answer", payload), events)
         self.assertNotIn(("token", json.dumps(payload, ensure_ascii=False)), events)
 
+    def test_suppressed_control_json_is_recovered_when_no_other_output_exists(self):
+        payload = {
+            "opening": "已根据你的约束整理好候选。",
+            "answer_kind": "recipe",
+            "recipes": [{"name": "番茄鸡胸肉"}],
+        }
+
+        def fake_stream(*args, **kwargs):
+            raw = json.dumps(payload, ensure_ascii=False)
+            yield (
+                "messages",
+                (AIMessageChunk(content=raw, id="m1"), {"langgraph_node": "chef_think"}),
+            )
+            yield (
+                "updates",
+                {"chef_think": {"messages": [AIMessage(content=raw)]}},
+            )
+
+        with patch.object(main.agent, "stream", side_effect=fake_stream):
+            events = list(main._stream_agent(HumanMessage(content="推荐一道菜"), "fallback-thread"))
+
+        self.assertIn(("answer", payload), events)
+
 
 class TestImageTextProxy(unittest.TestCase):
     @patch("main.describe_image", return_value="可见鸡蛋 3 个、青菜一把。")

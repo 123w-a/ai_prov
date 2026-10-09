@@ -46,6 +46,8 @@ class SpecificDishRequestTest(unittest.TestCase):
             "推荐一道清蒸鲈鱼",
             "我想吃鲈鱼",
             "做个红烧肉",
+            "我想做一个北京烤鸭",
+            "我有鸭子，想做一个北京烤鸭怎么做",
             "油炸花生米怎么做",
             "油炸花生米做法",
         ]:
@@ -83,6 +85,33 @@ class SpecificDishRequestTest(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertFalse(g.is_specific_dish_request(text))
+
+    def test_meal_decision_request_is_not_a_dish_name(self):
+        for text in [
+            "请根据这张图片帮我做膳食决策",
+            "根据图片帮我做饮食决策",
+            "按冰箱里的食材做个用餐决策",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(g.is_specific_dish_request(text))
+                messages = [HumanMessage(content=text)]
+                self.assertTrue(g._is_candidate_turn(messages))
+                self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+                self.assertFalse(g._wants_recipe_images(messages))
+
+    def test_visual_context_does_not_pollute_user_intent(self):
+        user_text = "请根据这张图片帮我做膳食决策"
+        message_text = (
+            f"{user_text}\n\n"
+            "【视觉模型识别结果（客观事实，仅用于本轮推理）】\n"
+            "图片里有番茄和鸡蛋，看起来可以做番茄炒蛋。"
+        )
+        messages = [HumanMessage(content=message_text)]
+
+        self.assertEqual(g._current_request_text(message_text), user_text)
+        self.assertTrue(g._is_candidate_turn(messages))
+        self.assertFalse(chat_route._should_enable_image_pipeline(user_text, None))
+        self.assertFalse(g._wants_recipe_images(messages))
 
     def test_search_command_with_named_dish_is_specific(self):
         self.assertTrue(
@@ -128,6 +157,9 @@ class CandidateIndexParseTest(unittest.TestCase):
             ("第2道", 2),
             ("第三款", 3),
             ("选2", 2),
+            ("选2吧", 2),
+            ("选 2 吧，可以辣一点", 2),
+            ("选二吧", 2),
             ("就做2", 2),
             ("就要2号", 2),
             ("第十个", 10),
@@ -155,6 +187,47 @@ class CandidateNameExtractTest(unittest.TestCase):
         text = "1. 这是一句没有分隔符也没有菜名的很长的说明文字，应当被丢弃掉\n2. 青菜豆腐汤 —— 清淡"
         self.assertEqual(g._extract_candidate_names(text), ["青菜豆腐汤"])
 
+    def test_extract_bare_numbered_dish_names(self):
+        text = "1. 番茄鸡胸肉\n2. 青菜豆腐汤\n3. 鸡蛋羹"
+        self.assertEqual(
+            g._extract_candidate_names(text),
+            ["番茄鸡胸肉", "青菜豆腐汤", "鸡蛋羹"],
+        )
+
+    def test_bare_numbered_recipe_steps_are_not_candidates(self):
+        text = "1. 切番茄\n2. 加盐\n3. 放入锅中"
+        self.assertEqual(g._extract_candidate_names(text), [])
+
+    def test_numbered_bold_recipe_steps_are_not_candidates(self):
+        text = (
+            "1. **番茄去皮**：番茄划十字，热水烫后去皮。\n"
+            "2. **爆辣底**：锅中放少量油，下辣椒和蒜。\n"
+            "3. **炒番茄**：下番茄炒出汁。\n"
+            "4. **加水煮**：加水和少量盐煮开。\n"
+            "5. **淋蛋花**：淋入蛋液。\n"
+            "6. **调味**：少油少盐，保持清爽。"
+        )
+        self.assertEqual(g._extract_candidate_names(text), [])
+
+    def test_action_named_dishes_remain_candidates(self):
+        text = (
+            "1. 炒青菜 —— 清爽省事，5分钟出锅\n"
+            "2. 蒸鲈鱼 —— 少油嫩滑，适合晚餐\n"
+            "3. 拌黄瓜 —— 免开火，口感脆爽"
+        )
+        self.assertEqual(
+            g._extract_candidate_names(text),
+            ["炒青菜", "蒸鲈鱼", "拌黄瓜"],
+        )
+
+    def test_unbolded_colon_recipe_steps_are_not_candidates(self):
+        text = (
+            "1. 切番茄：番茄切块备用。\n"
+            "2. 炒番茄：下锅炒出汁。\n"
+            "3. 加盐：少量调味后出锅。"
+        )
+        self.assertEqual(g._extract_candidate_names(text), [])
+
 
 class CandidateTurnTest(unittest.TestCase):
     """泛推荐轮才进候选阶段；点名一道菜、要图、健康问答都不进"""
@@ -179,6 +252,40 @@ class CandidateTurnTest(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertTrue(g._is_candidate_turn(self._m(text)))
+
+    def test_explicit_multi_count_recommend_is_candidate_turn(self):
+        for text in [
+            "今晚想用番茄做几道菜，先推荐三道让我选",
+            "推荐3道菜让我选",
+            "给我三道番茄菜",
+            "推荐10道家常菜",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(g.is_specific_dish_request(text))
+                self.assertTrue(g._is_candidate_turn(self._m(text)))
+                self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+                self.assertFalse(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_single_dish_recommendation_stays_specific(self):
+        text = "推荐一道番茄炒蛋"
+        self.assertTrue(g.is_specific_dish_request(text))
+        self.assertFalse(g._is_candidate_turn(self._m(text)))
+
+    def test_what_can_i_eat_recommendation_stays_candidate_turn(self):
+        text = (
+            "【实时状态：昨晚没睡好、今天肌肉酸痛、肠胃不太舒服、很累没力气】\n"
+            "这样的话我还能吃什么，推荐几道菜品"
+        )
+        messages = self._m(text)
+
+        self.assertTrue(g._is_candidate_turn(messages))
+        self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
+        self.assertFalse(g._wants_recipe_images(messages))
+
+    def test_explicit_food_safety_question_is_not_candidate_turn(self):
+        for text in ["这个能吃吗", "这个可以吃吗", "能不能吃火锅", "海鲜后能喝牛奶吗"]:
+            with self.subTest(text=text):
+                self.assertFalse(g._is_candidate_turn(self._m(text)))
 
     def test_information_questions_are_not_candidate_turn(self):
         for text in [
@@ -211,6 +318,57 @@ class CandidateTurnTest(unittest.TestCase):
         for text in ["我想吃番茄炒蛋", "就做番茄炒蛋"]:
             with self.subTest(text=text):
                 self.assertFalse(g._is_candidate_turn(self._m(text)))
+
+    def test_taste_adjustment_after_delivered_card_is_not_candidate_turn(self):
+        card = {
+            "opening": "番茄鸡蛋汤（减重版）",
+            "answer_kind": "recipe",
+            "recipes": [{
+                "name": "番茄鸡蛋汤（减重版）",
+                "image_url": "http://oss/tomato-soup.png",
+            }],
+        }
+        for text in (
+            "就 吃这道菜品，能做道更辣些吗",
+            "就吃这道菜品，想再改善一下口感",
+        ):
+            with self.subTest(text=text):
+                messages = [
+                    HumanMessage(content="2"),
+                    AIMessage(content=json.dumps(card, ensure_ascii=False)),
+                    HumanMessage(content=text),
+                ]
+                self.assertEqual(g._classify_turn_intent(messages), "change_one")
+                self.assertFalse(g._is_candidate_turn(messages))
+
+    def test_taste_adjustment_never_reuses_previous_card(self):
+        """口感调整轮必须回到 Agent 重新生成，不能路由层直接复用旧卡片。"""
+        with patch("storage.sessions.find_recent_recipe_for_image") as find_mock:
+            result = chat_route._reusable_confirmation_answer(
+                "sid",
+                "就吃这道菜品，想再改善一下口感",
+            )
+
+        self.assertIsNone(result)
+        find_mock.assert_not_called()
+
+    def test_taste_adjustment_markers_require_change_context(self):
+        for text in [
+            "改善口感",
+            "调整口味",
+            "换个口味",
+            "口感嫩一点",
+            "口味太重了",
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(g._is_taste_adjustment_request(text))
+        for text in [
+            "口味虾怎么做",
+            "这道菜口感怎么样",
+            "口味很好",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(g._is_taste_adjustment_request(text))
 
     def test_change_one_without_named_dish_returns_to_candidates(self):
         self.assertTrue(g._is_candidate_turn(self._m("没胃口换一道")))
@@ -331,6 +489,146 @@ class CandidateTurnTest(unittest.TestCase):
         self.assertEqual(g._extract_selected_candidate("推荐几道清淡少油的菜"), "")
 
 
+class RequestedAllergenAdditionTest(unittest.TestCase):
+    """第3道候选被明确改造加入家庭过敏原时，目标、拦截文案和护栏必须同源。"""
+
+    def _messages(self):
+        return [HumanMessage(content=(
+            "【已选定候选：番茄蒸水蛋】\n"
+            "对第3道菜品进行改造，加入芒果这个水果，做成一个甜品可以吗"
+        ))]
+
+    def test_injected_target_stays_authoritative(self):
+        messages = self._messages()
+        self.assertEqual(
+            g.selected_target_for_turn(messages),
+            (3, "番茄蒸水蛋"),
+        )
+        self.assertFalse(g._index_ref_without_target(messages))
+
+    def test_deterministic_refusal_names_selected_dish_and_skips_llm(self):
+        messages = self._messages()
+        with (
+            patch("agent.graph.llm_with_tools") as mocked_llm,
+            patch("agent.graph._allergens_for_audit", return_value=["芒果"]),
+        ):
+            result = g.chef_agent_node({"messages": messages})
+
+        mocked_llm.invoke.assert_not_called()
+        reply = str(result["messages"][0].content)
+        self.assertIn("第3道已选定为「番茄蒸水蛋」", reply)
+        self.assertIn("芒果及其制品是硬约束", reply)
+        self.assertNotIn("去皮", reply)
+        self.assertNotIn("压泥", reply)
+
+    def test_verify_blocks_unresolved_profile_allergen(self):
+        messages = self._messages()
+        with patch("agent.graph._allergens_for_audit", return_value=["芒果"]):
+            result = g.verify_answer_node({
+                "messages": messages + [AIMessage(content="不能加入芒果。")],
+                "verify_attempts": 0,
+                "session_id": "mango-session",
+            })
+
+        self.assertEqual(result["verify_status"], "blocked")
+        self.assertIn("过敏原:芒果及其制品", result["verify_violated"])
+
+    def test_final_block_payload_names_dish_and_blocks_allergen(self):
+        messages = self._messages() + [AIMessage(content="不能加入芒果。")]
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["芒果"]),
+            patch("agent.graph.suggest_safe_dishes", return_value=["清炒青菜"]),
+        ):
+            result = g.allergen_block_node({
+                "messages": messages,
+                "verify_status": "blocked",
+                "verify_violated": ["过敏原:芒果及其制品"],
+                "session_id": "mango-session",
+            })
+
+        payload = json.loads(result["messages"][0].content)
+        self.assertIn("第3道已选定为「番茄蒸水蛋」", payload["opening"])
+        self.assertIn("家庭画像中已确认芒果及其制品过敏", payload["opening"])
+        self.assertEqual(payload["recipes"], [])
+        blocked = [
+            item for item in payload["guardrails"]
+            if item["condition"] == "过敏原:芒果及其制品"
+        ]
+        self.assertEqual(len(blocked), 1)
+        self.assertEqual(blocked[0]["status"], "blocked")
+
+
+class SelectedTargetOpeningPreservationTest(unittest.TestCase):
+    """选定目标结构化时，原始流式讲解仍由 opening 原样承载。"""
+
+    TARGET = "番茄青椒炒小龙虾（微辣版）"
+
+    def _messages(self):
+        return [
+            HumanMessage(content="我有小龙虾、朝天椒、车仔面、番茄和青椒，想要清淡一点"),
+            AIMessage(content=json.dumps(_candidates_payload([
+                "清蒸小龙虾",
+                "番茄青椒小龙虾汤面",
+                self.TARGET,
+            ]), ensure_ascii=False)),
+            HumanMessage(content=(
+                f"【已选定候选：{self.TARGET}】\n"
+                "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开。）\n\n"
+                "就要第3道菜品"
+            )),
+            AIMessage(content=(
+                "抱歉，我目前无法确认你说的第3道菜品：上一轮候选清单没有出现在"
+                "本轮上下文里。请你把第3道菜名直接发我。"
+            )),
+        ]
+
+    def _run_structure(self, answer, opening=None):
+        messages = self._messages()
+        if opening is not None:
+            messages[-1] = AIMessage(content=opening)
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            return g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+    def test_original_opening_is_preserved_without_authoritative_override(self):
+        result = self._run_structure(_chef_answer([self.TARGET]))
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
+        self.assertIn("无法确认", payload["opening"])
+        self.assertIn("清单没有出现在本轮上下文里", payload["opening"])
+        self.assertNotIn("opening_authoritative", payload)
+        # chef_tip 是模型提供的独立字段；为空时必须保持为空，不能用
+        # recipe.intro 或代码生成的新文案偷偷替换既有输出。
+        self.assertEqual(payload["chef_tip"], "")
+
+    def test_empty_chef_tip_is_not_replaced_by_code(self):
+        answer = _chef_answer([self.TARGET])
+        self.assertEqual(answer.chef_tip, "")
+
+    def test_normal_selected_opening_is_preserved(self):
+        opening = f"好的，已按你选的第3道「{self.TARGET}」整理，下面把调料和火候收细一点。"
+        result = self._run_structure(_chef_answer([self.TARGET]), opening=opening)
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["opening"], opening)
+        self.assertNotIn("opening_authoritative", payload)
+
+    def test_mismatched_recipe_does_not_claim_selected_target(self):
+        result = self._run_structure(_chef_answer(["清蒸小龙虾"]))
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertIn("无法确认", payload["opening"])
+        self.assertNotIn("opening_authoritative", payload)
+
+
 class CandidateIntentTest(unittest.TestCase):
     """有候选锚点时「第2个」才算点菜确认，没有锚点不能瞎认"""
 
@@ -382,6 +680,75 @@ class CandidateIntentTest(unittest.TestCase):
             HumanMessage(content="就第5个"),
         ]
         self.assertIsNone(g.resolve_candidate_pick(msgs))
+
+
+class CandidateAckWithoutPickTest(unittest.TestCase):
+    """候选后的「行 / xing」只表示收到，不代表选定某一道菜。"""
+
+    def _messages(self, ack):
+        return [
+            HumanMessage(content="我有鸡胸肉和青菜，帮我看看能做什么"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤", "鸡胸肉蔬菜沙拉"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content=ack),
+        ]
+
+    def test_pure_ack_is_detected_only_with_candidates(self):
+        for ack in ("xing", "行", "好的。", "可以呀", "嗯嗯", "OK", "没问题"):
+            with self.subTest(ack=ack):
+                self.assertTrue(g._is_candidate_ack_without_pick(self._messages(ack)))
+        self.assertFalse(
+            g._is_candidate_ack_without_pick([HumanMessage(content="xing")])
+        )
+
+    def test_explicit_pick_is_never_treated_as_pure_ack(self):
+        for text in ("2", "2吧", "就第2个", "行，就第2个", "青菜豆腐汤"):
+            with self.subTest(text=text):
+                msgs = self._messages(text)
+                self.assertFalse(g._is_candidate_ack_without_pick(msgs))
+
+    def test_chef_short_circuits_without_calling_model(self):
+        with patch("agent.graph.llm_with_tools") as mocked_llm:
+            result = g.chef_agent_node({"messages": self._messages("xing")})
+        mocked_llm.invoke.assert_not_called()
+        reply = str(result["messages"][-1].content)
+        self.assertIn("还没指定哪一道", reply)
+        self.assertIn("1 到 3", reply)
+
+    def test_structure_re_registers_candidates_without_card_or_image(self):
+        msgs = self._messages("xing")
+        msgs.append(AIMessage(
+            content="收到，不过还没指定哪一道。直接回复 1 到 3 的序号就行。"
+        ))
+        state = {
+            "messages": msgs,
+            "verify_status": "ok",
+            "verify_violated": [],
+        }
+        with (
+            patch("agent.graph.build_structured_answer") as build_mock,
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(state)
+        build_mock.assert_not_called()
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(
+            payload["candidates"],
+            ["鸡胸肉炒青菜", "青菜豆腐汤", "鸡胸肉蔬菜沙拉"],
+        )
+        self.assertEqual(payload["recipes"], [])
+        self.assertFalse(payload["image_requested"])
+
+    def test_verify_route_keeps_ack_turn_for_candidate_re_registration(self):
+        state = {
+            "messages": self._messages("xing"),
+            "verify_status": "ok",
+            "verify_violated": [],
+        }
+        self.assertEqual(g.verify_route(state), "ok")
 
 
 class RoutePickedCandidateTest(unittest.TestCase):
@@ -458,6 +825,42 @@ class StructureAnswerCandidateTest(unittest.TestCase):
         self.assertEqual(payload["recipes"], [])
         self.assertEqual(payload["candidates"], names)
         self.assertFalse(payload["image_requested"])
+
+    def test_complete_candidate_list_skips_structured_llm(self):
+        """正文清单已完整时直接登记候选，不再进入卡片结构化链。"""
+        with (
+            patch("agent.graph.build_structured_answer") as build_mock,
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(self._state(CANDIDATE_LIST_TEXT))
+
+        build_mock.assert_not_called()
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(
+            payload["candidates"],
+            ["鸡胸肉炒青菜", "青菜豆腐汤", "鸡胸肉蔬菜沙拉"],
+        )
+        self.assertEqual(payload["recipes"], [])
+
+    def test_incomplete_candidate_list_keeps_structured_fallback(self):
+        """正文不足两道时仍保留结构化回退，避免漏掉模型后续给出的候选。"""
+        opening = "1. 鸡胸肉炒青菜 —— 高蛋白低脂，10分钟出锅"
+        answer = _chef_answer(["鸡胸肉炒青菜", "青菜豆腐汤"])
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer) as build_mock,
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._wants_multiple_recipes", return_value=True),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(self._state(opening))
+
+        build_mock.assert_called_once_with("上下文")
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["answer_kind"], "candidates")
+        self.assertEqual(payload["candidates"], ["鸡胸肉炒青菜", "青菜豆腐汤"])
+        self.assertEqual(payload["recipes"], [])
 
     def test_candidate_payload_survives_structure_parse_failure(self):
         """正文已展示编号候选时，结构化菜谱链解析失败不能吞掉候选锚点。
@@ -562,6 +965,65 @@ class StructureAnswerConclusionSourceTest(unittest.TestCase):
         self.assertEqual([recipe["name"] for recipe in payload["recipes"]], ["番茄鸡蛋汤"])
 
 
+class StructureAnswerSpecificDishRegressionTest(unittest.TestCase):
+    """具体菜品请求必须进入单卡片链路，异常时也要留下可定位日志。"""
+
+    def test_xihu_fish_howto_keeps_recipe_and_image_intent(self):
+        text = "西湖醋鱼怎么做"
+        messages = [
+            HumanMessage(content=text),
+            AIMessage(content="西湖醋鱼要用鱼、姜、醋和少量糖来调味。"),
+        ]
+        self.assertTrue(g.is_specific_dish_request(text))
+        self.assertFalse(g.is_non_recipe_information_request(text))
+        self.assertFalse(g._is_candidate_turn(messages))
+        self.assertTrue(g._wants_recipe_images(messages))
+
+        answer = _chef_answer(["西湖醋鱼"])
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer) as build_mock,
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+        build_mock.assert_called_once()
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual([recipe["name"] for recipe in payload["recipes"]], ["西湖醋鱼"])
+        self.assertTrue(payload["image_requested"])
+        self.assertIsNone(payload["recipes"][0]["image_url"])
+
+    def test_structured_exception_is_logged_without_changing_fallback(self):
+        messages = [
+            HumanMessage(content="西湖醋鱼怎么做"),
+            AIMessage(content="西湖醋鱼要用鱼、姜、醋和少量糖来调味。"),
+        ]
+        with (
+            patch(
+                "agent.graph.build_structured_answer",
+                side_effect=RuntimeError("structured provider unavailable"),
+            ),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            self.assertLogs("agent.graph", level="ERROR") as captured,
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+        self.assertEqual(result, {"messages": []})
+        log_text = "\n".join(captured.output)
+        self.assertIn("structure_answer_node failed", log_text)
+        self.assertIn("exc_type=RuntimeError", log_text)
+        self.assertIn("latest_text='西湖醋鱼怎么做'", log_text)
+        self.assertIn("is_candidate_turn=False", log_text)
+        self.assertIn("wants_images=True", log_text)
+
+
 class VerifyCandidateTurnTest(unittest.TestCase):
     """候选轮只硬审计菜名，安全说明中的过敏原词不能触发无谓重生成。"""
 
@@ -661,6 +1123,41 @@ class AskTurnNoCardTest(unittest.TestCase):
             "messages": [AIMessage(content="番茄炒蛋：先打蛋，下锅翻炒 3 分钟。")],
         }
         self.assertEqual(g.verify_route(state), "ok")
+
+    def test_explicit_recipe_detail_request_restores_structured_route(self):
+        messages = [
+            HumanMessage(content="我有鸡胸肉和青菜"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content=(
+                "【已选定候选：鸡胸肉炒青菜】\n"
+                "用1吧，父亲高血压，少放盐。请再给我完整做法和食材用量"
+            )),
+            AIMessage(content="要不要我再帮你调整成更清淡的版本？"),
+        ]
+        request = "用1吧，父亲高血压，少放盐。请再给我完整做法和食材用量"
+        self.assertTrue(g._is_explicit_recipe_detail_request(request))
+        self.assertEqual(
+            g.verify_route({
+                "verify_status": "degraded",
+                "messages": messages,
+            }),
+            "degraded",
+        )
+
+    def test_plain_taste_followup_remains_plain(self):
+        request = "这道菜少放一点盐，可以吗？"
+        self.assertFalse(g._is_explicit_recipe_detail_request(request))
+
+    def test_ingredient_howto_still_requires_candidate_selection(self):
+        request = "鸡胸肉怎么做"
+        self.assertFalse(g._is_explicit_recipe_detail_request(request))
+        self.assertFalse(g._is_recipe_detail_followup(
+            [HumanMessage(content=request)],
+            request,
+        ))
 
 
 class RestaurantSceneTest(unittest.TestCase):
@@ -1067,6 +1564,164 @@ class BareIndexPickTest(unittest.TestCase):
                 chat_route._resolve_picked_candidate("s1", "3吧，但是可以辣一点"),
                 "番茄牛腩",
             )
+            self.assertEqual(
+                chat_route._resolve_picked_candidate("s1", "选2吧"),
+                "青菜豆腐汤",
+            )
+
+    def test_agent_layer_resolves_selection_command_with_particle(self):
+        msgs = [
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤", "番茄牛腩"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content="选2吧"),
+        ]
+        self.assertEqual(g.resolve_candidate_pick(msgs), (2, "青菜豆腐汤"))
+        self.assertTrue(g._is_dish_pick_turn(msgs))
+
+    def test_simple_pick_keeps_full_opening_and_uses_model(self):
+        msgs = [
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤", "番茄牛腩"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content=(
+                "【已选定候选：青菜豆腐汤】\n"
+                "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
+                "不得改名、不得替换成别的菜。）\n\n"
+                "【配图开关：开启】\n"
+                "选2吧"
+            )),
+        ]
+        with patch("agent.graph.llm_with_tools") as mocked_llm:
+            mocked_llm.invoke.return_value = AIMessage(
+                content="好的，已按你选的第2道「青菜豆腐汤」整理完整做法。"
+            )
+            result = g.chef_agent_node({"messages": msgs})
+
+        mocked_llm.invoke.assert_called_once()
+        reply = str(result["messages"][0].content)
+        self.assertEqual(reply, "好的，已按你选的第2道「青菜豆腐汤」整理完整做法。")
+
+    def test_pick_with_extra_adjustment_still_uses_model(self):
+        msgs = [
+            AIMessage(content=json.dumps(
+                _candidates_payload(["鸡胸肉炒青菜", "青菜豆腐汤", "番茄牛腩"]),
+                ensure_ascii=False,
+            )),
+            HumanMessage(content=(
+                "【已选定候选：青菜豆腐汤】\n"
+                "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开，"
+                "不得改名、不得替换成别的菜。）\n\n"
+                "选2吧，可以辣一点"
+            )),
+        ]
+        fake = AIMessage(content="好的，按你选的青菜豆腐汤，把辣度再提高一点。")
+        with patch("agent.graph.llm_with_tools") as mocked_llm:
+            mocked_llm.invoke.return_value = fake
+            result = g.chef_agent_node({"messages": msgs})
+
+        mocked_llm.invoke.assert_called_once()
+        self.assertEqual(result["messages"][0].content, fake.content)
+
+
+class TasteAdjustmentFollowupTest(unittest.TestCase):
+    """已交付单菜卡片后的口感追轮必须锁定原菜并更新卡片与配图。"""
+
+    DISH = "青菜炒鸡蛋"
+
+    def _messages(self, *, with_opening=False):
+        messages = [
+            HumanMessage(content="选2吧"),
+            AIMessage(content=json.dumps({
+                "opening": "好的，已按你选的第2道「青菜炒鸡蛋」整理完整做法。",
+                "answer_kind": "recipe",
+                "recipes": [{
+                    "name": self.DISH,
+                    "intro": "青菜脆嫩、鸡蛋蓬松",
+                    "steps": ["鸡蛋中火炒至刚凝固", "青菜大火快炒后回锅"],
+                    "image_url": "https://images.test/qingcai.png",
+                    "image_ai_generated": True,
+                }],
+            }, ensure_ascii=False)),
+            HumanMessage(content="再改善一下口感"),
+        ]
+        if with_opening:
+            messages.append(AIMessage(content="可以把鸡蛋炒得更嫩，青菜最后大火快炒。"))
+        return messages
+
+    def test_followup_target_is_the_latest_single_card(self):
+        self.assertEqual(
+            g._taste_adjustment_followup_target(self._messages()),
+            self.DISH,
+        )
+        self.assertTrue(g._wants_recipe_images(self._messages()))
+
+    def test_taste_praise_does_not_become_adjustment_followup(self):
+        messages = self._messages()
+        messages[-1] = HumanMessage(content="感觉这道会更好吃")
+        self.assertFalse(g._is_taste_adjustment_request("感觉这道会更好吃"))
+        self.assertEqual(g._taste_adjustment_followup_target(messages), "")
+
+    def test_followup_uses_plain_llm_and_pins_dish(self):
+        fake = AIMessage(content="保持青菜炒鸡蛋不变，把鸡蛋炒得更嫩一些。")
+        with (
+            patch("agent.graph.llm") as plain_llm,
+            patch("agent.graph.summary_llm") as summary_llm,
+            patch("agent.graph.llm_with_tools") as tool_llm,
+        ):
+            summary_llm.invoke.return_value = fake
+            result = g.chef_agent_node({"messages": self._messages()})
+
+        tool_llm.invoke.assert_not_called()
+        plain_llm.invoke.assert_not_called()
+        summary_llm.invoke.assert_called_once()
+        system_text = str(summary_llm.invoke.call_args.args[0][0].content)
+        self.assertIn(self.DISH, system_text)
+        self.assertIn("禁止换成别的菜", system_text)
+        self.assertIn("不要调用工具", system_text)
+        self.assertIn("完整可执行做法", system_text)
+        self.assertIn("更新原菜谱卡片", system_text)
+        self.assertEqual(result["messages"], [fake])
+
+    def test_followup_builds_updated_single_card(self):
+        with (
+            patch("agent.graph.build_structured_answer",
+                  return_value=_chef_answer(["模型误命名的菜"])) as build_mock,
+            patch("agent.graph._build_structure_context",
+                  return_value=("调整后的完整做法", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": self._messages(with_opening=True),
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+        build_mock.assert_called_once_with("调整后的完整做法")
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["recipes"][0]["name"], self.DISH)
+        self.assertTrue(payload["image_requested"])
+
+    def test_followup_question_still_builds_updated_card(self):
+        messages = self._messages(with_opening=True)
+        messages[-1] = AIMessage(content="这样调整后会更清淡，你觉得可以吗？")
+        with (
+            patch("agent.graph.build_structured_answer",
+                  return_value=_chef_answer(["模型误命名的菜"])),
+            patch("agent.graph._build_structure_context",
+                  return_value=("调整后的完整做法", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["recipes"][0]["name"], self.DISH)
 
 
 class SelectedDishWithQuestionTest(unittest.TestCase):
@@ -1699,7 +2354,7 @@ class OccasionHintTest(unittest.TestCase):
         self.assertIn("过敏原与致命禁忌照旧不退让", rule)
 
     def test_candidate_template_declares_dimension_and_bottom_line(self):
-        """模板必须同时含：维度优先级 / 约 30 字理由 / 人性化 / 过敏原底线 / opening 收短。"""
+        """候选模板保留短候选理由，但不把它混同为完整菜谱讲解。"""
         tpl = g.CANDIDATE_LIST_RULE_TEMPLATE.format(count=3)
         for key in ["用途/场合", "约 30 字", "永不退让", "不是「能不能吃」", "人性化", "25 字以内"]:
             with self.subTest(key=key):

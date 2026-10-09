@@ -11,6 +11,7 @@ import time
 import uuid
 
 from infrastructure.runtime_logging import configure_logging
+from infrastructure.startup_state import set_knowledge_base_status
 
 configure_logging()
 
@@ -40,6 +41,7 @@ def _warmup_knowledge_base() -> None:
     import time
 
     started = time.time()
+    set_knowledge_base_status("starting")
     try:
         from rag.retriever import get_retriever
 
@@ -47,12 +49,25 @@ def _warmup_knowledge_base() -> None:
         retriever._ensure_bm25()             # 构建 BM25 索引
         retriever._ensure_reranker()         # 加载 bge-reranker 重排模型（失败自动跳过）
         retriever.store.search("知识库预热", n_results=1)  # 走一次真实向量检索
+        set_knowledge_base_status("ready")
         print(f"[warmup] 知识库预热完成，用时 {time.time() - started:.1f}s（reranker={'on' if retriever._reranker else 'off'}）", flush=True)
     except Exception as exc:  # 预热失败不阻塞服务启动，首次提问时再惰性加载
+        set_knowledge_base_status("degraded", str(exc))
         print(f"[warmup] 知识库预热失败，知识库降级为仅文本检索（将在首次提问时重试）：{exc}", flush=True)
 
 
-threading.Thread(target=_warmup_knowledge_base, name="kb-warmup", daemon=True).start()
+def _start_knowledge_base_warmup() -> None:
+    """在 FastAPI 启动阶段再预热知识库，避免模块导入被重依赖拖慢。"""
+    threading.Thread(
+        target=_warmup_knowledge_base,
+        name="kb-warmup",
+        daemon=True,
+    ).start()
+
+
+@app.on_event("startup")
+def _startup_tasks() -> None:
+    _start_knowledge_base_warmup()
 
 
 # —— 失败图自动补图队列：网络抖动期没能出图的菜，后台每 10 分钟扫一轮补上 ——

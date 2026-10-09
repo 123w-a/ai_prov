@@ -52,6 +52,49 @@ class MemoryCandidateTest(unittest.TestCase):
         memory_candidates.remember_candidates(candidates)
         self.assertEqual(memory_candidates.get_pending()[0]["status"], "pending")
 
+    def test_unqualified_expression_uses_active_member(self):
+        candidates = memory_candidates.extract_candidates(
+            "以后不要吃辣",
+            self._members(),
+            active_member_id="brother",
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["member"], "弟弟")
+        self.assertEqual(candidates[0]["member_id"], "brother")
+
+    def test_unknown_explicit_member_does_not_fall_back_to_active_member(self):
+        candidates = memory_candidates.extract_candidates(
+            "爸爸以后不要吃辣",
+            self._members(),
+            active_member_id="brother",
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["member"], "爸爸")
+        self.assertEqual(candidates[0]["member_id"], "")
+        self.assertTrue(candidates[0]["is_new_member"])
+
+    def test_confirm_unknown_member_creates_profile_without_switching_active(self):
+        family = {
+            "version": 2,
+            "active_id": "brother",
+            "members": [
+                {"id": "brother", "name": "弟弟", "profile": {}},
+            ],
+        }
+        self.profile_path.write_text(json.dumps(family, ensure_ascii=False), encoding="utf-8")
+        candidates = memory_candidates.extract_candidates(
+            "爸爸对花生过敏",
+            family["members"],
+            active_member_id="brother",
+        )
+        memory_candidates.remember_candidates(candidates)
+        confirmed = memory_candidates.confirm(candidates[0]["id"])
+        self.assertEqual(confirmed["status"], "confirmed")
+        saved = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["active_id"], "brother")
+        dad = next(item for item in saved["members"] if item["name"] == "爸爸")
+        self.assertIn("花生", dad["profile"]["allergens"])
+
     def test_confirm_writes_profile_deterministically(self):
         family = {
             "version": 2,
@@ -75,6 +118,35 @@ class MemoryCandidateTest(unittest.TestCase):
         saved = json.loads(self.profile_path.read_text(encoding="utf-8"))
         grandpa = next(item for item in saved["members"] if item["id"] == "grandpa")
         self.assertIn("花生", grandpa["profile"]["allergens"])
+
+    def test_confirm_legacy_unbound_candidate_uses_active_member(self):
+        family = {
+            "version": 2,
+            "active_id": "dad",
+            "members": [
+                {"id": "brother", "name": "弟弟", "profile": {}},
+                {"id": "dad", "name": "爸爸", "profile": {}},
+            ],
+        }
+        self.profile_path.write_text(
+            json.dumps(family, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        candidates = memory_candidates.extract_candidates(
+            "以后不要吃辣",
+            family["members"],
+            active_member_id="dad",
+        )
+        candidate = candidates[0]
+        candidate["member"] = ""
+        candidate["member_id"] = ""
+        memory_candidates.remember_candidates(candidates)
+        confirmed = memory_candidates.confirm(candidate["id"])
+        self.assertEqual(confirmed["member"], "爸爸")
+        self.assertEqual(confirmed["member_id"], "dad")
+        saved = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        dad = next(item for item in saved["members"] if item["id"] == "dad")
+        self.assertIn("不吃辣", dad["profile"]["taste_notes"])
 
     def test_multiple_allergens_in_one_statement_are_all_candidates(self):
         candidates = memory_candidates.extract_candidates(

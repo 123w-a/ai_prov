@@ -14,8 +14,18 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from domain.allergen_rules import audit_allergens
-from rag.query_transform import hyde_transform, multi_query_transform
-from rag.retriever import search as search_knowledge_base
+
+
+def _search_knowledge_base(query: str, *, n_results: int = 3, filter=None, transform=None):
+    """延迟加载 RAG 依赖。
+
+    ``agent_tools`` 会随 Agent 一起导入。若在这里直接导入检索器，
+    服务启动阶段就会被 Chroma、sentence-transformers 和 torch 拖慢；
+    只有真正调用知识库工具时再加载这些依赖。
+    """
+    from rag.retriever import search
+
+    return search(query, n_results=n_results, filter=filter, transform=transform)
 
 
 # 查询转换（RAG.md 第 5.4 讲）：由 Agent 层注入真实 LLM 后启用，默认关闭（离线安全）。
@@ -41,6 +51,8 @@ def set_query_transform_llm(llm, mode: str = "multi", n: int = 3) -> None:#把�
 def _build_transform():#返回一个可以直接用的涵数造出一台打印机lambda
     if _query_transform_llm is None:
         return None
+    from rag.query_transform import hyde_transform, multi_query_transform
+
     if _query_transform_mode == "hyde":
         return lambda q: hyde_transform(q, _query_transform_llm)
     return lambda q: multi_query_transform(q, _query_transform_llm, n=_query_transform_n)
@@ -81,7 +93,7 @@ def nutrition_kb_search(query: str, n_results: int = 3, source_filter: str = "")
     import json
 
     flt = {"source": source_filter} if source_filter else None
-    result = search_knowledge_base(#原始数据+想返回几条+画好圈子中找是我一开始打好的标签，这个涵数是包了一层适配器的LLM这里是语义转换后再检索
+    result = _search_knowledge_base(#原始数据+想返回几条+画好圈子中找是我一开始打好的标签，这个涵数是包了一层适配器的LLM这里是语义转换后再检索
         query, n_results=n_results, filter=flt, transform=_build_transform()#即转换又查询检索
     )
     if result.error:
@@ -129,7 +141,7 @@ def healthy_remix(recipe_text: str) -> str:
             continue
         evidence = None
         try:
-            res = search_knowledge_base(kw, n_results=1, transform=_build_transform())
+            res = _search_knowledge_base(kw, n_results=1, transform=_build_transform())
             if not res.error and res.hits:
                 h = res.hits[0]
                 evidence = {

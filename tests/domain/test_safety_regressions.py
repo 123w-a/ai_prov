@@ -67,10 +67,10 @@ class OptionalAllergenTest(unittest.TestCase):
         self.assertIn("交叉接触", rows[0]["reason"])
 
     def test_unresolved_allergen_becomes_pending_not_eatable(self):
-        """芒果/酒精这类没有规则词表的过敏原：不能判「可吃」，要判「待确认」。"""
+        """仍未纳入规则的过敏原不能判「可吃」，要判「待确认」。"""
         rows = build_matrix(
-            [{"name": "芒果班戟", "ingredients": "芒果"}],
-            [{"name": "奶奶", "profile": {"allergens": ["芒果"]}}],
+            [{"name": "酒酿甜品", "ingredients": "酒精"}],
+            [{"name": "奶奶", "profile": {"allergens": ["酒精"]}}],
         )
         self.assertEqual(rows[0]["verdict"], "待确认")
         self.assertIn("需人工确认", rows[0]["reason"])
@@ -79,13 +79,13 @@ class OptionalAllergenTest(unittest.TestCase):
         """未归一过敏原是「覆盖缺口」，不该把无关菜品也标成需调整。"""
         rows = build_matrix(
             [{"name": "白灼基围虾", "ingredients": "基围虾"}],
-            [{"name": "奶奶", "profile": {"allergens": ["芒果"]}}],
+            [{"name": "奶奶", "profile": {"allergens": ["酒精"]}}],
         )
         self.assertEqual(rows[0]["verdict"], "可吃")
 
     def test_unresolved_allergen_is_visible_in_adjustments(self):
         violations, adjustments = audit_constraint(
-            "芒果班戟", [{"member": "奶奶", "dimension": "allergen", "value": "芒果"}]
+            "酒酿甜品", [{"member": "奶奶", "dimension": "allergen", "value": "酒精"}]
         )
         self.assertEqual(violations, [])
         self.assertTrue(
@@ -132,7 +132,12 @@ class MemberConflictGuardrailTest(unittest.TestCase):
 
     def test_pending_matrix_row_surfaces_as_warn(self):
         matrix = [
-            {"dish": "芒果班戟", "member": "奶奶", "verdict": "待确认", "reason": "芒果：需人工确认"}
+            {
+                "dish": "酒酿甜品",
+                "member": "奶奶",
+                "verdict": "待确认",
+                "reason": "酒精：未纳入标准规则，仅按原文提醒，需人工确认",
+            }
         ]
         items = agent_graph._build_guardrails("今晚吃什么", "ok", [], dish_matrix=matrix)
         warns = [item for item in items if item.status == "warn"]

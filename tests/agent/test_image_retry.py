@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from services import image_retry_queue as q
+from services.image_notes import AI_IMAGE_NOTE
 from storage import sessions as sessions_store
 
 
@@ -58,7 +59,8 @@ class ImageRetryQueueTest(unittest.TestCase):
         self.assertEqual(ans["recipes"][0]["image_url"], "https://oss/ai.png")
         self.assertTrue(ans["recipes"][0]["image_ai_generated"])
         self.assertEqual(ans["recipes"][1]["image_url"], "https://x/y.jpg")  # 有图不被覆盖
-        self.assertIn("后台自动补图", ans["image_note"])
+        self.assertIn(AI_IMAGE_NOTE, ans["image_note"])
+        self.assertIn("如与实际成品有出入", ans["image_note"])
         self.assertEqual(rec["image_url"], "https://oss/ai.png")
 
     def test_cooldown_prevents_repeat(self):

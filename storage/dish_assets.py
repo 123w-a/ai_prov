@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from infrastructure.paths import DATA_DIR
+from services.image_notes import build_image_note
 
 from .utils import atomic_write_json
 
@@ -142,7 +143,10 @@ def update_dish_asset_image(name: str, image_url: str, image_ai_generated: bool 
             return False
         asset["image_url"] = image_url
         asset["image_ai_generated"] = bool(image_ai_generated)
-        asset["image_note"] = image_note or asset.get("image_note") or ""
+        asset["image_note"] = build_image_note(
+            bool(image_ai_generated),
+            image_note or asset.get("image_note") or "",
+        )
         recipe = asset.get("recipe")
         if isinstance(recipe, dict):
             recipe["image_url"] = image_url

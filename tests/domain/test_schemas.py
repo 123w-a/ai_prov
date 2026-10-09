@@ -31,7 +31,6 @@ class TestRecipeSchema(unittest.TestCase):
                    seasonings=[], steps=["a"])
         self.assertFalse(r.image_ai_generated, "默认非 AI 生成")
 
-
 class TestChefAnswerSchema(unittest.TestCase):
     """顶层回答卡片校验"""
 

@@ -369,6 +369,17 @@ def pending_candidates(session_id: Optional[str] = None):
     # 每次只把尚未主动提议过的候选交给前端；服务端也限制批量，避免历史积压一次弹出。
     fresh = [item for item in candidates if int(item.get("prompt_count") or 0) == 0][:2]
     mark_asked([str(item.get("id") or "") for item in fresh])
+    # 只兼容旧版本真正没有成员上下文的候选；明确提到但未建档的成员
+    # 会保留候选里的名字，不能被当前激活成员覆盖。
+    with _family_lock():
+        family = _read_family() or _migrate({})
+    active = _find_member(family, str(family.get("active_id") or ""))
+    if active is not None:
+        for item in fresh:
+            if not item.get("member_id") and not item.get("member"):
+                item["member_id"] = active["id"]
+                item["member"] = active["name"]
+            item["is_new_member"] = bool(item.get("member") and not item.get("member_id"))
     return {"code": 200, "data": {"candidates": fresh}}
 
 

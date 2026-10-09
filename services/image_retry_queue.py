@@ -14,6 +14,7 @@ import time
 
 from storage.sessions import SESSIONS_DIR, update_answer_image_by_dish
 from agent_tools import find_recipe_image
+from services.image_notes import build_image_note
 
 RETRY_INTERVAL_S = 600      # 每轮扫描间隔 10 分钟
 FIRST_ROUND_DELAY_S = 60    # 启动后 1 分钟做首轮（给实时链路让路）
@@ -113,10 +114,13 @@ def backfill_stats_once(max_items: int = MAX_ITEMS_PER_ROUND) -> dict:
             _cooldown.pop(dish, None)  # 成功即清除，下次扫描自然因有图跳过
             _prune_cooldown_locked(time.time())
         ai = source == "ai"
-        note = (
-            "AI 生成示意图（后台自动补图）；如与实际成品有出入，以文字描述为准"
-            if ai
-            else "后台自动补图：联网检索成品图"
+        note = build_image_note(
+            ai,
+            (
+                "后台自动补图；如与实际成品有出入，以文字描述为准"
+                if ai
+                else "后台自动补图：联网检索成品图"
+            ),
         )
         if update_answer_image_by_dish(sid, record_id, dish, url, ai, note):
             filled += 1
