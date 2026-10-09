@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "小膳管家 · 系统架构",
+    "output": "docs/参赛-架构图.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main-path", "label": "主对话链路", "focus": ["user", "web", "api", "orchestr", "llm"], "note": "从用户提问到模型生成再到结构化回答的主干。" },
+      { "id": "guard-loop", "label": "护栏闭环", "focus": ["orchestr", "guard", "llm"], "note": "生成→审计→违规反馈→重生成的确定性闭环。" },
+      { "id": "knowledge", "label": "知识溯源链", "focus": ["orchestr", "retriever", "chroma"], "note": "官方 PDF 切片入库，双通道召回与重排供回答引用。" }
+    ]
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "用户", "sublabel": "浏览器访问", "pos": [40, 300], "size": [120, 60] },
+    { "id": "web", "type": "frontend", "label": "Web 前端", "sublabel": "React + Vite :5178", "pos": [250, 300], "size": [140, 60] },
+    { "id": "api", "type": "backend", "label": "FastAPI 后端", "sublabel": "REST :8010 · 48 端点", "pos": [460, 298], "size": [150, 64] },
+    { "id": "orchestr", "type": "backend", "label": "LangGraph 编排", "sublabel": "agent/graph.py · 10 节点", "pos": [680, 294], "size": [160, 72], "tag": "生成 → 审计 → 重生成" },
+    { "id": "llm", "type": "external", "label": "本地模型网关", "sublabel": "commandcode :3050", "pos": [910, 300], "size": [150, 60] },
+    { "id": "profile", "type": "database", "label": "家庭档案与反馈", "sublabel": "data/*.json · 逐人画像", "pos": [680, 150], "size": [160, 60] },
+    { "id": "tools", "type": "external", "label": "外网工具", "sublabel": "web_search · 地图 · 生图", "pos": [910, 150], "size": [150, 60] },
+    { "id": "guard", "type": "security", "label": "护栏审计引擎", "sublabel": "确定性规则 · 0.2-0.5ms", "pos": [680, 456], "size": [160, 64], "tag": "国家指南出处" },
+    { "id": "retriever", "type": "backend", "label": "混合检索", "sublabel": "BM25+向量 → RRF → 重排", "pos": [440, 458], "size": [170, 60] },
+    { "id": "chroma", "type": "database", "label": "知识库索引", "sublabel": "Chroma · 27 份官方 PDF", "pos": [230, 458], "size": [160, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "本机运行环境（Python 服务 + Docker 代理）", "wraps": ["web", "api", "orchestr", "llm", "profile", "guard", "retriever", "chroma"] }
+  ],
+  "connections": [
+    { "id": "user-web", "from": "user", "to": "web", "label": "页面与 SSE 流式回答", "variant": "emphasis", "labelAt": [205, 374] },
+    { "id": "web-api", "from": "web", "to": "api", "label": "REST · 会话" },
+    { "id": "api-orchestr", "from": "api", "to": "orchestr", "label": "每轮对话驱动", "variant": "emphasis" },
+    { "id": "orchestr-llm", "from": "orchestr", "to": "llm", "label": "生成与工具决策", "labelAt": [875, 380] },
+    { "id": "orchestr-profile", "from": "orchestr", "to": "profile", "label": "读写逐人画像" },
+    { "id": "orchestr-tools", "from": "orchestr", "to": "tools", "label": "外网补充检索", "variant": "dashed" },
+    { "id": "orchestr-guard", "from": "orchestr", "to": "guard", "label": "候选文本送审", "variant": "security", "labelAt": [718, 396] },
+    { "id": "guard-orchestr", "from": "guard", "to": "orchestr", "label": "通过放行 / 违规反馈回炉", "variant": "security", "labelAt": [830, 426] },
+    { "id": "orchestr-retriever", "from": "orchestr", "to": "retriever", "label": "知识问答触发 RAG" },
+    { "id": "retriever-chroma", "from": "retriever", "to": "chroma", "label": "切片与向量召回", "labelAt": [415, 532] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主链路", "items": [
+      "用户提问 → 注入多成员画像 → 模型生成 → 结构化回答流式返回",
+      "图编排 10 节点：思考/工具/压缩/护栏/结构化/追问/预算收尾等",
+      "过敏原走硬拦截：确定性文案直拒，不经过模型"
+    ] },
+    { "dot": "emerald", "title": "知识可溯源", "items": [
+      "27 份国家指南与权威 PDF 切片入 Chroma，回答引用带出处",
+      "BM25 + 向量双召回、RRF 融合、bge 重排",
+      "评测集 39 例 recall@3 = 39/39（门槛 0.75）"
+    ] },
+    { "dot": "rose", "title": "确定性兜底", "items": [
+      "护栏审计 p50 0.17-0.41ms，近乎零成本",
+      "数值超限给逐项账单反馈，驱动重生成（E4 三轮闭环 0 残留）",
+      "词级/数值双路径：国家指南违规集逐条带出处"
+    ] }
+  ]
+}
