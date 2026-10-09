@@ -193,5 +193,51 @@ class TestObesityAlcoholRules(unittest.TestCase):
                 self.assertTrue(violations, text)
 
 
+class TestSaltWordingContext(unittest.TestCase):
+    """实测回归：合规的「限量/警示」表述不能被判成真实下料。
+
+    根因——原口径只看紧邻前缀（_qualified_by_suffix）：「不额外加盐」中间隔着
+    「额外」、「不加鸡精味精」里味精前面是「鸡精」、「减少食盐及含钠调味品
+    （酱油、酱类、蚝油、鸡精、味精等）」隔着整个并列枚举、「腌黄瓜、榨菜、
+    泡菜钠极高」的限定词在关键词后面，都会被漏判成真下料 → 合规回答被判违规，
+    再叠加工具预算耗尽，就被确定性兜底文案整段替换。
+    """
+
+    def test_limitation_wording_is_not_a_violation(self):
+        for text in (
+            "少盐少油的一道拌面",
+            "低盐版：靠酸辣香提味",
+            "不额外加盐、不加鸡精味精、不加蚝油。",
+            "不要用盐腌黄瓜出水",
+            "减少食盐及含钠调味品（酱油、酱类、蚝油、鸡精、味精等）",
+            "腌黄瓜、榨菜、泡菜钠极高，爸爸吃不上",
+            "不吃咸菜、不吃榨菜",
+            "盐可以几乎不放",
+            "生抽减半",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["高血压"]), [], text)
+
+    def test_real_seasoning_is_still_a_violation(self):
+        for text in (
+            "盐 5g、生抽 2 大勺",
+            "用半勺蚝油提鲜",
+            "放盐10克",
+            "加榨菜炒肉丝",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(audit(text, ["高血压"]), text)
+
+    def test_limited_word_does_not_cover_a_later_real_dose(self):
+        # 限量词管的是前一样东西时，不能给后面真正下料的盐开脱
+        vs = audit("少油放盐10克", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+    def test_reversed_limitation_stays_flagged(self):
+        # 「盐不少」是关键词后面的翻案，不能被尾随限定词放过
+        vs = audit("这道菜盐不少", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

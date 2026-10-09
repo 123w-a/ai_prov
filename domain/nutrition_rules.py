@@ -18,6 +18,9 @@ import re
 _ORGAN_MEAT = ["动物内脏", "猪肝", "鸡肝", "鸭肝", "猪肾", "鸡肾", "鸭肠", "脑", "腰子"]
 _HIGH_PURINE_SEAFOOD = ["沙丁鱼", "凤尾鱼", "带鱼", "秋刀鱼", "牡蛎", "蛤蜊", "虾", "蟹", "贝", "鱼干"]
 _SALT_SEASONING = ["盐", "酱油", "生抽", "老抽", "蚝油", "鸡精", "味精", "豆瓣酱", "辣椒酱", "豆腐乳", "腐乳"]
+# 这些本身也是高钠食物，判定口径与盐/酱油一致（走「限量语境」判定）。
+# 它只决定「怎么判」，不改变各病种 forbidden 词表里到底有哪些词。
+_SALT_QUALIFIABLE = set(_SALT_SEASONING) | {"榨菜", "泡菜", "咸菜", "酱菜"}
 _PROCESSED_MEAT = ["腊肉", "香肠", "腊肠", "培根", "咸肉", "火腿", "加工红肉"]
 _ALCOHOL_TERMS = [
     "饮酒", "喝酒", "酒精", "白酒", "啤酒", "红酒", "葡萄酒",
@@ -96,7 +99,45 @@ _CONDITION_KEYWORDS = [
 _CONDITION_NEGATION_RE = re.compile(
     r"(?:没有|没|不是|并非|未)(?:(?:被|明确|确诊|诊断|患有|得过|任何|为)){0,5}$"
 )
-_SALT_QUALIFIERS = ("不加", "不放", "少放", "少", "低", "减", "无")
+# 关键词**之前**出现这些词，说明这一句在讲「限量」，不是在下料。
+# 不能只看紧邻前缀：实测合规菜谱里的「不额外加盐」（中间隔着「额外」）、
+# 「不加鸡精味精」（味精前面是「鸡精」）都会被漏判成真实下料。
+_SALT_QUALIFIERS = (
+    "不加", "不放", "不用", "不要", "不超", "少放", "少用", "少吃",
+    "少", "低", "减", "无", "避免", "远离", "忌", "限制", "控制", "限量",
+)
+# 关键词**之后**出现这些词，同样说明这一句在讲「限量/警示」：
+# 「盐可以几乎不放」「生抽减半」「钠极高」。
+_SALT_TRAIL_QUALIFIERS = (
+    "不放", "不加", "不用", "不要多", "别多放", "少放", "少用", "少加",
+    "少吃", "少些", "少许", "少",
+    "控制", "限制", "限量", "不超", "不超过", "低于", "以下", "降至", "≤",
+    "减半", "减量", "减少", "减",
+    "钠极高", "钠很高", "钠超标", "钠高", "高钠", "含钠高",
+)
+# 同句内更远的限量词（不紧邻也算）：覆盖指南引用
+# 「减少食盐及含钠调味品（酱油、酱类、蚝油、鸡精、味精等）」——
+# 限定词与关键词之间隔着一整个并列枚举，按紧邻前缀看必然漏判。
+_SALT_CLAUSE_QUALIFIERS = (
+    "限量", "控制", "限制", "避免", "远离", "减少", "减", "少", "低", "无", "忌", "免",
+)
+# 否定 + 短间隔 + 下料动作：覆盖「不额外加盐」「不要用盐腌黄瓜出水」。
+# 中间允许 0-6 个字符（如「额外」），但不能跨标点，否则会把上一句的否定读进来。
+_SALT_NEGATION_WORDS = "不没无别勿免杜绝避免远离忌拒绝禁止"
+_SALT_NEGATION_DOSE_RE = re.compile(
+    rf"[{_SALT_NEGATION_WORDS}][^，。；！？\n、]{{0,6}}[加放用下撒淋兑要吃碰选多]"
+)
+# 限量词与关键词之间若已出现这些真下料动作，说明限量词管的是另一样东西：
+# 「少油放盐 10 克」里的「少」不能给「盐」开脱。
+_SALT_GAP_DOSE_VERBS = ("加", "放", "下", "撒", "淋", "兑")
+# 限定词与关键词之间出现这些词，是「翻案」而不是「限量」：
+# 「本来想不加盐但实际放盐 10 克」必须继续判为违规。
+_SALT_REVERSAL_MARKERS = ("但", "不过", "却", "实际", "其实", "改用", "换成", "只是")
+# 限定词只在同一个「限量语境」内有效，跨句读不算：否则
+# 「少油的一道菜，盐 5g」会被前一句的「少」误判成合规表述。
+_SALT_CLAUSE_DELIMITERS = "。！？；\n\r，,：:"
+_SALT_LOOKBACK_CHARS = 40
+_SALT_LOOKAHEAD_CHARS = 12
 _FORBIDDEN_QUALIFIERS = ("不吃", "不喝", "不放", "不加", "不含", "不要", "避免", "禁用", "拒绝")
 _REVERSED_QUALIFIERS = (
     "不", "不能", "不要", "不做", "不采用", "不接受", "拒绝",
@@ -115,6 +156,71 @@ def _qualified_by_suffix(before: str, qualifiers) -> bool:
     return False
 
 
+def _clause_before(compact: str, start: int) -> str:
+    """取关键词之前同一句内的文本（回看有上限，遇标点截断）。
+
+    限定词只在同一个「限量语境」内有效：否则「少油的一道菜，盐 5g」
+    会被上一句的「少」误判成合规表述。
+    """
+    window = compact[max(0, start - _SALT_LOOKBACK_CHARS):start]
+    cut = max(window.rfind(ch) for ch in _SALT_CLAUSE_DELIMITERS)
+    return window[cut + 1:] if cut >= 0 else window
+
+
+def _reversed_by(text: str) -> bool:
+    """文本里出现翻案词（但/实际/改用…），说明前面的「限量」已被推翻。"""
+    return any(marker in text for marker in _SALT_REVERSAL_MARKERS)
+
+
+def _ends_with_reversed(text: str) -> bool:
+    """限定词前面紧跟否定，是「不少盐」「不能不加盐」这类翻案，不算限量。"""
+    return any(text.endswith(item) for item in _REVERSED_QUALIFIERS)
+
+
+def _salt_is_limited(compact: str, start: int, end: int) -> bool:
+    """判断这一处盐/高钠调味料是在讲「少放/别放/减量」，还是真在下料。
+
+    四种证据，任一成立即视为限量表述（不算违规）：
+      1. 紧邻前缀限定词——保留原口径，覆盖「少盐」「不加盐」；
+      2. 同句内的否定 + 下料动作——覆盖「不额外加盐」「不要用盐腌黄瓜出水」；
+      3. 同句内更远的限量词、且中间没有真下料动作——
+         覆盖指南引用「减少食盐及含钠调味品（酱油、蚝油…）」；
+      4. 关键词后紧跟的限量/警示词——覆盖「盐可以几乎不放」「生抽减半」「钠极高」。
+    """
+    clause = _clause_before(compact, start)
+    cursor = len(clause)  # 关键词在 clause 内的位置（clause 恰好结束于关键词）
+    if _qualified_by_suffix(clause, _SALT_QUALIFIERS):
+        return True
+    for match in _SALT_NEGATION_DOSE_RE.finditer(clause, 0, cursor):
+        middle = match.group(0)[1:-1]
+        if any(ch in _SALT_NEGATION_WORDS for ch in middle):
+            continue  # 「不能不加」：否定词内部还套着否定，是翻案不是限量
+        if _ends_with_reversed(clause[:match.start()]):
+            continue
+        if _reversed_by(clause[match.end():cursor]):
+            continue
+        return True
+    for qualifier in sorted(_SALT_CLAUSE_QUALIFIERS, key=len, reverse=True):
+        index = clause.rfind(qualifier, 0, cursor)
+        if index < 0:
+            continue
+        if _ends_with_reversed(clause[:index]):
+            continue
+        gap = clause[index + len(qualifier):cursor]
+        if _reversed_by(gap) or any(verb in gap for verb in _SALT_GAP_DOSE_VERBS):
+            continue
+        return True
+    tail = compact[end:end + _SALT_LOOKAHEAD_CHARS]
+    for qualifier in sorted(_SALT_TRAIL_QUALIFIERS, key=len, reverse=True):
+        index = tail.find(qualifier)
+        if index < 0:
+            continue
+        if _ends_with_reversed(tail[:index]):
+            continue
+        return True
+    return False
+
+
 def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
     """Return True when at least one keyword occurrence expresses actual use/state."""
     compact = re.sub(r"\s+", "", text or "")
@@ -122,7 +228,7 @@ def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
         before = compact[max(0, match.start() - 12):match.start()]
         if mode == "condition" and _CONDITION_NEGATION_RE.search(before):
             continue
-        if mode == "salt" and _qualified_by_suffix(before, _SALT_QUALIFIERS):
+        if mode == "salt" and _salt_is_limited(compact, match.start(), match.end()):
             continue
         if mode == "forbidden" and _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
             continue
@@ -198,7 +304,7 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
         if not rule:
             continue
         for kw in rule.get("forbidden", []):
-            mode = "salt" if kw in _SALT_SEASONING else "forbidden"
+            mode = "salt" if kw in _SALT_QUALIFIABLE else "forbidden"
             if _has_unqualified_occurrence(text, kw, mode) and (cond, kw) not in seen:
                 seen.add((cond, kw))
                 violations.append({
