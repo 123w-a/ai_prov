@@ -158,6 +158,54 @@ class TestSodiumCap(unittest.TestCase):
                          "等于上限不应误报")
 
 
+class SodiumBillTest(unittest.TestCase):
+    """数值账单（2026-10-08 E4 复盘）：超钠反馈必须给逐项明细与差额，
+    否则重生成时模型只替换品类、总钠压不下来。"""
+
+    def test_bill_lists_each_source_with_amounts(self):
+        vs = audit("红烧肉，放盐2克、生抽3克、鸡精2克", ["高血压"])
+        bills = [v for v in vs if v.get("detail")]
+        self.assertTrue(bills, "超钠违禁应带 detail 明细")
+        items = {d["item"] for d in bills[0]["detail"]}
+        self.assertEqual(items, {"盐", "生抽", "鸡精"})
+        text = describe(vs)
+        self.assertIn("数值账单", text)
+        self.assertIn("鸡精2g", text)
+        self.assertIn("超", text)
+        self.assertIn("仅替换品类", text)
+
+    def test_sour_condiments_now_count_in_sodium(self):
+        # E4 实测：模型用味精/鸡精顶替食盐；旧 _salt_total_g 硬编码窄词表算不到
+        # 它们（7g 钠里只算得出一小部分）→ 复用 _SALT_SEASONING 后必须进账单
+        vs = audit("配菜放鸡精4克、味精3克", ["高血压"])
+        bills = [v for v in vs if v.get("detail")]
+        self.assertTrue(bills, "鸡精/味精的克数应计入钠账并产生数值违禁")
+        items = {d["item"] for d in bills[0]["detail"]}
+        self.assertEqual(items, {"鸡精", "味精"})
+
+    def test_honey_counts_in_sugar_bill(self):
+        vs = audit("甜品放蜂蜜30g", ["肥胖"])
+        sugar = [v for v in vs if v.get("detail")]
+        self.assertTrue(sugar, "蜂蜜应计入添加糖账单")
+        self.assertIn("蜂蜜", {d["item"] for d in sugar[0]["detail"]})
+
+    def test_under_cap_has_no_bill(self):
+        # 注意产品语义：「盐」字词级命中（salt 模式语境判定）与克数超限是两条
+        # 独立路径——未超上限时允许词级提示存在，但绝不产生数值账单。
+        vs = audit("清蒸鱼，放盐3克", ["高血压"])
+        self.assertFalse(any(v.get("detail") for v in vs),
+                         "未超上限不应有数值账单")
+
+    def test_total_g_and_detail_stay_consistent(self):
+        # 单一数据源绊线：求和必须等于明细之和（长词优先去重语义共用）
+        from domain.nutrition_rules import _total_g, _total_g_detail
+        text = "白砂糖30g、冰糖10g、蜂蜜5g"
+        total = _total_g(text, ["白砂糖", "冰糖", "蜂蜜", "糖"], r"g|克")
+        detail = _total_g_detail(text, ["白砂糖", "冰糖", "蜂蜜", "糖"], r"g|克")
+        self.assertEqual(total, sum(d["grams"] for d in detail))
+        self.assertEqual(total, 45.0)
+
+
 class TestDescribe(unittest.TestCase):
     """格式化输出"""
 
@@ -215,6 +263,56 @@ class TestObesityAlcoholRules(unittest.TestCase):
             with self.subTest(text=text):
                 violations = audit(text, ["肥胖"])
                 self.assertTrue(violations, text)
+
+
+class ContextSeriesAndDisclosureTest(unittest.TestCase):
+    """E4 第二轮复测暴露的形态（2026-10-08）：并列组限定、数值让路。"""
+
+    def test_conjunction_series_is_qualified(self):
+        # 限定词修饰整个并列组：避免[生冷和生食] / 不喝[浓茶和咖啡] / 不放[味精和鸡精]
+        self.assertEqual(audit("避免生冷和生食，孕妇远离", ["孕期"]), [])
+        self.assertEqual(audit("不喝浓茶和咖啡", ["孕期"]), [])
+        self.assertEqual(audit("不放味精和鸡精", ["高血压"]), [])
+
+    def test_series_bridge_without_qualifier_still_flags(self):
+        # 桥只豁免「有限定词的组」：无限定词的并列组照拦
+        violations = audit("孕期喝浓茶和咖啡", ["孕期"])
+        kws = {v["keyword"] for v in violations}
+        self.assertTrue({"浓茶", "咖啡"} <= kws, kws)
+
+    def test_series_words_must_come_from_rule_table(self):
+        # 组内词必须来自本规则词表：「不放盐和枸杞」里枸杞不在调料表，
+        # 盐豁免、枸杞仍拦（若有表内词命中）——用表内/表外各验一次
+        self.assertEqual(audit("不放盐和酱油", ["高血压"]), [])
+        violations = audit("喝咖啡和奶茶", ["孕期"])
+        self.assertEqual({v["keyword"] for v in violations}, {"咖啡"})  # 奶茶不在表
+
+    def test_salt_with_number_moves_to_numeric_layer(self):
+        # 用量带数字 → 词级让路；数值超限时由数值层账单接管
+        self.assertEqual(audit("少盐烹饪，只放盐3克", ["高血压"]), [])
+        violations = audit("放盐8克、酱油5克", ["高血压"])
+        self.assertTrue(violations)
+        self.assertTrue(all(v.get("detail") for v in violations),
+                        "数值层接管后应全部是带账单的数值条")
+
+    def test_salt_without_number_stays_word_level(self):
+        violations = audit("用低钠盐替代调味", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in violations))
+
+    def test_capped_numeric_mention_is_not_flagged(self):
+        # 「限制语 + 数字」双条件豁免合规表述（E4 lipid 残留根因）
+        self.assertEqual(audit("反式脂肪控制在2克以内", ["高脂血症"]), [])
+        self.assertEqual(audit("少吃反式脂肪，每日不超过2克", ["高脂血症"]), [])
+
+    def test_numeric_mention_without_limit_language_still_flagged(self):
+        # 缺限制语不豁免：「一天吃4克」是摄入描述不是限制表述
+        violations = audit("油炸食品含反式脂肪，一天吃4克", ["高脂血症"])
+        self.assertTrue(any(v["keyword"] == "反式脂肪" for v in violations))
+
+    def test_pregnancy_strict_wording_not_exempt_by_weak_reduction(self):
+        # 保守立场：「少吃生鱼」是弱化表述，孕期生食应完全避免——仍提示
+        violations = audit("避免生冷和生食，少吃生鱼", ["孕期"])
+        self.assertEqual(len(violations), 1)
 
 
 if __name__ == "__main__":
