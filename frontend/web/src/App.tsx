@@ -22,6 +22,7 @@ import { ServicePreview } from './components/ServicePreview'
 import { WeeklyReportPage } from './components/WeeklyReportPage'
 import { FavoritesPanel } from './components/FavoritesPanel'
 import { SessionSidebar } from './components/SessionSidebar'
+import { applyStreamedOpening, mergeSyncedAnswer } from './answerMerge'
 // P1: sidebar hosts FamilyPanel (member switcher + profiles)
 import type {
   ChatMessage,
@@ -238,32 +239,6 @@ function answerHasImage(answer?: ChefAnswer | null): boolean {
   if (!answer) return false
   if (answer.image_url) return true
   return (answer.recipes ?? []).some((recipe) => Boolean(recipe.image_url))
-}
-
-function mergeSyncedAnswer(localAnswer: ChefAnswer | null | undefined, serverAnswer: ChefAnswer | null | undefined): ChefAnswer | null | undefined {
-  if (!serverAnswer) return localAnswer
-  if (!localAnswer) return serverAnswer
-  const serverRecipes = serverAnswer.recipes ?? []
-  const localRecipes = localAnswer.recipes ?? []
-  const recipes = serverRecipes.map((recipe, index) => {
-    const localRecipe = localRecipes[index]
-    if (!localRecipe) return recipe
-    return {
-      ...recipe,
-      image_url: recipe.image_url ?? localRecipe.image_url ?? null,
-      image_ai_generated: recipe.image_ai_generated ?? localRecipe.image_ai_generated ?? false,
-      image_note: recipe.image_note || localRecipe.image_note || '',
-    }
-  })
-  const merged: ChefAnswer = {
-    ...serverAnswer,
-    recipes,
-    image_url: serverAnswer.image_url ?? localAnswer.image_url ?? null,
-    image_ai_generated: serverAnswer.image_ai_generated ?? localAnswer.image_ai_generated ?? false,
-    image_note: serverAnswer.image_note || localAnswer.image_note || '',
-    image_requested: serverAnswer.image_requested ?? localAnswer.image_requested,
-  }
-  return merged
 }
 
 function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessage): ChatMessage {
@@ -672,13 +647,9 @@ export default function App() {
                 const normalizedAnswer = normalizeChefAnswer(answer)
                 // 结构化链可能退回短兜底句；流式正文才是用户刚刚看到的完整讲解。
                 // 结构化卡片接管展示后，把流式正文放入 opening，避免卡片与流式正文重复显示。
-                const answerWithOpening =
-                  streamedText &&
-                  (!normalizedAnswer.opening ||
-                    normalizedAnswer.opening === '已按你的要求整理好这一道，完整做法见图卡。' ||
-                    streamedText.length > normalizedAnswer.opening.length + 80)
-                    ? { ...normalizedAnswer, opening: streamedText }
-                    : normalizedAnswer
+                const answerWithOpening = streamedText
+                  ? applyStreamedOpening(normalizedAnswer, streamedText)
+                  : normalizedAnswer
                 // normalizeChefAnswer 会把缺失字段归一成 false，所以不能再用
                 // `?? turnWantsImage` 判断。只要本轮已经打开配图门，就必须等图完成后再挂卡片。
                 const answerWantsImage = Boolean(answerWithOpening.image_requested || turnWantsImage)

@@ -623,6 +623,107 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
             update_answer_mock.call_args_list,
         )
 
+    def test_streamed_full_opening_survives_delayed_image_persistence(self):
+        fallback = (
+            "这次没查到足够具体的做法，我先给你一个稳妥的方向："
+            "优先少油少盐、食材明确、做法简单的一道。"
+        )
+        full_opening = (
+            "选中的青椒炒鸡丝要先把鸡肉逆纹切细，加少量生抽和淀粉抓匀；"
+            "青椒切丝后大火快炒，鸡肉回锅翻匀就出锅，避免久炒变柴。"
+            "这道菜少油少盐，适合今天按这个份量直接做。"
+        )
+        answer = {
+            "opening": fallback,
+            "recipes": [
+                {
+                    "name": "青椒炒鸡丝",
+                    "intro": "少油快炒",
+                    "seasonings": [{"name": "生抽", "amount": "少许"}],
+                    "steps": ["鸡肉切丝腌制", "青椒炒香", "合炒出锅"],
+                    "image_url": None,
+                }
+            ],
+        }
+        release_image = threading.Event()
+
+        def stream_agent(_human_message, _session_id):
+            yield "token", full_opening
+            yield "answer", answer
+
+        def slow_image(_name, allow_ai_fallback):
+            self.assertTrue(allow_ai_fallback)
+            release_image.wait(3)
+            return "https://images.test/chicken.png", "ai"
+
+        update_answer = patch("storage.sessions.update_message_answer", return_value=True)
+        update_answer_mock = update_answer.start()
+        self.addCleanup(update_answer.stop)
+        patches = [
+            patch.object(chat_route, "stream_agent", stream_agent),
+            patch.object(chat_route, "_find_recipe_image_cached", slow_image),
+            patch.object(chat_route, "_find_global_dish_asset", return_value=None),
+            patch.object(chat_route, "_save_global_dish_assets", return_value=None),
+            patch.object(chat_route, "_handle_image", return_value=(None, None, None)),
+            patch.object(chat_route, "_classify_turn_intent", return_value="dish"),
+            patch.object(chat_route, "_resolve_picked_candidate", return_value=None),
+            patch.object(chat_route, "_should_enable_image_pipeline", return_value=True),
+            patch.object(chat_route, "_wants_image", return_value=False),
+            patch.object(chat_route, "_global_asset_prompt", return_value=None),
+            patch.object(chat_route, "build_human_message", return_value="test-message"),
+            patch.object(chat_route, "append_message", return_value=323),
+            patch.object(chat_route, "_IMAGE_THREAD_POLL_TIMEOUT_S", 0.05),
+            patch.object(chat_route, "_IMAGE_THREAD_MAX_WAIT_S", 2.0),
+            patch("storage.memory_candidates.extract_candidates", return_value=[]),
+            patch("storage.memory_candidates.remember_candidates", return_value=None),
+            patch("api.routes.reports_route.record_meal", return_value=None),
+        ]
+        for item in patches:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+
+        from api.main_app import app
+
+        release_timer = threading.Timer(0.1, release_image.set)
+        release_timer.start()
+        try:
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/chat",
+                    data={
+                        "session_id": "streamed-opening-stream-test",
+                        "message": "3吧，给我完整做法",
+                        "want_image": "1",
+                        "turn_id": "turn-streamed-opening",
+                    },
+                )
+        finally:
+            release_image.set()
+            release_timer.cancel()
+
+        self.assertEqual(response.status_code, 200)
+        events = self._events(response)
+        answer_event = next(event["answer"] for event in events if "answer" in event)
+        self.assertEqual(answer_event["opening"], full_opening)
+
+        persisted_payloads = []
+        for call in update_answer_mock.call_args_list:
+            if len(call.args) < 3:
+                continue
+            try:
+                persisted_payloads.append(json.loads(call.args[2]))
+            except Exception:
+                continue
+        self.assertTrue(
+            any(
+                payload.get("opening") == full_opening
+                and (payload.get("recipes") or [{}])[0].get("image_url")
+                == "https://images.test/chicken.png"
+                for payload in persisted_payloads
+            ),
+            update_answer_mock.call_args_list,
+        )
+
 
 class ChatRoutePersistenceOrderTest(unittest.TestCase):
     """候选正文被 SSE 积压时，也必须等消费端排空后再落库，不能存半截。"""

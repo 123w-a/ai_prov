@@ -60,6 +60,13 @@ _IMAGE_THREAD_POLL_TIMEOUT_S = 5.0
 _IMAGE_THREAD_MAX_WAIT_S = float(os.getenv("CHEF_IMAGE_THREAD_MAX_WAIT_S", "180"))
 # run_agent 结束后等 SSE 消费端完成落库；超时才按客户端断连走线程侧兜底。
 _PERSIST_CONSUMER_WAIT_S = float(os.getenv("CHEF_PERSIST_CONSUMER_WAIT_S", "10"))
+_STREAMED_OPENING_REPLACE_THRESHOLD = 80
+_KNOWN_SHORT_OPENING_FALLBACKS = {
+    "已按你的要求整理好这一道，完整做法见图卡。",
+}
+_KNOWN_SHORT_OPENING_PREFIXES = (
+    "这次没查到足够具体的做法，我先给你一个稳妥的方向：",
+)
 
 # —— 并发护栏：同会话串行 + 全局 Agent 背压 ——
 # 同 session_id 同时跑两轮，会以同一个 thread_id 同时写 LangGraph checkpoint，
@@ -354,6 +361,29 @@ def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
         _RECIPE_IMAGE_CACHE[key] = (image_url, source, now)
         _prune_recipe_image_cache_locked(now)
     return image_url, source
+
+
+def _prefer_streamed_opening(answer: dict, streamed_text: str) -> bool:
+    """把已完整展示给用户的正文补进结构化答案，避免后续图片线程落库时覆盖讲解。
+
+    只处理可确认的结构化兜底：opening 为空、等于已知短句，或流式正文明显更长。
+    正常且完整的结构化 opening 保持原样，不改变文字生成链路。
+    """
+    if not isinstance(answer, dict):
+        return False
+    streamed = str(streamed_text or "").strip()
+    if not streamed:
+        return False
+    opening = str(answer.get("opening") or "").strip()
+    should_replace = (
+        not opening
+        or opening in _KNOWN_SHORT_OPENING_FALLBACKS
+        or any(opening.startswith(prefix) for prefix in _KNOWN_SHORT_OPENING_PREFIXES)
+        or len(streamed) > len(opening) + _STREAMED_OPENING_REPLACE_THRESHOLD
+    )
+    if should_replace:
+        answer["opening"] = streamed
+    return should_replace
 
 
 def _is_pure_execute_plan_request(message: str) -> bool:
@@ -1602,6 +1632,13 @@ async def chat(
                             answer_dict = None
                             final_answer = None
                             continue
+                        streamed_text = "".join(full_parts).strip()
+                        if _prefer_streamed_opening(answer_dict, streamed_text):
+                            print(
+                                f"[flow] preserved streamed opening: "
+                                f"len={len(streamed_text)} rec={pending_rec_id}",
+                                flush=True,
+                            )
                         # 只有模型确实产出具体菜品时，推荐阶段才进入图片展示；
                         # 普通健康问答即使命中饮食关键词，也不生成空图片槽。
                         has_recipes = any(
