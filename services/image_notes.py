@@ -28,6 +28,14 @@ _NEGATIVE_NOTE_RE = re.compile(
     r"|不配图"
     r")"
 )
+_INTERNAL_SOURCE_NOTE_RE = re.compile(
+    r"(?:"
+    r"跨对话菜品资产"
+    r"|系统(?:此前|之前|已)?保存(?:过)?[^。！？!?；;\n]{0,32}(?:成品)?图"
+    r"|(?:使用|沿用|复用)?系统(?:此前|之前|已)?保存的成品图"
+    r"|真实配图"
+    r")"
+)
 
 
 def sanitize_image_note(note: str) -> str:
@@ -52,6 +60,7 @@ def sanitize_image_note(note: str) -> str:
             not fragment
             or not _VISIBLE_TEXT_RE.search(fragment)
             or _NEGATIVE_NOTE_RE.search(fragment)
+            or _INTERNAL_SOURCE_NOTE_RE.search(fragment)
         ):
             continue
         if fragment not in kept:

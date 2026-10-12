@@ -521,6 +521,97 @@ class ChatRouteLateImageStreamTest(unittest.TestCase):
         self.assertLess(answer_index, image_index, events)
         self.assertTrue(any(event.get("finish") for event in events), events)
 
+    def test_pure_image_request_opens_real_image_pipeline(self):
+        """「要图片的」不点名菜，也必须在模型开口前确定性开启配图链路。
+
+        本用例**不** patch `_should_enable_image_pipeline` / `_wants_image`，
+        让真实判据生效（回归 user_cd56c7d003 第 2 轮：上一轮被过敏原拦截后
+        回「要图片的」，出了卡片却没有图）。断言 answer 之后必出 image，
+        且全程只有一条 answer、没有 reset 覆盖，避免收尾闪屏。
+        """
+        answer = {
+            "opening": "接着上一轮那道菜，给你成品图。",
+            "recipes": [
+                {
+                    "name": "低糖草莓牛奶布丁",
+                    "intro": "少糖",
+                    "seasonings": [{"name": "牛奶", "amount": "200ml"}],
+                    "steps": ["混合", "冷藏"],
+                    "image_url": None,
+                }
+            ],
+        }
+
+        def stream_agent(_human_message, _session_id):
+            yield "token", "接着上一轮那道菜，给你成品图。"
+            yield "answer", answer
+
+        def delayed_image(_name, allow_ai_fallback):
+            import time
+
+            time.sleep(0.2)
+            return "https://images.test/pudding.png", "ai"
+
+        update_answer = patch("storage.sessions.update_message_answer", return_value=True)
+        update_answer_mock = update_answer.start()
+        self.addCleanup(update_answer.stop)
+        patches = [
+            patch.object(chat_route, "stream_agent", stream_agent),
+            patch.object(chat_route, "_find_recipe_image_cached", delayed_image),
+            patch.object(chat_route, "_find_global_dish_asset", return_value=None),
+            patch.object(chat_route, "_save_global_dish_assets", return_value=None),
+            patch.object(chat_route, "_handle_image", return_value=(None, None, None)),
+            patch.object(chat_route, "_resolve_picked_candidate", return_value=None),
+            patch.object(chat_route, "_global_asset_prompt", return_value=None),
+            patch.object(chat_route, "build_human_message", return_value="test-message"),
+            patch.object(chat_route, "append_message", return_value=321),
+            patch.object(chat_route, "_IMAGE_THREAD_POLL_TIMEOUT_S", 0.05),
+            patch.object(chat_route, "_IMAGE_THREAD_MAX_WAIT_S", 2.0),
+            patch("storage.sessions.find_recent_recipe_for_image", return_value=None),
+            patch("storage.memory_candidates.extract_candidates", return_value=[]),
+            patch("storage.memory_candidates.remember_candidates", return_value=None),
+            patch("api.routes.reports_route.record_meal", return_value=None),
+        ]
+        for item in patches:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+
+        from api.main_app import app
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat",
+                data={
+                    "session_id": "pure-image-e2e-test",
+                    "message": "要图片的",
+                    "want_image": "0",
+                    "turn_id": "turn-pure-image",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = self._events(response)
+        answers = [event["answer"] for event in events if "answer" in event]
+        self.assertEqual(len(answers), 1, events)
+        self.assertTrue(answers[0]["image_requested"], events)
+        self.assertFalse([event for event in events if event.get("reset")], events)
+        images = [event["image"] for event in events if "image" in event]
+        self.assertEqual(len(images), 1, events)
+        self.assertEqual(images[0]["url"], "https://images.test/pudding.png")
+        answer_index = next(i for i, event in enumerate(events) if "answer" in event)
+        image_index = next(i for i, event in enumerate(events) if "image" in event)
+        self.assertLess(answer_index, image_index, events)
+        self.assertTrue(any(event.get("finish") for event in events), events)
+        # 收尾不许闪屏的关键：落库的 answer 必须已经带上成品图，
+        # 否则前端回合结束后回拉真相会把刚补上的图再撤掉。
+        self.assertTrue(
+            any(
+                "https://images.test/pudding.png" in str(call.args[2] if len(call.args) > 2 else "")
+                for call in update_answer_mock.call_args_list
+            ),
+            update_answer_mock.call_args_list,
+        )
+
     def test_failure_note_waits_for_late_image_and_persists_it(self):
         answer = {
             "opening": "目前没有可靠的成品图，先给你完整做法。",

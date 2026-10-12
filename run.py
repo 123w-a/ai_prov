@@ -52,17 +52,33 @@ def port_in_use(host=HOST, port=PORT):
         return sock.connect_ex((host, port)) == 0
 
 
-def is_our_backend(host=HOST, port=PORT):
-    """请求健康接口，判断占用者是不是本项目上一次启动的后端。
+def is_our_backend(host=HOST, port=PORT, attempts=3, timeout=4):
+    """判断占用端口的是不是本项目上一次启动的后端。
 
-    只有确认是"自己人"才允许自动杀掉，防止误伤用户电脑上别的服务。
+    探活优先走 `/api/health/live`（不依赖知识库预热，秒回 {"status":"ok"}），
+    旧版本回落到 `/api/` 的"服务正常"。**多次重试**是这里的关键：旧进程还在
+    KB 预热窗口（约 60~90 秒）里时，单次短超时探针连不上，会把自家后端误判成
+    "外人"，于是新版直接 sys.exit(1) —— 用户继续打在旧代码上，正是"改了没生效"
+    的经典成因。
+
+    HTTP 全程不通时，再退一步按**进程身份**认定：可执行文件位于本项目 .venv 下、
+    且命令行里带 run.py，满足才算自己人。仍然保守：拿不准的一律不杀。
     """
-    try:
-        with urllib.request.urlopen(f"http://{host}:{port}/api/", timeout=2) as resp:
-            body = resp.read().decode("utf-8", errors="ignore")
-        return "服务正常" in body  # main_app.py 里健康接口固定返回这句
-    except Exception:
-        return False  # 连不上/返回异常，一律当作"不是自己人"，保守处理
+    for attempt in range(attempts):
+        for path, expect in (("/api/health/live", "ok"), ("/api/", "服务正常")):
+            try:
+                with urllib.request.urlopen(
+                    f"http://{host}:{port}{path}", timeout=timeout
+                ) as resp:
+                    body = resp.read().decode("utf-8", errors="ignore")
+                if expect in body:
+                    return True
+            except Exception:
+                pass  # 预热期/非本项目服务都会走到这，交给重试和兜底
+        if attempt < attempts - 1:
+            time.sleep(1)
+
+    return _looks_like_our_backend_pids(find_pids(port))
 
 
 def find_pids(port=PORT):
@@ -89,6 +105,39 @@ def find_pids(port=PORT):
             pass
     pids.discard(os.getpid())  # 别把自己杀了
     return pids
+
+
+def _looks_like_our_backend_pids(pids):
+    """HTTP 探不通时，按进程身份兜底判断占用者是不是本项目的 run.py。
+
+    认定条件（满足其一即可，但都要求命令行里带 run.py）：
+      1. 可执行文件位于本项目 .venv 下；或
+      2. 命令行里出现本项目 .venv 路径。
+    第 2 条是必须的：本机 .venv/Scripts/python.exe 实际是 anaconda 基础解释器的
+    别名，psutil 读到的 exe() 是 `D:\\Dev\\anaconda3\\python.exe`，完全不含 `.venv`；
+    只看 exe() 会永远认不出自家后端。仍然保守：拿不准的一律不杀。
+    """
+    if not pids:
+        return False
+    try:
+        import psutil
+    except Exception:
+        return False  # 拿不到进程信息就不猜，保守放行给用户判断
+
+    root = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(root, ".venv").lower()
+    for pid in pids:
+        try:
+            proc = psutil.Process(pid)
+            exe = (proc.exe() or "").lower()
+            cmd = " ".join(proc.cmdline() or []).lower()
+            if "run.py" not in cmd:
+                continue
+            if venv_dir in exe or venv_dir in cmd:
+                return True
+        except Exception:
+            continue  # 权限不足/进程已退出，跳过
+    return False
 
 
 def kill_pid(pid):

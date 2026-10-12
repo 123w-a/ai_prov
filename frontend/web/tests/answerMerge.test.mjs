@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { mergeSyncedAnswer, shouldPreferStreamedOpening } from '../src/answerMerge.ts'
+import {
+  applyStreamedOpening,
+  mergeSyncedAnswer,
+  shouldPreferStreamedOpening,
+} from '../src/answerMerge.ts'
 
 const TOOL_BUDGET_FALLBACK = (
   '这次没查到足够具体的做法，我先给你一个稳妥的方向：'
@@ -32,4 +36,40 @@ test('server keeps its own opening when it is already the fuller explanation', (
     shouldPreferStreamedOpening('短句', '这是一段完整且更长的管家讲解。'),
     false,
   )
+})
+
+test('authoritative server opening cannot be overwritten by stale streamed text', () => {
+  const staleStream = '我这边看不到前文 1/2/3 的具体选项，所以不能确认“3”对应哪一条。'
+  const repairedOpening = '你选的第3道是「番茄烘蛋」。'
+
+  assert.equal(
+    shouldPreferStreamedOpening(staleStream, repairedOpening, true),
+    false,
+  )
+  assert.equal(
+    applyStreamedOpening(
+      {
+        opening: repairedOpening,
+        opening_authoritative: true,
+        recipes: [{ name: '番茄烘蛋' }],
+      },
+      staleStream,
+    ).opening,
+    repairedOpening,
+  )
+
+  const merged = mergeSyncedAnswer(
+    {
+      opening: staleStream,
+      recipes: [{ name: '番茄烘蛋', image_url: null }],
+    },
+    {
+      opening: repairedOpening,
+      opening_authoritative: true,
+      recipes: [{ name: '番茄烘蛋', image_url: 'https://images.test/fanqie.png' }],
+    },
+  )
+
+  assert.equal(merged?.opening, repairedOpening)
+  assert.equal(merged?.recipes[0]?.image_url, 'https://images.test/fanqie.png')
 })

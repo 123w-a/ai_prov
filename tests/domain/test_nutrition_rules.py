@@ -1,7 +1,14 @@
 # tests/domain/test_nutrition_rules.py
 # 硬护栏规则引擎单测：验证 L3 确定性审计（不依赖 LLM）
 import unittest
-from domain.nutrition_rules import detect_conditions, audit, describe, RULES, SODIUM_SENSITIVE
+from domain.nutrition_rules import (
+    RULES,
+    SODIUM_SENSITIVE,
+    audit,
+    describe,
+    detect_conditions,
+    sodium_light_reason,
+)
 
 
 class TestDetectConditions(unittest.TestCase):
@@ -132,6 +139,25 @@ class TestSodiumCap(unittest.TestCase):
         vs = audit("清蒸鱼，放盐5克", ["高血压"])
         self.assertFalse(any("食盐" in v["keyword"] for v in vs),
                          "等于上限不应误报")
+
+
+class SodiumLightReasonTest(unittest.TestCase):
+    """单菜卡片缺钠灯时，只依据确定性钠线索补黄灯。"""
+
+    def test_seasoning_sodium_source_returns_reason(self):
+        reason = sodium_light_reason([("蒸鱼豉油", "2勺")])
+        self.assertIn("蒸鱼豉油", reason)
+        self.assertIn("黄灯", reason)
+
+    def test_explicit_no_salt_amount_does_not_add_light(self):
+        self.assertEqual(sodium_light_reason([("盐", "不加盐")]), "")
+
+    def test_step_sodium_source_returns_reason(self):
+        reason = sodium_light_reason([], ["出锅前淋入蒸鱼豉油。"])
+        self.assertIn("蒸鱼豉油", reason)
+
+    def test_without_sodium_clue_stays_empty(self):
+        self.assertEqual(sodium_light_reason([("米醋", "1勺")], ["拌匀即可。"]), "")
 
 
 class TestDescribe(unittest.TestCase):

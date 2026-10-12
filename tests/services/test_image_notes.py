@@ -38,6 +38,15 @@ class ImageNoteTest(unittest.TestCase):
         self.assertIn("如与实际成品有出入，以文字描述为准", once)
         self.assertNotIn("后台自动补图", once)
 
+    def test_internal_asset_source_note_is_not_visible(self):
+        note = sanitize_image_note(
+            "使用系统此前保存的成品图（真实配图）。口感鲜香，适合清淡做法。"
+        )
+
+        self.assertEqual(note, "口感鲜香，适合清淡做法。")
+        self.assertNotIn("系统此前保存", note)
+        self.assertNotIn("真实配图", note)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

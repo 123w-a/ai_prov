@@ -307,6 +307,7 @@ _STREAM_CONTROL_KEYS = (
     '"recipes"', '"opening"', '"answer_kind"', '"candidates"',
     '"guardrails"', '"health_lights"', '"primary_member"',
 )
+_STRUCTURED_OPENING_CHUNK_CHARS = 12
 
 
 class _ControlJsonGate:
@@ -400,6 +401,7 @@ def _stream_agent(message, session_id):
     stream_gates: dict = {}  # 每个节点一份控制 JSON 门闸（见 _ControlJsonGate）
     turn_usage = new_turn_usage()  # 本轮 token 用量累计桶（收尾时落 usage.jsonl）
     emitted_output = False
+    visible_text_emitted = False  # reset 后是否已有可见正文，避免结构化 opening 重复播报
     last_ai_content = ""
     stream_failed = False
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
@@ -426,6 +428,8 @@ def _stream_agent(message, session_id):
                             event = _stream_update_content(content)
                             if event:
                                 emitted_output = True
+                                if event[0] == "token":
+                                    visible_text_emitted = True
                                 yield event
                         continue
                     elif node == "tool_budget_finalize":
@@ -439,6 +443,8 @@ def _stream_agent(message, session_id):
                                 # 预算耗尽路线不会进入 structure_answer，收口正文必须
                                 # 在这里显式转发，否则前端与落库都会拿到空回答。
                                 emitted_output = True
+                                if event[0] == "token":
+                                    visible_text_emitted = True
                                 yield event
                         continue
                     elif node == "verify_answer":
@@ -446,6 +452,15 @@ def _stream_agent(message, session_id):
                         attempts = (update or {}).get("verify_attempts")
                         if status is not None:
                             print(f"[agent-metrics] verify_status={status} verify_attempts={attempts}")
+                            if status == "retry":
+                                # 护栏打回重生成：上一版正文此刻已经全部流式外发过了
+                                # （verify_answer 必然在 chef_think 整条消息结束之后才跑），
+                                # 必须通知下游丢掉它。否则第二版会首尾拼在第一版后面，
+                                # 用户在同一轮里看到同一道菜讲两遍，opening 落库也是两遍。
+                                # 这是控制事件、不是可展示内容，故不置 emitted_output。
+                                stream_gates.pop("chef_think", None)
+                                visible_text_emitted = False
+                                yield ("reset", True)
                     elif node in ("chef_think", "ask_user"):
                         msgs = (update or {}).get("messages") or []
                         if msgs and type(msgs[-1]).__name__ == "AIMessage":
@@ -455,6 +470,7 @@ def _stream_agent(message, session_id):
                         pending_out = _flush_gate(stream_gates, node)
                         if pending_out:
                             emitted_output = True
+                            visible_text_emitted = True
                             yield ("token", pending_out)
                     elif node == "allergen_block":
                         msgs = (update or {}).get("messages") or []
@@ -466,6 +482,22 @@ def _stream_agent(message, session_id):
                                 # 显式转发安全文案或结构化答案，否则前端会只看到空回答
                                 # 或把 ChefAnswer JSON 当成普通正文。
                                 emitted_output = True
+                                if event[0] == "token":
+                                    visible_text_emitted = True
+                                yield event
+                        continue
+                    elif node == "requested_dish_gate":
+                        msgs = (update or {}).get("messages") or []
+                        if msgs:
+                            content = _normalize_stream_content(msgs[-1].content).strip()
+                            event = _stream_update_content(content)
+                            if event:
+                                # 点名菜在生成前被拦下：本轮没有 chef_think 正文，也不经过
+                                # structure_answer，阻断包必须在这里显式转发；否则这一轮
+                                # 会连安全文案都发不出去，前端只剩空回答。
+                                emitted_output = True
+                                if event[0] == "token":
+                                    visible_text_emitted = True
                                 yield event
                         continue
                     if node != "structure_answer":
@@ -482,6 +514,33 @@ def _stream_agent(message, session_id):
                             raw = "".join(
                                 block.get("text", "") for block in raw if isinstance(block, dict)
                             )
+                        structured_event = _stream_update_content(raw)
+                        if (
+                            not visible_text_emitted
+                            and structured_event
+                            and structured_event[0] == "answer"
+                            and isinstance(structured_event[1], dict)
+                            and structured_event[1].get("answer_kind") != "candidates"
+                            and structured_event[1].get("recipes")
+                        ):
+                            opening = str(
+                                structured_event[1].get("opening") or ""
+                            ).strip()
+                            if opening:
+                                # 选定轮可能只有结构化收口、chef_think 没有可展示 token；
+                                # 同一份 opening 先走 token 流，卡片仍由 answer 接管。
+                                visible_text_emitted = True
+                                emitted_output = True
+                                for start in range(
+                                    0, len(opening), _STRUCTURED_OPENING_CHUNK_CHARS
+                                ):
+                                    yield (
+                                        "token",
+                                        opening[
+                                            start:start
+                                            + _STRUCTURED_OPENING_CHUNK_CHARS
+                                        ],
+                                    )
                         emitted_output = True
                         yield ("answer", raw)
                 continue
@@ -508,6 +567,7 @@ def _stream_agent(message, session_id):
                 guarded = _guarded_token(stream_gates, node, message_chunk, content)
                 if guarded:
                     emitted_output = True
+                    visible_text_emitted = True
                     yield ("token", guarded)
             elif node == "chef_think" and isinstance(message_chunk, AIMessageChunk):
                 if gate_asked:
@@ -515,6 +575,7 @@ def _stream_agent(message, session_id):
                 guarded = _guarded_token(stream_gates, node, message_chunk, content)
                 if guarded:
                     emitted_output = True
+                    visible_text_emitted = True
                     yield ("token", guarded)
     except Exception:
         stream_failed = True

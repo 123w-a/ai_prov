@@ -4,15 +4,19 @@
 #   第二阶段 「就第2个」 → 解析到具体菜名 → 单卡片 + 配图
 # 同时覆盖两个交互修复：追问轮次不出卡片、就地补图不新增卡片。
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph.message import add_messages
 
+import agent.trace as trace_mod
 import agent.graph as g
 from storage import sessions as sessions_store
-from agent.schemas import ChefAnswer, Recipe, Seasoning
+from agent.schemas import ChefAnswer, HealthLight, Recipe, Seasoning, SourceRef
 from api.routes import chat_route
 
 CANDIDATE_LIST_TEXT = (
@@ -162,6 +166,9 @@ class CandidateIndexParseTest(unittest.TestCase):
             ("选二吧", 2),
             ("就做2", 2),
             ("就要2号", 2),
+            ("做3把", 3),
+            ("做三把", 3),
+            ("做 3 把。", 3),
             ("第十个", 10),
         ]:
             with self.subTest(text=text):
@@ -169,7 +176,7 @@ class CandidateIndexParseTest(unittest.TestCase):
 
     def test_parse_index_none(self):
         # 「做2个菜」是多菜请求，不是选项号
-        for text in ["做2个菜", "随便来点", "换一道", "来点清爽的"]:
+        for text in ["做2个菜", "做3把菜", "3把菠菜", "随便来点", "换一道", "来点清爽的"]:
             with self.subTest(text=text):
                 self.assertIsNone(g.parse_candidate_index(text))
 
@@ -612,7 +619,7 @@ class RequestedAllergenAdditionTest(unittest.TestCase):
 
 
 class SelectedTargetOpeningPreservationTest(unittest.TestCase):
-    """选定目标结构化时，原始流式讲解仍由 opening 原样承载。"""
+    """选定目标结构化时，正确讲解原样保留，冲突讲解按同一目标校正。"""
 
     TARGET = "番茄青椒炒小龙虾（微辣版）"
 
@@ -650,14 +657,16 @@ class SelectedTargetOpeningPreservationTest(unittest.TestCase):
                 "verify_violated": [],
             })
 
-    def test_original_opening_is_preserved_without_authoritative_override(self):
+    def test_conflicting_opening_is_replaced_with_confirmed_target(self):
         result = self._run_structure(_chef_answer([self.TARGET]))
         payload = json.loads(result["messages"][-1].content)
 
         self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
-        self.assertIn("无法确认", payload["opening"])
-        self.assertIn("清单没有出现在本轮上下文里", payload["opening"])
-        self.assertNotIn("opening_authoritative", payload)
+        self.assertIn("第3道", payload["opening"])
+        self.assertIn(self.TARGET, payload["opening"])
+        self.assertTrue(payload["opening_authoritative"])
+        self.assertNotIn("无法确认", payload["opening"])
+        self.assertNotIn("清单没有出现在本轮上下文里", payload["opening"])
         # chef_tip 是模型提供的独立字段；为空时必须保持为空，不能用
         # recipe.intro 或代码生成的新文案偷偷替换既有输出。
         self.assertEqual(payload["chef_tip"], "")
@@ -672,6 +681,35 @@ class SelectedTargetOpeningPreservationTest(unittest.TestCase):
         payload = json.loads(result["messages"][-1].content)
 
         self.assertEqual(payload["opening"], opening)
+        self.assertNotIn("opening_authoritative", payload)
+
+    def test_selected_opening_without_target_name_is_preserved(self):
+        # 2026-10-11 收窄触发口径：模型写了完整讲解但没重复菜名时不得被模板顶掉
+        # （基线：选定后保留完整讲解）。只有正文自称候选失效或认成另一道候选菜才校正。
+        opening = "好的，已按你选的第3道整理，下面把调料和火候收细一点。"
+        result = self._run_structure(_chef_answer([self.TARGET]), opening=opening)
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["opening"], opening)
+        self.assertNotIn("opening_authoritative", payload)
+        self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
+
+    def test_opening_naming_other_candidate_is_repaired(self):
+        # 认成清单里的另一道菜 = 真正的同轮错位，仍要校正回本轮已选目标
+        opening = "好的，那就按第2道「番茄青椒小龙虾汤面」来做，下面给完整做法。"
+        result = self._run_structure(_chef_answer([self.TARGET]), opening=opening)
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertIn(self.TARGET, payload["opening"])
+        self.assertTrue(payload["opening_authoritative"])
+        self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
+
+    def test_empty_opening_is_not_replaced_by_template(self):
+        # 正文为空交给前端流式原话兜底，模板不能顶掉用户已经看到的讲解
+        result = self._run_structure(_chef_answer([self.TARGET]), opening="")
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["opening"], "")
         self.assertNotIn("opening_authoritative", payload)
 
     def test_mismatched_recipe_does_not_claim_selected_target(self):
@@ -1077,6 +1115,60 @@ class StructureAnswerSpecificDishRegressionTest(unittest.TestCase):
         self.assertIn("wants_images=True", log_text)
 
 
+class StructureAnswerSodiumLightTest(unittest.TestCase):
+    """单菜单卡片的钠灯必须有确定性兜底，但不覆盖模型已有结论。"""
+
+    def _messages(self):
+        return [
+            HumanMessage(content="请给我推荐一道清蒸鲈鱼"),
+            AIMessage(content="清蒸鲈鱼的关键是控制蒸制时间，出锅后少量调味。"),
+        ]
+
+    def _answer(self, health_lights=None):
+        return ChefAnswer(
+            recipes=[
+                Recipe(
+                    name="清蒸鲈鱼",
+                    intro="鲜嫩少油",
+                    difficulty=2,
+                    nutrition=4,
+                    seasonings=[Seasoning(name="蒸鱼豉油", amount="2勺")],
+                    steps=["鱼蒸熟后淋入蒸鱼豉油。"],
+                )
+            ],
+            health_lights=list(health_lights or []),
+            chef_tip="",
+        )
+
+    def _run(self, answer):
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": self._messages(),
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+        return json.loads(result["messages"][-1].content)
+
+    def test_missing_sodium_light_is_backfilled_from_seasoning(self):
+        payload = self._run(self._answer())
+        sodium = [light for light in payload["health_lights"] if light["label"] == "钠"]
+        self.assertEqual(len(sodium), 1)
+        self.assertEqual(sodium[0]["level"], "yellow")
+        self.assertIn("蒸鱼豉油", sodium[0]["reason"])
+
+    def test_existing_sodium_light_is_not_overwritten(self):
+        existing = HealthLight(label="钠", level="red", reason="模型已有的高风险结论")
+        payload = self._run(self._answer([existing]))
+        sodium = [light for light in payload["health_lights"] if light["label"] == "钠"]
+        self.assertEqual(len(sodium), 1)
+        self.assertEqual(sodium[0]["level"], "red")
+        self.assertEqual(sodium[0]["reason"], "模型已有的高风险结论")
+
+
 class VerifyCandidateTurnTest(unittest.TestCase):
     """候选轮只硬审计菜名，安全说明中的过敏原词不能触发无谓重生成。"""
 
@@ -1370,6 +1462,34 @@ class ImagePipelineGateTest(unittest.TestCase):
         text = "就按这个方案执行。请检查一次花生和芝麻风险，并告诉我每人建议吃多少。"
         self.assertTrue(chat_route._should_enable_image_pipeline(text, None))
         self.assertTrue(g._wants_recipe_images([HumanMessage(content=text)]))
+
+    def test_pure_image_request_opens_image_pipeline(self):
+        """「要图片的」这类纯配图请求承接上一轮菜品，必须真的开配图链路。
+
+        回归证据：`sessions/user_cd56c7d003.json` 第 2 轮 —— 上一轮被过敏原拦截
+        （recipes 为空数组、没有可补图的卡片），用户回「要图片的」，此前
+        `_should_enable_image_pipeline` 返回 False，模型于是端出一道**没有图**
+        的成品卡。现在这一轮必须授权配图，最终仍以 recipes 为准。
+        """
+        for text in ["要图片的", "配张图", "配张图片", "我要图片", "给我来张成品图"]:
+            with self.subTest(text=text):
+                self.assertTrue(chat_route._should_enable_image_pipeline(text, None))
+                self.assertTrue(
+                    g._wants_recipe_images(
+                        [HumanMessage(content=f"【配图开关：开启】\n{text}")]
+                    )
+                )
+
+    def test_pure_image_request_does_not_swallow_other_demands(self):
+        """纯配图判据不能把泛推荐/换菜里夹带的「要图」也算成纯配图请求。"""
+        for text in [
+            "推荐几道菜，配张图",
+            "换一道清淡的，要图片的",
+            "顺便配张图，说说营养",
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(chat_route._is_pure_image_request(text, None))
+                self.assertFalse(chat_route._should_enable_image_pipeline(text, None))
 
 
 class NonFoodSafetyFollowupTest(unittest.TestCase):
@@ -1671,6 +1791,10 @@ class BareIndexPickTest(unittest.TestCase):
                 chat_route._resolve_picked_candidate("s1", "选2吧"),
                 "青菜豆腐汤",
             )
+            self.assertEqual(
+                chat_route._resolve_picked_candidate("s1", "做3把"),
+                "番茄牛腩",
+            )
 
     def test_agent_layer_resolves_selection_command_with_particle(self):
         msgs = [
@@ -1681,6 +1805,10 @@ class BareIndexPickTest(unittest.TestCase):
             HumanMessage(content="选2吧"),
         ]
         self.assertEqual(g.resolve_candidate_pick(msgs), (2, "青菜豆腐汤"))
+        self.assertTrue(g._is_dish_pick_turn(msgs))
+
+        msgs[-1] = HumanMessage(content="做3把")
+        self.assertEqual(g.resolve_candidate_pick(msgs), (3, "番茄牛腩"))
         self.assertTrue(g._is_dish_pick_turn(msgs))
 
     def test_simple_pick_keeps_full_opening_and_uses_model(self):
@@ -2358,6 +2486,294 @@ class RetryToolSlotTest(unittest.TestCase):
         )
 
 
+class PickTurnSecondRoundSlotTest(unittest.TestCase):
+    """选定轮第二圈还要取证时必须补回一格额度，否则正文被兜底句顶掉（2026-10-11）。
+
+    实测链路（session user_5294894983，「3」选定「鸡丝黄瓜凉拌面」）：第一圈并排搜 2 个
+    （做法 + 依据）就用光 `PICK_TURN_TOOL_BUDGET=2`，第二圈模型继续取证 →
+    `chef_route_with_tool_budget` 判 `tool_budget_exhausted` → `tool_budget_finalize`
+    把正文换成「这次没查到足够具体的做法…」，卡片照出、讲解却是兜底句。
+
+    边界：只补一格、每轮只补一次、仍受 `MAX_TOOL_ROUNDS` 封顶；非选定轮不补。
+    """
+
+    SECOND_ROUND_CALLS = [
+        {"id": "s1", "name": "web_search", "args": {"query": "鸡丝凉面 少油少盐"}},
+        {"id": "s2", "name": "nutrition_kb_search", "args": {"query": "高血压 凉面 钠"}},
+    ]
+
+    def _base_state(self, **overrides):
+        """第二圈还没发生时的 state（chef_think 直接跑这一份）。"""
+        state = {
+            "messages": list(add_messages([], [
+                HumanMessage(content="我有鸡胸肉、黄瓜和面条"),
+                AIMessage(content=json.dumps(
+                    _candidates_payload(["番茄鸡蛋面", "香菇青菜汤面", "鸡丝黄瓜凉拌面"]),
+                    ensure_ascii=False,
+                )),
+                HumanMessage(content=(
+                    "【已选定候选：鸡丝黄瓜凉拌面】\n"
+                    "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开。）\n\n"
+                    "3"
+                )),
+            ])),
+            "tool_calls_in_turn": g.PICK_TURN_TOOL_BUDGET,
+            "tool_budget": g.PICK_TURN_TOOL_BUDGET,
+            "tool_rounds": 1,
+            "pick_turn_slot_granted": False,
+        }
+        state.update(overrides)
+        return state
+
+    def _second_round(self):
+        return AIMessage(content="", tool_calls=self.SECOND_ROUND_CALLS)
+
+    def _state_after_second_round(self, **overrides):
+        """第二圈「模型刚提出工具调用」时的 state（最后一条就是那个 tool_call 消息）。"""
+        base = self._base_state(**overrides)
+        base["messages"] = add_messages(base["messages"], [self._second_round()])
+        return base
+
+    class _FakeToolLLM:
+        def __init__(self, response):
+            self.response = response
+
+        def invoke(self, payload):
+            return self.response
+
+    class _FakeExecutor:
+        def __init__(self):
+            self.seen_ids = []
+
+        def invoke(self, state):
+            calls = list(getattr(state["messages"][-1], "tool_calls") or [])
+            self.seen_ids = [c["id"] for c in calls]
+            return {"messages": [
+                ToolMessage(content="{}", tool_call_id=c["id"], name=c["name"])
+                for c in calls
+            ]}
+
+    def test_second_round_without_grant_is_judged_exhausted(self):
+        # 现状复算：不补额度时第二圈被判预算耗尽 → 下一跳就是 tool_budget_finalize
+        self.assertEqual(
+            g.chef_route_with_tool_budget(self._state_after_second_round()),
+            "tool_budget_exhausted",
+        )
+
+    def test_second_round_gets_one_more_slot(self):
+        state = self._state_after_second_round()
+        patch = g._pick_turn_slot_patch(state, self._second_round())
+        self.assertEqual(patch["tool_calls_in_turn"], g.PICK_TURN_TOOL_BUDGET - 1)
+        self.assertTrue(patch["pick_turn_slot_granted"])
+        merged = {**state, **patch}
+        self.assertEqual(g._remaining_tool_slots(merged), 1)
+        self.assertEqual(g.chef_route_with_tool_budget(merged), "tools")
+
+    def test_granted_slot_executes_only_one_tool(self):
+        state = self._state_after_second_round()
+        merged = {**state, **g._pick_turn_slot_patch(state, self._second_round())}
+        executor = self._FakeExecutor()
+        with patch.object(g, "tool_executor", executor):
+            out = g.run_tools_node(merged)
+        # 第二圈模型并排提 2 个，补的额度只放行 1 个
+        self.assertEqual(executor.seen_ids, ["s1"])
+        self.assertEqual(out["tool_calls_in_turn"], g.PICK_TURN_TOOL_BUDGET)
+
+    def test_grant_happens_at_most_once_per_turn(self):
+        state = self._state_after_second_round()
+        merged = {**state, **g._pick_turn_slot_patch(state, self._second_round())}
+        with patch.object(g, "tool_executor", self._FakeExecutor()):
+            after_tools = g.run_tools_node(merged)
+        merged = {
+            **merged,
+            "messages": add_messages(merged["messages"], after_tools["messages"]),
+            "tool_calls_in_turn": after_tools["tool_calls_in_turn"],
+            "tool_rounds": after_tools["tool_rounds"],
+            "pick_turn_slot_granted": merged["pick_turn_slot_granted"],
+        }
+        # 补的那圈用掉后模型第三次还要工具：不再补，计数回到封顶值 → 照旧收口
+        merged["messages"] = add_messages(merged["messages"], [self._second_round()])
+        self.assertEqual(g._pick_turn_slot_patch(merged, self._second_round()), {})
+        self.assertEqual(g.chef_route_with_tool_budget(merged), "tool_budget_exhausted")
+
+    def test_non_pick_turn_is_not_granted(self):
+        state = self._state_after_second_round(messages=list(add_messages([], [
+            HumanMessage(content="帮我推荐几道明天中午带饭的菜"),
+            self._second_round(),
+        ])))
+        self.assertEqual(g._pick_turn_slot_patch(state, self._second_round()), {})
+
+    def test_first_round_with_balance_left_is_not_granted(self):
+        # 第一圈余额还没用光就不许动计数，否则等于变相把选定轮宽度从 2 放宽
+        state = self._state_after_second_round(tool_calls_in_turn=0, tool_rounds=0)
+        self.assertEqual(g._remaining_tool_slots(state), g.PICK_TURN_TOOL_BUDGET)
+        self.assertEqual(g._pick_turn_slot_patch(state, self._second_round()), {})
+
+    def test_response_without_tool_calls_is_not_granted(self):
+        state = self._base_state()
+        self.assertEqual(
+            g._pick_turn_slot_patch(state, AIMessage(content="这三道都在你的低盐护栏里。")),
+            {},
+        )
+
+    def test_round_cap_still_binds(self):
+        state = self._state_after_second_round(tool_rounds=g.MAX_TOOL_ROUNDS)
+        self.assertEqual(g._pick_turn_slot_patch(state, self._second_round()), {})
+
+    def test_chef_think_applies_grant_on_second_round(self):
+        state = self._base_state()
+        with patch.object(g, "llm_with_tools", self._FakeToolLLM(self._second_round())):
+            out = g.chef_agent_node(state)
+        self.assertEqual(out["tool_calls_in_turn"], g.PICK_TURN_TOOL_BUDGET - 1)
+        self.assertTrue(out["pick_turn_slot_granted"])
+        merged = {
+            **state,
+            "messages": add_messages(state["messages"], out["messages"]),
+            "tool_calls_in_turn": out["tool_calls_in_turn"],
+            "pick_turn_slot_granted": out["pick_turn_slot_granted"],
+        }
+        self.assertEqual(g.chef_route_with_tool_budget(merged), "tools")
+
+
+class PickTurnCompiledGraphSlotTest(unittest.TestCase):
+    """整图回归：选定轮补额度必须在**真实编译图**里生效，不能只在裸 dict 上成立。
+
+    2026-10-12 根因：LangGraph 按节点函数首参的类型注解推断 input_schema，
+    `chef_agent_node(state: MessagesState)` 让 chef_think 只收到 `{'messages'}`，
+    于是 `_pick_turn_slot_patch` 读不到 `tool_budget / tool_calls_in_turn`，
+    补额度分支恒不命中 → 第二圈被 `chef_route_with_tool_budget` 判预算耗尽 →
+    用户已经看到的正文被 `tool_budget_finalize` 的兜底句顶掉。
+
+    上面 `g.chef_agent_node({...})` 那批用例直传裸 dict，**绕过图裁剪**，测不到这个缺陷；
+    这里补一条走整图的用例，首参注解再退化就会红。
+    """
+
+    CANDIDATES = ["番茄鸡蛋面", "香菇青菜汤面", "鸡丝黄瓜凉拌面"]
+    OPENING = (
+        "按你选的鸡丝黄瓜凉拌面来：鸡胸肉煮熟手撕，面条过凉水，"
+        "生抽一勺、香醋两勺，拌匀即可。"
+    )
+    FALLBACK_MARK = "这次没查到足够具体的做法"
+
+    ROUND1 = AIMessage(content="", tool_calls=[
+        {"id": "ct1", "name": "web_search", "args": {"query": "鸡丝凉面 做法"}},
+        {"id": "ct2", "name": "nutrition_kb_search", "args": {"query": "高血压 凉面 钠"}},
+    ])
+    ROUND2 = AIMessage(content="", tool_calls=[
+        {"id": "ct3", "name": "web_search", "args": {"query": "鸡丝凉面 少油少盐 做法"}},
+    ])
+
+    class _ScriptedLLM:
+        """按顺序回放「并排搜 2 个 → 再搜 1 个 → 自己写完整讲解」。"""
+
+        def __init__(self, turns):
+            self.turns = turns
+            self.index = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, payload):
+            response = self.turns[min(self.index, len(self.turns) - 1)]
+            self.index += 1
+            return response
+
+    class _FakeExecutor:
+        def __init__(self):
+            self.executed = []
+
+        def invoke(self, state):
+            calls = list(getattr(state["messages"][-1], "tool_calls") or [])
+            self.executed.append([c["name"] for c in calls])
+            return {"messages": [
+                ToolMessage(content="{}", tool_call_id=c["id"], name=c["name"])
+                for c in calls
+            ]}
+
+    @staticmethod
+    def _visible_answer(messages):
+        """取用户真正看到的正文：跳过结构化 payload（JSON）和带 tool_calls 的空消息。"""
+        for message in reversed(messages or []):
+            if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
+                text = str(message.content or "")
+                if text.strip().startswith("{"):
+                    continue
+                return text
+        return ""
+
+    def _stub_structured_answer(self, context):
+        """结构化链离线替身：选定轮的卡片内容不是本用例的断言对象。"""
+        return ChefAnswer(recipes=[Recipe(
+            name="鸡丝黄瓜凉拌面",
+            intro="清爽少油的手撕鸡丝凉面",
+            difficulty=2,
+            nutrition=4,
+            seasonings=[Seasoning(name="生抽", amount="一勺")],
+            steps=["鸡胸肉煮熟手撕", "面条过凉水后拌匀"],
+        )])
+
+    def _run_pick_turn(self):
+        llm = self._ScriptedLLM([self.ROUND1, self.ROUND2, AIMessage(content=self.OPENING)])
+        executor = self._FakeExecutor()
+        state_in = {
+            "messages": add_messages([], [
+                HumanMessage(content="我有鸡胸肉、黄瓜和面条"),
+                AIMessage(content=json.dumps(
+                    _candidates_payload(self.CANDIDATES), ensure_ascii=False,
+                )),
+                HumanMessage(content=(
+                    "【已选定候选：鸡丝黄瓜凉拌面】\n"
+                    "（用户用序号选定了上一轮候选清单里的这一道，本轮必须围绕它展开。）\n\n"
+                    "3"
+                )),
+            ]),
+            "session_id": "pick-turn-graph-test",
+        }
+        app = g.workflow.compile(checkpointer=MemorySaver())
+        trace_path = Path(tempfile.gettempdir()) / "probe_pick_turn_graph_test.jsonl"
+        final = None
+        with patch.object(g, "llm_with_tools", llm), \
+                patch.object(g, "llm", llm), \
+                patch.object(g, "summary_llm", llm), \
+                patch.object(g, "retrieval_llm", llm), \
+                patch.object(g, "tool_executor", executor), \
+                patch.object(g, "build_structured_answer", self._stub_structured_answer), \
+                patch.object(g, "rank_recipes", lambda answer, **kwargs: answer), \
+                patch.object(g, "_search_recipe_image", lambda name: (None, False)), \
+                patch.object(trace_mod, "_FILE", trace_path):
+            for chunk in app.stream(
+                state_in,
+                {"configurable": {"thread_id": "pick-turn-graph-test"}},
+                stream_mode="values",
+            ):
+                final = chunk
+        return final, executor
+
+    def test_second_round_tool_call_is_executed(self):
+        final, executor = self._run_pick_turn()
+        # 节点能读到 tool_budget / tool_calls_in_turn → 第二圈补到额度 → 真的执行出去
+        self.assertEqual(
+            executor.executed,
+            [["web_search", "nutrition_kb_search"], ["web_search"]],
+            "选定轮第二圈的工具调用没被执行 —— 先查 chef_think 的 input_schema 是否被裁成 messages",
+        )
+        self.assertFalse(
+            final.get("tool_budget_exhausted"),
+            "选定轮第二圈被判预算耗尽 → 下一跳就是把正文换成兜底句",
+        )
+
+    def test_pick_turn_keeps_model_opening(self):
+        final, _ = self._run_pick_turn()
+        messages = final.get("messages") or []
+        self.assertEqual(self._visible_answer(messages).strip(), self.OPENING)
+        joined = " ".join(str(getattr(m, "content", "")) for m in messages)
+        self.assertNotIn(
+            self.FALLBACK_MARK,
+            joined,
+            "用户已经看到的讲解被 tool_budget_finalize 的兜底句顶掉了",
+        )
+
+
 class OpeningCleanupTest(unittest.TestCase):
     """模型把控制 JSON 当正文吐出来时的清洗：单层 / 双层包裹 / 解析失败，都不许漏 JSON。
 
@@ -2568,6 +2984,196 @@ class OccasionHintTest(unittest.TestCase):
         for key in ["用途/场合", "约 30 字", "永不退让", "不是「能不能吃」", "人性化", "25 字以内"]:
             with self.subTest(key=key):
                 self.assertIn(key, tpl)
+
+
+class KbSourceBackfillTest(unittest.TestCase):
+    """亮点4（可溯源）：模型漏填 sources 时，由代码按本轮 KB 命中确定性回填。
+
+    只回填来源文件与章节——语义是「本轮检索到这些依据」，不声称每条健康结论
+    与片段逐一对应；模型已给出 sources 时一字不动，没有命中时保持空列表。
+    """
+
+    DISH = "清蒸鲈鱼"
+    INFANT_SOURCE = "中国婴幼儿喂养状况白皮书（2022）.pdf"
+    GB_SOURCE = "GB 7718-2025 预包装食品标签通则.pdf"
+
+    def _real_hits(self):
+        # 真实 nutrition_kb_search 返回形状：只有 excerpt，没有 text
+        return [
+            {"source": "中国居民膳食指南2022.pdf", "section": "少盐",
+             "distance": 0.12, "excerpt": "成人每天食盐不超过5克。",
+             "metadata": {"anchor": "p42"}},
+            {"source": "成人高血压食养指南（2023年版）", "section": "限盐",
+             "distance": 0.2, "excerpt": "高血压患者应减少钠摄入。",
+             "metadata": {"anchor": "p10"}},
+        ]
+
+    def _kb_message(self, hits, *, found=True):
+        return ToolMessage(
+            content=json.dumps({"found": found, "hits": hits}, ensure_ascii=False),
+            tool_call_id="kb1",
+            name="nutrition_kb_search",
+        )
+
+    def _messages(self):
+        return [
+            HumanMessage(content="帮我做道清蒸鲈鱼"),
+            AIMessage(content="", tool_calls=[
+                {"name": "nutrition_kb_search", "args": {"query": "低盐"}, "id": "kb1"},
+            ]),
+            self._kb_message(self._real_hits()),
+            AIMessage(content=f"{self.DISH}的关键是控制用盐，下面给你完整做法。"),
+        ]
+
+    def _audience_hits(self):
+        return [
+            {"source": self.INFANT_SOURCE, "section": "婴幼儿喂养", "excerpt": "..."},
+            {"source": self.GB_SOURCE, "section": "致敏物质标示", "excerpt": "..."},
+        ]
+
+    def _state(self):
+        return {"messages": self._messages(), "verify_status": "ok", "verify_violated": []}
+
+    def test_kb_source_refs_extracts_source_and_section(self):
+        refs = g._kb_source_refs(self._messages())
+        self.assertEqual(refs, [
+            {"source": "中国居民膳食指南2022.pdf", "section": "少盐"},
+            {"source": "成人高血压食养指南（2023年版）", "section": "限盐"},
+        ])
+
+    def test_kb_source_refs_dedupes_and_caps(self):
+        hits = [{"source": "同一份.pdf", "section": "同一条"}] * 3 + [
+            {"source": "另一份.pdf", "section": "条目A"},
+            {"source": "第三份.pdf", "section": "条目B"},
+            {"source": "第四份.pdf", "section": "条目C"},
+        ]
+        refs = g._kb_source_refs([HumanMessage(content="来一道"), self._kb_message(hits)])
+        self.assertLessEqual(len(refs), 3)
+        # 同一 (文件, 章节) 只留一条
+        self.assertEqual(refs[0], {"source": "同一份.pdf", "section": "同一条"})
+        self.assertEqual(
+            [ref["source"] for ref in refs],
+            ["同一份.pdf", "另一份.pdf", "第三份.pdf"],
+        )
+
+    def test_kb_source_refs_empty_without_hits(self):
+        self.assertEqual(g._kb_source_refs(self._messages()[:1]), [])
+        self.assertEqual(g._kb_source_refs([self._kb_message([], found=False)]), [])
+
+    def test_structure_node_backfills_sources_when_model_omits(self):
+        answer = _chef_answer([self.DISH])  # sources 默认空列表
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(self._state())
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["recipes"][0]["name"], self.DISH)
+        self.assertEqual(payload["sources"], [
+            {"source": "中国居民膳食指南2022.pdf", "section": "少盐",
+             "snippet": "", "category": ""},
+            {"source": "成人高血压食养指南（2023年版）", "section": "限盐",
+             "snippet": "", "category": ""},
+        ])
+
+    def test_kb_source_refs_filters_infant_source_for_adult_context(self):
+        messages = [
+            HumanMessage(content="帮我做道清蒸鲈鱼"),
+            self._kb_message(self._audience_hits()),
+        ]
+        refs = g._kb_source_refs(messages)
+        self.assertEqual(
+            refs,
+            [{"source": self.GB_SOURCE, "section": "致敏物质标示"}],
+        )
+
+    def test_kb_source_refs_allows_infant_source_for_infant_context(self):
+        messages = [
+            HumanMessage(content="给2岁宝宝做一道清蒸鲈鱼"),
+            self._kb_message(self._audience_hits()),
+        ]
+        refs = g._kb_source_refs(messages)
+        self.assertEqual(
+            [ref["source"] for ref in refs],
+            [self.INFANT_SOURCE, self.GB_SOURCE],
+        )
+
+    def test_structure_node_keeps_matching_model_source(self):
+        answer = _chef_answer([self.DISH])
+        answer.sources = [SourceRef(source="模型自己填的.pdf", section="章节", snippet="片段")]
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._active_profile_audience_text", return_value=""),
+        ):
+            result = g.structure_answer_node(self._state())
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["sources"][0]["source"], "模型自己填的.pdf")
+        self.assertEqual(len(payload["sources"]), 1)
+
+    def test_structure_node_filters_model_source_and_backfills_safe_kb_source(self):
+        answer = _chef_answer([self.DISH])
+        answer.sources = [
+            SourceRef(source=self.INFANT_SOURCE, section="婴幼儿喂养", snippet="..."),
+        ]
+        messages = [
+            HumanMessage(content="帮我做道清蒸鲈鱼"),
+            self._kb_message(self._audience_hits()),
+            AIMessage(content=f"{self.DISH}的关键是控制用盐，下面给你完整做法。"),
+        ]
+        with (
+            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._active_profile_audience_text", return_value=""),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(
+            payload["sources"],
+            [{"source": self.GB_SOURCE, "section": "致敏物质标示",
+              "snippet": "", "category": ""}],
+        )
+
+    def test_structure_node_leaves_sources_empty_without_kb_hits(self):
+        messages = [
+            HumanMessage(content="帮我做道清蒸鲈鱼"),
+            AIMessage(content=f"{self.DISH}的关键是控制用盐，下面给你完整做法。"),
+        ]
+        with (
+            patch("agent.graph.build_structured_answer", return_value=_chef_answer([self.DISH])),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node(
+                {"messages": messages, "verify_status": "ok", "verify_violated": []}
+            )
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["sources"], [])
+
+    def test_structured_allergen_block_backfills_kb_sources(self):
+        """结构化复核命中过敏原而取消卡片时，本轮检索到的依据同样要带上。"""
+        with (
+            patch("agent.graph.build_structured_answer", return_value=_chef_answer([self.DISH])),
+            patch("agent.graph._build_structure_context", return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph.audit_allergens", return_value=[{"condition": "过敏原:花生"}]),
+        ):
+            result = g.structure_answer_node(self._state())
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual(payload["recipes"], [])
+        self.assertEqual(payload["sources"], [
+            {"source": "中国居民膳食指南2022.pdf", "section": "少盐",
+             "snippet": "", "category": ""},
+            {"source": "成人高血压食养指南（2023年版）", "section": "限盐",
+             "snippet": "", "category": ""},
+        ])
 
 
 if __name__ == "__main__":

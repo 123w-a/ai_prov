@@ -11,7 +11,9 @@ const KNOWN_SHORT_OPENING_PREFIXES = [
 export function shouldPreferStreamedOpening(
   streamedText: string | null | undefined,
   opening: string | null | undefined,
+  openingAuthoritative = false,
 ): boolean {
+  if (openingAuthoritative) return false
   const streamed = (streamedText ?? '').trim()
   if (!streamed) return false
   const current = (opening ?? '').trim()
@@ -23,7 +25,7 @@ export function shouldPreferStreamedOpening(
 
 export function applyStreamedOpening(answer: ChefAnswer, streamedText: string): ChefAnswer {
   const streamed = streamedText.trim()
-  return shouldPreferStreamedOpening(streamed, answer.opening)
+  return shouldPreferStreamedOpening(streamed, answer.opening, answer.opening_authoritative)
     ? { ...answer, opening: streamed }
     : answer
 }
@@ -31,10 +33,13 @@ export function applyStreamedOpening(answer: ChefAnswer, streamedText: string): 
 function chooseSyncedOpening(
   localOpening: string | null | undefined,
   serverOpening: string | null | undefined,
+  serverOpeningAuthoritative = false,
 ): string {
   const local = (localOpening ?? '').trim()
   const server = (serverOpening ?? '').trim()
-  return local && shouldPreferStreamedOpening(local, server) ? local : server
+  return local && shouldPreferStreamedOpening(local, server, serverOpeningAuthoritative)
+    ? local
+    : server
 }
 
 export function mergeSyncedAnswer(
@@ -57,7 +62,11 @@ export function mergeSyncedAnswer(
   })
   return {
     ...serverAnswer,
-    opening: chooseSyncedOpening(localAnswer.opening, serverAnswer.opening),
+    opening: chooseSyncedOpening(
+      localAnswer.opening,
+      serverAnswer.opening,
+      serverAnswer.opening_authoritative,
+    ),
     chef_tip: serverAnswer.chef_tip || localAnswer.chef_tip || '',
     recipes,
     image_url: serverAnswer.image_url ?? localAnswer.image_url ?? null,

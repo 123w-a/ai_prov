@@ -7,6 +7,8 @@ export default defineConfig({
   cacheDir: '.vite-cache',
   server: {
     port: 5178,
+    // 端口被占用时直接报错退出，不自动漂移到 5179（避免"旧实例占着 5178、新实例偷偷跑 5179"）
+    strictPort: true,
     watch: {
       ignored: ['**/*.tmpdir/**'],
     },

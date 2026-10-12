@@ -18,6 +18,12 @@ import re
 _ORGAN_MEAT = ["动物内脏", "猪肝", "鸡肝", "鸭肝", "猪肾", "鸡肾", "鸭肠", "脑", "腰子"]
 _HIGH_PURINE_SEAFOOD = ["沙丁鱼", "凤尾鱼", "带鱼", "秋刀鱼", "牡蛎", "蛤蜊", "虾", "蟹", "贝", "鱼干"]
 _SALT_SEASONING = ["盐", "酱油", "生抽", "老抽", "蚝油", "鸡精", "味精", "豆瓣酱", "辣椒酱", "豆腐乳", "腐乳"]
+# 健康灯只负责提示，不参与 hard audit。这里补上常见的“豉油”等钠来源，
+# 让同一道菜不会因为模型漏填 health_lights 就显示成无钠风险。
+_SODIUM_LIGHT_SEASONINGS = tuple(dict.fromkeys(
+    _SALT_SEASONING + ["豉油", "蒸鱼豉油", "鱼露", "虾酱", "咸肉"]
+))
+_NO_SODIUM_AMOUNT_RE = re.compile(r"(?:不|无|未|没)(?:用|加|放|含|使用|额外)|零|0(?:g|克|ml|毫升)")
 # 这些本身也是高钠食物，判定口径与盐/酱油一致（走「限量语境」判定）。
 # 它只决定「怎么判」，不改变各病种 forbidden 词表里到底有哪些词。
 _SALT_QUALIFIABLE = set(_SALT_SEASONING) | {"榨菜", "泡菜", "咸菜", "酱菜"}
@@ -234,6 +240,55 @@ def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
             continue
         return True
     return False
+
+
+def sodium_light_reason(seasonings, steps=None) -> str:
+    """为一组已产出的卡片备料判断是否需要补“钠”黄灯。
+
+    只在结构化卡片确有成盐/高钠调味料时返回理由：
+    - 备料名称命中钠来源，且用量没有明确写成“不放/不用/不含”；
+    - 或步骤文本里出现实际下料语境。
+
+    `少盐` 只是烹饪取向，不能凭空伪造绿灯；只有在没有任何成盐线索时返回空串，
+    由调用方保持模型原有 health_lights。
+    """
+    for item in seasonings or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "")
+            amount = str(item.get("amount") or "")
+        else:
+            try:
+                name, amount = item
+            except (TypeError, ValueError):
+                continue
+            # 兼容「dict.items() 形态」的备料项：((\"name\", \"蒸鱼豉油\"), \"5ml\")。
+            # 不解这一层时 name 会变成元组字面量，reason 里直接冒出
+            # 「备料含('name', '蒸鱼豉油')」—— 实现细节漏进用户可见文案（实测 10-10 Q3）。
+            if isinstance(name, (tuple, list)) and len(name) >= 2:
+                name = name[1]
+            if isinstance(amount, (tuple, list)) and len(amount) >= 2:
+                amount = amount[1]
+            name = str(name or "")
+            amount = str(amount or "")
+        for keyword in sorted(_SODIUM_LIGHT_SEASONINGS, key=len, reverse=True):
+            if keyword not in name:
+                continue
+            normalized_name = re.sub(r"\s+", "", name)
+            normalized_amount = re.sub(r"\s+", "", amount)
+            if _NO_SODIUM_AMOUNT_RE.search(normalized_amount):
+                break
+            return (
+                f"备料含{normalized_name or keyword}，属于需要计入当日总量的钠来源；"
+                "未提供具体钠含量，按保守口径标为黄灯。"
+            )
+    step_text = "\n".join(str(step or "") for step in (steps or []))
+    for keyword in sorted(_SODIUM_LIGHT_SEASONINGS, key=len, reverse=True):
+        if _has_unqualified_occurrence(step_text, keyword, "salt"):
+            return (
+                f"步骤中出现{keyword}等含钠调味线索，未提供具体钠含量；"
+                "按保守口径标为黄灯。"
+            )
+    return ""
 
 
 # 档案 conditions 的匹配词表：比消息侧更宽（「孕18周」这类自由文本也要命中孕期），

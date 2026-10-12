@@ -77,6 +77,7 @@ function normalizeChefAnswer(answer: ChefAnswer): ChefAnswer {
   return {
     ...raw,
     opening: typeof raw.opening === 'string' ? raw.opening : '',
+    opening_authoritative: Boolean(raw.opening_authoritative),
     recipes,
     image_url: typeof raw.image_url === 'string' ? raw.image_url : null,
     image_ai_generated: Boolean(raw.image_ai_generated),
@@ -601,6 +602,16 @@ export default function App() {
               ...current,
               [sessionId!]: (current[sessionId!] ?? []).map((message) =>
                 message.id === assistantId ? { ...message, stage: 'thinking' } : message,
+              ),
+            })),
+          onReset: () =>
+            cancelledImageTurnsRef.current[assistantId]
+              ? undefined
+              :
+            setMessagesBySession((current) => ({
+              ...current,
+              [sessionId!]: (current[sessionId!] ?? []).map((message) =>
+                message.id === assistantId ? { ...message, text: '' } : message,
               ),
             })),
           onToken: (token) =>

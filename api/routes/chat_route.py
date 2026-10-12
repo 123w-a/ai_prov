@@ -325,22 +325,54 @@ def _apply_mode_prompt(message: str, mode: str) -> str:
     return message
 
 
+# 配图意图短语：`_wants_image` 与「纯配图请求」判定共用同一份词表，
+# 避免两处口径漂移（一处认、一处不认）。
+_IMAGE_REQUEST_PHRASES = (
+    "配图", "配张图", "补图", "换图", "生成图片", "生成一张图", "来张图",
+    "发图", "发张图", "发图片", "发个图", "出图", "出个图", "图给我",
+    "带图", "带图片", "有图", "有图片",
+    "我要图片", "要图片", "要张图片", "要一张图片",
+    "看看图", "看看图片", "看图片", "看图", "看一下图", "看一下图片", "看个图",
+    "给我看图", "给我看看", "让我看看", "想看图片", "想看图", "图片欣赏",
+    "成品图", "成品照", "实拍图", "示意图", "效果图", "样图", "参考图",
+    "想看看", "长什么样", "什么样子", "啥样", "样式", "外观", "照片", "实拍",
+    "换张图", "换一张", "再来一张", "另一张",
+)
+
+# 环绕配图短语的语气词/敬语/量词：它们本身不构成诉求，只是「要图」的伴生字。
+_IMAGE_REQUEST_NOISE = (
+    "麻烦你", "麻烦", "帮我", "给我", "请", "我想", "想要", "我要",
+    "看一下", "看看", "一下", "一张", "一个", "个", "张", "片",
+    "来", "再", "就", "看", "我", "你",
+    "的", "了", "吧", "呢", "吗", "啊", "呀", "嘛",
+)
+
+# 纯配图请求只允许由「配图短语 + 伴生字」组成；出现其它字符即视为夹带诉求。
+_IMAGE_REQUEST_ALLOWED_CHARS = frozenset(
+    "".join(_IMAGE_REQUEST_PHRASES) + "".join(_IMAGE_REQUEST_NOISE)
+)
+
+
 def _wants_image(message: str, want_image: str | None) -> bool:
     if str(want_image or "").strip().lower() in {"1", "true", "yes", "on"}:
         return True
     text = str(message or "")
-    strong_phrases = (
-        "配图", "配张图", "补图", "换图", "生成图片", "生成一张图", "来张图",
-        "发图", "发张图", "发图片", "发个图", "出图", "出个图", "图给我",
-        "带图", "带图片", "有图", "有图片",
-        "我要图片", "要图片", "要张图片", "要一张图片",
-        "看看图", "看看图片", "看图片", "看图", "看一下图", "看一下图片", "看个图",
-        "给我看图", "给我看看", "让我看看", "想看图片", "想看图", "图片欣赏",
-        "成品图", "成品照", "实拍图", "示意图", "效果图", "样图", "参考图",
-        "想看看", "长什么样", "什么样子", "啥样", "样式", "外观", "照片", "实拍",
-        "换张图", "换一张", "再来一张", "另一张",
-    )
-    return any(phrase in text for phrase in strong_phrases)
+    return any(phrase in text for phrase in _IMAGE_REQUEST_PHRASES)
+
+
+def _is_pure_image_request(message: str, want_image: str | None) -> bool:
+    """「要图片的」这类**只**在要图、没夹带其他诉求的请求。
+
+    先确认确实有配图意图，再看去掉标点和内部标记后，剩下的是否全由
+    「配图短语 + 伴生字」构成。泛推荐（「推荐几道菜，配张图」）、换菜
+    （「换一道清淡的，要图片的」）都会留下「推荐/几道菜」「换/清淡」这类
+    实质字符，因此不会被误判成纯配图；它们的「要图」仍按基线先走候选清单。
+    """
+    if not _wants_image(message, want_image):
+        return False
+    text = re.sub(r"【[^】]*】", "", str(message or ""))
+    text = re.sub(r"[\s，。！？、,.!?;；：:\"'“”‘’（）()~～]+", "", text)
+    return bool(text) and all(char in _IMAGE_REQUEST_ALLOWED_CHARS for char in text)
 
 
 def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool):
@@ -371,6 +403,12 @@ def _prefer_streamed_opening(answer: dict, streamed_text: str) -> bool:
     """
     if not isinstance(answer, dict):
         return False
+    # agent/graph.py 在为「本轮选定目标」校准过 opening 时会下发 opening_authoritative，
+    # 其契约原文就是「不得被旧流式正文覆盖」。前端 answerMerge.ts 已按该标志拒绝覆盖，
+    # 服务端这里若仍用更长的流式正文改写，会在落库前把校准静默撤销，而标志仍为 True
+    # ⇒ 前端又拒绝改回，用户看到的是被撤销的版本且无法自愈。
+    if answer.get("opening_authoritative"):
+        return False
     streamed = str(streamed_text or "").strip()
     if not streamed:
         return False
@@ -384,6 +422,21 @@ def _prefer_streamed_opening(answer: dict, streamed_text: str) -> bool:
     if should_replace:
         answer["opening"] = streamed
     return should_replace
+
+
+def _accumulate_streamed_text(parts: list[str], kind: str, payload) -> bool:
+    """累积本轮可见正文；reset 只丢弃上一版重生成内容。
+
+    护栏 retry 会让同一轮出现两版正文。reset 到达时服务端必须和前端一起清空，
+    否则最终 opening 会把违规的第一版与有效的第二版首尾拼接。
+    """
+    if kind == "reset":
+        parts.clear()
+        return False
+    if kind != "token" or not isinstance(payload, str):
+        return False
+    parts.append(payload)
+    return True
 
 
 def _is_pure_execute_plan_request(message: str) -> bool:
@@ -675,7 +728,11 @@ def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
         return False
     specific = is_specific_dish_request(message)
     if _wants_image(message, want_image) and not _is_image_revision_request(message, want_image):
-        return specific
+        # 点名菜要图 → 直接开；「要图片的」这类不带其他诉求的**纯配图请求**也开：
+        # 它承接的就是上一轮已经给出的那道菜，此前被判成「没点名菜」而落回通用
+        # 链路，模型于是端出一道没有图的成品卡（实测 user_cd56c7d003 第 2 轮）。
+        # 泛推荐/换菜会剩下实质内容，不满足纯配图判据，仍按基线先出候选清单。
+        return specific or _is_pure_image_request(message, want_image)
     intent = _classify_turn_intent(message)
     return intent == "confirm_one" or (intent == "change_one" and specific) or (
         intent == "recommend" and specific
@@ -1600,8 +1657,15 @@ async def chat(
                 if kind == "token":
                     if not isinstance(payload, str) or _looks_like_control_json(payload):
                         continue
-                    full_parts.append(payload)
+                    _accumulate_streamed_text(full_parts, kind, payload)
                     yield f"data: {json.dumps({'token': payload}, ensure_ascii=False)}\n\n"
+                elif kind == "reset":
+                    # 护栏打回重生成：上一版正文已经流式推给前端了，服务端和前端必须
+                    # 一起丢弃。只清前端不清这里，_prefer_streamed_opening 仍会把
+                    # 两版拼接后的文本写进 opening 落库；只清这里不清前端，用户
+                    # 眼前的气泡也还是两遍。
+                    _accumulate_streamed_text(full_parts, kind, payload)
+                    yield f"data: {json.dumps({'reset': True}, ensure_ascii=False)}\n\n"
                 elif kind == "stage":
                     yield f"data: {json.dumps({'stage': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "answer":

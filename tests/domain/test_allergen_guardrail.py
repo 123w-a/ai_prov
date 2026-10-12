@@ -8,7 +8,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from domain import allergen_rules
 import agent.graph as agent_graph
@@ -294,12 +294,47 @@ class TestNoFalsePositive(unittest.TestCase):
             ("含虾？是的，确实加了虾", "虾"),
             ("含虾吗？确定有虾仁，正常使用", "虾"),
             ("虾、虾皮、虾米一律加入", "虾"),
-            ("虾制品是主料", "虾"),
+                    ("虾制品是主料", "虾"),
         ]
         for text, expected_keyword in cases:
             with self.subTest(text=text):
                 result = allergen_rules.audit_allergens(text, ["crustacean"])
                 self.assertTrue(result)
+                self.assertEqual(result[0]["keyword"], expected_keyword)
+
+    def test_exclusive_negation_is_not_treated_as_ingredient(self):
+        """「非」也是否定词，安全说明不得当成真下料。
+
+        实测翻车点（2026-10-10，会话 user_c9b101adf6）：分餐矩阵写
+        「只需确认用油非花生油、砧板锅具没沾花生碎」，被判定命中「花生油」，
+        verify_answer 打回重生成 ⇒ 用户看到同一道菜讲了两遍。
+        同句的「没沾花生碎」是同类误报，一并锁住。
+        """
+        cases = (
+            "只需确认用油非花生油、砧板锅具没沾花生碎",
+            "砧板与锅具不粘花生粉，也不沾花生碎",
+            "本菜用油非花生油。",
+            "本菜用油并非花生油。",
+            "本菜用油而非花生油。",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    allergen_rules.audit_allergens(text, ["peanut"]), []
+                )
+
+    def test_exclusive_negation_does_not_excuse_real_use(self):
+        """「非」只放宽安全说明；强调式双重否定与「非法/非转基因」仍必须拦。"""
+        cases = (
+            ("非转基因花生油", "花生油"),
+            ("非法添加花生", "花生"),
+            ("非花生油不可", "花生油"),
+            ("这道菜非用花生油不可", "花生油"),
+        )
+        for text, expected_keyword in cases:
+            with self.subTest(text=text):
+                result = allergen_rules.audit_allergens(text, ["peanut"])
+                self.assertTrue(result, f"{text} 属于真下料，必须拦下")
                 self.assertEqual(result[0]["keyword"], expected_keyword)
 
 
@@ -574,6 +609,39 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertIn("甲壳纲", blocked_items[0]["condition"])
         self.assertNotIn("已调整", blocked_items[0]["reason"])
 
+    def test_blocked_payload_backfills_kb_sources(self):
+        """阻断轮也要标依据：本轮检索过权威条目就带上（只给文件+章节）。"""
+        kb = ToolMessage(
+            content=json.dumps({"found": True, "hits": [
+                {"source": "成人高血压食养指南（2023年版）", "section": "限盐"},
+                {"source": "中国居民膳食指南2022.pdf", "section": "少盐"},
+            ]}, ensure_ascii=False),
+            tool_call_id="kb1",
+            name="nutrition_kb_search",
+        )
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
+            result = agent_graph.allergen_block_node({
+                "messages": [HumanMessage(content="今晚吃什么"), kb],
+                "verify_violated": ["过敏原:甲壳纲类动物及其制品"],
+            })
+        payload = json.loads(result["messages"][0].content)
+        self.assertEqual(payload["recipes"], [])
+        self.assertEqual(payload["sources"], [
+            {"source": "成人高血压食养指南（2023年版）", "section": "限盐",
+             "snippet": "", "category": ""},
+            {"source": "中国居民膳食指南2022.pdf", "section": "少盐",
+             "snippet": "", "category": ""},
+        ])
+
+    def test_blocked_payload_without_kb_keeps_sources_empty(self):
+        with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
+            result = agent_graph.allergen_block_node({
+                "messages": [HumanMessage(content="今晚吃什么")],
+                "verify_violated": ["过敏原:甲壳纲类动物及其制品"],
+            })
+        payload = json.loads(result["messages"][0].content)
+        self.assertEqual(payload["sources"], [])
+
     def test_blocked_status_never_rendered_as_adjusted(self):
         """分支顺序回归：blocked 必须先判，否则会落进 adjusted 分支变成不实表述。"""
         with patch("agent.graph._allergens_for_audit", return_value=[]):
@@ -616,7 +684,7 @@ class TestVerifyGraph(unittest.TestCase):
 
 
 class TestStructuredReaudit(unittest.TestCase):
-    def test_safe_retry_result_explains_rejected_requested_dish(self):
+    def test_requested_dish_with_confirmed_allergen_blocks_before_structure(self):
         answer = ChefAnswer(
             recipes=[
                 Recipe(
@@ -636,19 +704,48 @@ class TestStructuredReaudit(unittest.TestCase):
                 AIMessage(content="已重新生成安全替代"),
             ],
             "session_id": "allergen-opening-test",
-            "verify_violated": ["过敏原:花生及其制品"],
+            "verify_violated": [],
         }
         with (
             patch("agent.graph._allergens_for_audit", return_value=["花生"]),
             patch("agent.graph._build_structure_context", return_value=("可结构化上下文", None, False)),
-            patch("agent.graph.build_structured_answer", return_value=answer),
+            patch("agent.graph.build_structured_answer", return_value=answer) as build,
         ):
             result = agent_graph.structure_answer_node(state)
         payload = json.loads(result["messages"][0].content)
+        build.assert_not_called()
+        self.assertEqual(result["verify_status"], "blocked")
+        self.assertEqual(payload["recipes"], [])
         self.assertIn("不能推荐", payload["opening"])
         self.assertIn("花生酱", payload["opening"])
-        self.assertIn("芝麻酱拌面", payload["opening"])
-        self.assertNotIn("opening_authoritative", payload)
+        self.assertIn("替代方向", payload["opening"])
+        self.assertNotIn("芝麻酱拌面", payload["opening"])
+
+    def test_negated_requested_allergen_is_not_misblocked(self):
+        answer = ChefAnswer(recipes=[Recipe(
+            name="清汤面",
+            intro="不含花生",
+            difficulty=1,
+            nutrition=3,
+            seasonings=[Seasoning(name="盐", amount="1g")],
+            steps=["煮面。"],
+        )], chef_tip="")
+        state = {
+            "messages": [
+                HumanMessage(content="推荐一道不含花生的面"),
+                AIMessage(content="清汤面不含花生。"),
+            ],
+            "session_id": "allergen-negative-request-test",
+            "verify_violated": [],
+        }
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._build_structure_context", return_value=("可结构化上下文", None, False)),
+            patch("agent.graph.build_structured_answer", return_value=answer) as build,
+        ):
+            result = agent_graph.structure_answer_node(state)
+        build.assert_called_once()
+        self.assertNotEqual(result.get("verify_status"), "blocked")
 
     def test_structured_card_is_dropped_if_model_reintroduces_allergen(self):
         answer = ChefAnswer(

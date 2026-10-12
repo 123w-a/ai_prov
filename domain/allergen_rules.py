@@ -326,12 +326,19 @@ def _in_spans(start: int, end: int, spans: List[tuple]) -> bool:
 
 _NEGATION_HEAD = (
     r"(?:切勿|切莫|绝无|绝不|并不|不再|不要|不能|不应|不得|不可|"
-    r"严禁|禁止|没有|没|未|无|不|别|避免|禁用|拒绝)"
+    r"严禁|禁止|没有|没|未|无|不|别|避免|避开|禁用|拒绝|"
+    # 「非」也是否定词，但必须紧邻过敏原词才算否定（详见下方两个 lookahead）。
+    # 实测翻车点：分餐矩阵写「只需确认用油非花生油、砧板锅具没沾花生碎」，
+    # 没有这一支时「花生油」被当成真下料，触发无谓重生成，正文因此翻倍。
+    r"非(?!用|法))"
 )
 _NEGATION_MODIFIER = r"(?:额外|继续|实际|主动|也|仍|与|和|同|会|要|能|可|再){0,4}"
 _NEGATION_ACTION = (
     r"(?:添加|加入|使用|采用|食用|饮用|保留|出现|含有|接触|共用|"
     r"放入|放进|拌入|掺入|做成|制作成|改造为|改为|换成|"
+    # 「沾／粘」是交叉污染说明的常用动词：「没沾花生碎」「不粘花生粉」都是安全说明。
+    # 少了它们，同一句安全说明里的第二个过敏原词仍会被当成真下料而触发重生成。
+    r"沾|粘|"
     r"用煮过|用焯过|用泡过|煮过|焯过|泡过|碰|进入|进|加|放|含|吃|喝|用)?"
 )
 _NEGATION_QUANTITY = r"(?:任何|所有|各种|全部|一点|丝毫)*"
@@ -385,6 +392,24 @@ def _is_negated_mention(text: str, start: int) -> bool:
         _NEGATION_PREFIX_RE.search(before)
         or _NEGATED_LIST_RE.search(before)
     )
+
+
+_EMPHATIC_SUFFIX_RE = re.compile(r"^\s*不可")
+
+
+def _is_emphatic_double_negative(text: str, start: int, end: int) -> bool:
+    """「非…不可」是强调式双重否定，意思是「必须用」，不能按否定放行。
+
+    例：「做这道菜非花生油不可」= 一定要用花生油。「非」单字加入否定词表后
+    会把它误判成安全说明，这里做定点兜回，保证否定词表只放宽安全说明、
+    不放过真下料。只认紧邻形态（关键词前一字为「非」、后接「不可」）；
+    「并非…不可」语义相反，不在此列，保持既有判定。
+    """
+    if start < 1 or text[start - 1] != "非":
+        return False
+    if start >= 2 and text[start - 2] == "并":
+        return False
+    return bool(_EMPHATIC_SUFFIX_RE.match(text[end:end + 4]))
 
 
 def _is_postfix_negated_mention(text: str, end: int) -> bool:
@@ -452,7 +477,9 @@ def _first_match(
             for other_start, other_end, _ in raw_matches
         ):
             continue
-        if _is_negated_mention(text, start):
+        if _is_negated_mention(text, start) and not _is_emphatic_double_negative(
+            text, start, end
+        ):
             continue
         if _is_postfix_negated_mention(text, end):
             continue

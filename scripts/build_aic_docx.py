@@ -1,6 +1,23 @@
 # -*- coding: utf-8 -*-
 """按 AIC 第八届算法创新赛·赛题4「AI+场景创新」官方模板骨架生成参赛方案 docx。
 真实内容与工程均已落地；需用户实地采集的数据（问卷/访谈/试点）一律标【待填】。
+
+⚠️ 2026-10-10 说明（重要，先读这段）：
+  本脚本产出的 `小膳管家_参赛方案_算法创新赛.docx` 是当前 AIC 技术报告的**前身骨架**
+  （204511 B / 6519 字 / 27 处【待填】），已于 2026-10-10 移入 `Desktop\\_archive\\旧稿\\`。
+
+  当前交付物是 `Desktop\\AIC提交\\2026年第八届_AIC技术报告_融合版-补充版.docx`
+  （~334 KB / 15175 字 / 0 处待填），其中的调研数据（73.9% / 21.7%）、团队成员、
+  测试矩阵、附录清单等本脚本**没有**。⇒ **不要用本脚本"重新生成"该报告**，
+  否则会覆盖丢失内容。
+
+  本脚本的定位：① 保留官方模板骨架；② 口径与当前报告保持一致，防止旧数字回流。
+  本次已同步的口径：三层解耦（应用层—算法层—数据层）+ 四段运行链路 + 确定性护栏为
+  横切安全控制；27 份权威文件（含 8 项食养指南）/ 1435 chunk / 288 条营养底表 /
+  8 个工具 / 12 节点·4 条件边·8 普通边 / 召回距离 0.187 与 0.297。
+
+  运行依赖：matplotlib（绘图）+ python-docx（生成 docx）。
+  当前 `.venv` 两者都缺（matplotlib 只在 anaconda3 基础环境），如需重跑请先补装。
 """
 import os
 from docx import Document
@@ -119,28 +136,38 @@ def draw_architecture(save_path):
         ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
                 color=tc, fontsize=fs, fontweight="bold")
 
-    for y, label in [(7.4, "应用层（交互入口）"), (4.0, "算法层（决策中枢 · 本作品核心）"), (0.6, "数据层（知识与画像底座）")]:
-        ax.add_patch(FancyBboxPatch((0.2, y), 9.6, 2.5, boxstyle="round,pad=0.02",
+    for y, label in [(7.4, "应用层（交互入口：页面 · 拍照 · 定位 · 文字/语音 · API）"),
+                     (4.0, "算法层（决策中枢 · 工具编排 · 记忆与追问）"),
+                     (0.6, "数据层（知识 · 底表 · 画像 · 会话与运行数据）")]:
+        ax.add_patch(FancyBboxPatch((0.2, y), 8.9, 2.5, boxstyle="round,pad=0.02",
                                     linewidth=1.5, edgecolor="#185FA5", facecolor="#EAF3FB"))
-        ax.text(0.4, y + 2.35, label, ha="left", va="center", fontsize=12,
+        ax.text(0.4, y + 2.35, label, ha="left", va="center", fontsize=11,
                 fontweight="bold", color="#0C447C")
 
-    box(0.7, 7.7, 2.85, 1.5, "在家：拍照识别冰箱\n（零输入多模态）", "#3B6D11")
-    box(3.75, 7.7, 2.85, 1.5, "在外：定位/商圈\n（附近餐厅导航）", "#3B6D11")
-    box(6.8, 7.7, 2.9, 1.5, "文字/语音：健康问答\n与模糊需求澄清", "#3B6D11")
+    box(0.6, 7.7, 2.6, 1.5, "拍照识别冰箱\n（零输入多模态）", "#3B6D11")
+    box(3.35, 7.7, 2.6, 1.5, "定位/商圈\n（附近餐厅导航）", "#3B6D11")
+    box(6.1, 7.7, 2.8, 1.5, "文字/语音\n（健康问答与需求澄清）", "#3B6D11")
 
-    box(0.7, 4.3, 3.0, 1.6, "chef_think\nLangGraph 循环 Agent\n（思考+工具选择+反思）", "#185FA5")
-    box(3.9, 4.3, 2.8, 1.6, "工具集 6 个\nRAG检索/联网搜/附近餐\n热量/运动/文件沙箱", "#185FA5")
-    box(6.9, 4.3, 2.8, 1.6, "硬护栏\nnutrition_rules\n+ verify_answer 审核", "#A32D2D", tc="white")
-    box(0.7, 6.05, 9.0, 0.55, "三层健康记忆 + 自适应追问（AgentMental 范式）", "#0F6E56", fs=10)
+    box(0.6, 4.10, 3.3, 1.50, "chef_think（LangGraph 循环 Agent）\n思考 + 工具选择 + 反思\n12 节点 · 4 条件边 · 8 普通边", "#185FA5", fs=9.5)
+    box(4.05, 4.10, 2.5, 1.50, "工具集 8 个\nRAG检索/联网搜/附近餐\n冰箱缺口/健康化改造/文件", "#185FA5", fs=9.5)
+    box(6.7, 4.10, 2.2, 1.50, "硬护栏\nnutrition_rules\n+ verify_answer 审核", "#A32D2D", tc="white", fs=9.5)
+    box(0.6, 5.75, 8.3, 0.40, "三层健康记忆 + 自适应追问（AgentMental 范式）", "#0F6E56", fs=9.5)
 
-    box(0.7, 0.95, 4.4, 1.7, "权威护栏 RAG（Chroma）\n11 份国家食养指南/国标 PDF\n402 chunk + Contextual 前缀\nparser_router→ingest 入库", "#5F5E5A")
-    box(5.3, 0.95, 4.4, 1.7, "动态发现 + 静态底表\nweb_search / nearby_food(mock)\n5_层 营养底表 CSV(1347 食物)\n用户健康画像档案", "#5F5E5A")
+    box(0.6, 0.95, 4.1, 1.7, "权威护栏 RAG（Chroma）\n27 份权威文件（含 8 项食养指南）\n1435 chunk + 页码锚定\nparser_router → ingest 入库", "#5F5E5A", fs=9.5)
+    box(4.9, 0.95, 4.0, 1.7, "营养底表 CSV（288 条记录）\n用户健康画像档案\n会话与运行数据\n（checkpoint · sessions）", "#5F5E5A", fs=9.5)
 
-    ax.add_patch(FancyArrowPatch((5, 7.4), (5, 6.6), arrowstyle="-|>", mutation_scale=16, color="#185FA5"))
-    ax.add_patch(FancyArrowPatch((5, 4.0), (5, 2.65), arrowstyle="-|>", mutation_scale=16, color="#185FA5"))
-    ax.text(5.2, 5.0, "决策调用", fontsize=9, color="#185FA5")
-    ax.text(5.2, 3.3, "知识/数据供给", fontsize=9, color="#185FA5")
+    # 横切安全控制：红色竖向控制条（贯穿算法层到输出端，不单独计为架构层）
+    ax.add_patch(FancyBboxPatch((9.2, 4.0), 0.42, 5.9, boxstyle="round,pad=0.01",
+                                linewidth=0, edgecolor="#A32D2D", facecolor="#A32D2D"))
+    ax.text(9.41, 6.95, "确定性硬护栏 · 横切安全控制", rotation=90, ha="center", va="center",
+            color="white", fontsize=8.5, fontweight="bold")
+
+    ax.add_patch(FancyArrowPatch((4.65, 7.4), (4.65, 6.6), arrowstyle="-|>", mutation_scale=16, color="#185FA5"))
+    ax.add_patch(FancyArrowPatch((4.65, 4.0), (4.65, 2.65), arrowstyle="-|>", mutation_scale=16, color="#185FA5"))
+    ax.text(4.8, 7.02, "交互请求 / 结果返回", fontsize=9, color="#185FA5")
+    ax.text(4.8, 3.5, "读写数据 / 知识供给", fontsize=9, color="#185FA5")
+    ax.text(4.85, 0.25, "确定性护栏属横切安全控制，不单独计为架构层",
+            ha="center", va="center", fontsize=8.5, color="#A32D2D", fontweight="bold")
 
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -184,7 +211,7 @@ def main():
          "小膳管家是一个带健康护栏的多模态膳食决策 Agent，面向“不会做饭、预算紧、有慢病忌口，"
          "却每天必须决定吃什么”的人群。用户拍一张冰箱照或口述身体状态，系统在过敏/慢病忌口、"
          "控糖控盐、热量目标等约束内，给出安全、便宜、可执行的一餐方案——在家给菜谱，在外给点单红线。"
-         "本项目以 11 份国家权威食养指南与国标构建可溯源 RAG 知识护栏，用 LangGraph 循环 Agent 做决策中枢，"
+         "本项目以 27 份国家权威文件（含 8 项食养指南）与国标构建可溯源 RAG 知识护栏，用 LangGraph 循环 Agent 做决策中枢，"
          "并设确定性硬规则校验节点（nutrition_rules + verify_answer），对违禁推荐带次数上限地打回重生成。"
          "创新不在“做菜技巧”，而在把国家膳食指南变成可实时调用的决策护栏，替用户完成“能不能吃、怎么搭配、去哪吃”的决策。"
          "（本段约 290 字，提交前可再精简至 300 字内）")
@@ -255,21 +282,24 @@ def main():
 
     heading(doc, "（二）解决方案设计", 2)
     heading(doc, "1. 技术路线规划", 3)
-    body(doc, "整体技术路线：多模态输入 → LangGraph 循环 Agent 决策中枢 → 双支柱（权威护栏 RAG + 动态发现）→ "
-              "结构化输出；并在中枢后接确定性硬护栏审核。具体选型：")
+    body(doc, "整体技术路线按“应用层—算法层—数据层”三层解耦；运行时形成“输入 → 决策 → 知识与工具供给 → "
+              "护栏审核 → 结构化输出”的完整链路，其中确定性护栏属横切安全控制，不单独计为架构层。具体选型：")
     bullet(doc, "多模态输入：拍照识冰箱（视觉模型）、定位/商圈、文字/语音健康状态；")
-    bullet(doc, "决策中枢：LangGraph 状态图，节点含 condense_history / chef_think / run_tools / structure_answer，"
+    bullet(doc, "决策中枢：LangGraph 状态图（12 节点 / 4 条件边 / 8 普通边），节点含 condense_history / ingredient_gate / "
+                "profile_gate / chef_think / run_tools / verify_answer / structure_answer，"
                 "工具结果回流 LLM 形成“思考→调工具→再思考”闭环；")
-    bullet(doc, "权威护栏 RAG：11 份国家食养指南与国标 PDF → parser_router 确定性解析路由 → ingest 切片 + "
-                "Contextual 前缀 → Chroma 向量库（402 chunk）；")
-    bullet(doc, "动态发现：web_search（菜谱/成品图）、nearby_food（mock 兜底，真实接高德/百度 POI）；")
-    bullet(doc, "硬护栏：nutrition_rules（确定性禁忌规则，每条带 PDF 出处）+ verify_answer（命中违禁带反馈打回重生成，"
-                "最多 3 次防循环，仍不过则降级并附安全警示，绝不静默放行）；")
+    bullet(doc, "权威护栏 RAG：27 份国家权威文件（含 8 项食养指南）与国标 PDF → parser_router 确定性解析路由 → "
+                "ingest 切片 + 页码锚定前缀 → Chroma 向量库（1435 chunk）；")
+    bullet(doc, "动态发现：web_search（菜谱/成品图）、nearby_food（mock 兜底，高德/百度 POI 接入属待实现目标）；")
+    bullet(doc, "硬护栏（横切安全控制）：nutrition_rules（确定性禁忌规则，每条带 PDF 出处）+ verify_answer"
+                "（命中违禁带反馈打回重生成，最多 3 次防循环，仍不过则降级并附安全警示，绝不静默放行）；")
     bullet(doc, "记忆与交互：三层健康记忆（用户/主题/陈述）+ 自适应追问澄清（AgentMental 范式），解决表达含糊死穴；")
     bullet(doc, "透明标注：AI 生成图片强制标“AI 生成示意图”，健康建议强制附出处文件名。")
 
     heading(doc, "2. 系统架构设计", 3)
-    body(doc, "系统按“数据层—算法层—应用层”三层解耦，确保可扩展性与稳定性：")
+    body(doc, "系统采用“应用层—算法层—数据层”三层解耦架构，确保可扩展性与稳定性。运行时形成"
+              "“输入 → 决策 → 知识与工具供给 → 护栏审核 → 结构化输出”的完整链路；"
+              "其中确定性护栏属于横切安全控制，不单独计为架构层：")
     arch_png = os.path.join(os.path.dirname(OUT), "小膳管家_系统架构图.png")
     try:
         draw_architecture(arch_png)
@@ -279,19 +309,21 @@ def main():
         body(doc, "图 1 系统架构图（数据流：应用层入口 → 算法层决策中枢 → 数据层知识与画像供给）",
              size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
     except Exception as e:
-        body(doc, "【建议此处插入系统架构图：应用层（拍照/定位/问答）→ 算法层（chef_think 循环 Agent + "
-                  "6 工具 + 硬护栏 + 三层记忆）→ 数据层（权威 RAG / 动态发现 / 营养底表 / 用户画像）。"
+        body(doc, "【建议此处插入系统架构图：应用层（页面/拍照/定位/文字语音/API）→ 算法层（chef_think 循环 Agent + "
+                  "8 工具 + 硬护栏 + 三层记忆）→ 数据层（权威 RAG / 营养底表 / 用户画像 / 会话与运行数据）；"
+                  "红色竖向控制条表示确定性硬护栏横切算法层到输出端。"
                   "绘图失败原因：" + str(e)[:80] + "】")
-    body(doc, "数据层：权威护栏 RAG（Chroma，402 chunk + Contextual）、动态发现（mock）、5_层营养底表 CSV"
-              "（1347 种食物）、用户健康画像档案。算法层：LangGraph 决策中枢 + 6 个工具 + 确定性硬护栏"
-              " + 三层记忆。应用层：在家拍照、在外定位、文字/语音问答三类入口统一收口到同一决策中枢。")
+    body(doc, "数据层：权威护栏 RAG（Chroma，1435 chunk + 页码锚定）、营养底表 CSV（288 条记录）、用户健康画像档案、"
+              "会话与运行数据。算法层：LangGraph 决策中枢（12 节点 / 4 条件边 / 8 普通边）+ 工具编排（8 个工具）"
+              " + 硬护栏（横切安全控制）+ 记忆与自适应追问。应用层：页面交互、拍照识别、定位导航、文字/语音入口，"
+              "统一经 API 收口到同一决策中枢。")
 
     heading(doc, "3. 功能模块设计", 3)
     table(doc,
           ["模块", "功能", "实现方式", "协同"],
-          [["知识库构建", "权威 PDF→可检索向量", "parser_router 路由 + ingest 切片 + Contextual + Chroma", "喂入 RAG 工具"],
+          [["知识库构建", "权威 PDF→可检索向量", "parser_router 路由 + ingest 切片 + 页码锚定 + Chroma", "喂入 RAG 工具"],
            ["决策中枢", "多轮思考+工具编排", "LangGraph 状态图 + 循环边 + checkpointer", "调用全部工具"],
-           ["工具集(6)", "RAG/联网/附近餐/热量/运动/文件", "@tool 装饰器 + 文件沙箱白名单", "被中枢调用"],
+           ["工具集(8)", "RAG 检索/联网搜索/附近餐厅/冰箱缺口/健康化改造/文件/库存/周报", "@tool 装饰器 + 文件沙箱白名单", "被中枢调用"],
            ["硬护栏", "违禁拦截+重生成", "nutrition_rules 规则 + verify_answer 节点", "阻断不合规输出"],
            ["记忆/追问", "跨轮画像+澄清", "三层记忆 + AgentMental 范式", "提升决策个性化"]])
 
@@ -310,11 +342,11 @@ def main():
     body(doc, "关键技术实现细节（已落地，可复现）：")
     bullet(doc, "PDF 解析路由：基于“扫描件判定（每页字符数）/页数/图文密度/表格密度”四项加权确定性打分，"
                 ">2.0 走云端 OCR 解析器，否则走本地免费解析器；纯结构属性不调用 LLM，降本且可解释。")
-    bullet(doc, "离线索引：Markdown 按标题切片、PDF 按段落递归切片；Contextual Retrieval（Anthropic 2024）"
-                "为每个 chunk 生成“在全文中的位置”前缀，召回精度提升实测（见验证章）。")
+    bullet(doc, "离线索引：Markdown 按标题切片、PDF 按段落递归切片；采用页码锚定前缀（借鉴 Contextual Retrieval 的"
+                "“为切片补充上下文”思路，Anthropic 2024），为每个 chunk 追加其在全文中的位置信息，召回精度提升实测（见验证章）。")
     bullet(doc, "循环 Agent：run_tools 执行后回流 chef_think 再次思考；长对话用 RemoveMessage 真实删旧消息，"
                 "并成对清理孤儿 ToolMessage 防 400 错误；SQLite checkpointer 实现多轮记忆。")
-    bullet(doc, "硬护栏：verify_answer 节点置于 chef_think 与 structure_answer 之间，命中 nutrition_rules 违禁即"
+    bullet(doc, "硬护栏（横切安全控制）：verify_answer 节点置于 chef_think 与 structure_answer 之间，命中 nutrition_rules 违禁即"
                 "带“哪道菜踩了哪条禁忌+出处”反馈打回，最多 3 次后降级并附警示。")
     heading(doc, "3. 团队协作", 3)
     body(doc, "【待填：成员专业背景、分工与协作机制。例如：算法/工程（Agent 与 RAG）、"
@@ -335,8 +367,9 @@ def main():
               "满意度(1–5)、决策耗时(分钟)、健康合规率。每组建档 10–15 人，周期 2–4 周。【待填真实数字】")
     heading(doc, "2. 验证结果", 3)
     body(doc, "已实测的引擎级结果（无需 LLM key 即可复现）：")
-    bullet(doc, "RAG 召回：Contextual 重建后，「高血压饮食」查询距离 0.178→0.171、「痛风忌口」0.280→0.263，"
-                "碎片片段借助上下文前缀被正确召回；402 chunk 全部带 contextual 标记，分层命中正确。")
+    bullet(doc, "RAG 召回：页码锚定重建后，「高血压饮食」查询距离 0.187（命中《成人高血压食养指南》p.11）、"
+                "「痛风忌口」0.297（命中《成人高尿酸血症与痛风食养指南》p.69），碎片片段借助页码前缀被正确召回；"
+                "1435 个切片全部带页码锚定，分层命中正确。")
     bullet(doc, "硬护栏：痛风坏菜单（老火汤炖猪肝+啤酒）被确定性规则命中 5 条禁忌并打回；合规菜单放行；"
                 "连续违禁 3 次后正确降级并附安全警示，无无限循环。")
     body(doc, "【待填：A/B 对照实验的四项指标真实数值、用户评价原话（至少 3–5 句，含年龄/身份标注）、"
@@ -347,9 +380,9 @@ def main():
     body(doc, "【待填：试点范围、对象、方式与实际案例。例如“在 X 社区/校园邀请 N 人试用 2 周，"
               '完成率 X%、典型反馈：……”。应用效果（15 分）主要来自真实落地证据，务必补。】')
     heading(doc, "2. 成果展示", 3)
-    bullet(doc, "技术成果：可运行的小膳管家原型（LangGraph 循环 Agent + RAG 402 chunk + 硬护栏节点），"
+    bullet(doc, "技术成果：可运行的小膳管家原型（LangGraph 循环 Agent + RAG 1435 chunk + 硬护栏节点），"
                 "源码可复现（见附录）。")
-    bullet(doc, "知识资产：11 份国家权威食养指南/国标已结构化入库并逐条可溯源。")
+    bullet(doc, "知识资产：27 份国家权威文件（含 8 项食养指南）与国标已结构化入库并逐条可溯源。")
     bullet(doc, "差异化亮点：健康约束硬执行（确定性规则兜底，不靠 LLM 自觉）、全链路透明标注、三层健康记忆。")
     body(doc, "【待填：论文/专利/检测报告/用户使用证明等佐证材料的取得情况。】", bold=True)
 
@@ -368,11 +401,13 @@ def main():
     doc.add_page_break()
     heading(doc, "三、附录", 1)
     heading(doc, "1. 代码与模型", 2)
-    bullet(doc, "agent_graph.py：LangGraph 决策中枢（condense_history / chef_think / run_tools / structure_answer / verify_answer）。")
-    bullet(doc, "nutrition_rules.py：确定性硬禁忌规则引擎（高血压/痛风/糖尿病/肾病/高脂血症/肥胖，每条带 PDF 出处）。")
+    bullet(doc, "agent/graph.py：LangGraph 决策中枢（12 节点：condense_history、ingredient_gate、profile_gate、chef_think、"
+                "run_tools、verify_answer、structure_answer、allergen_block、profile_memory、ask_user、"
+                "tool_budget_finalize、ingredient_confirm）。")
+    bullet(doc, "domain/nutrition_rules.py：确定性硬禁忌规则引擎（高血压/痛风/糖尿病/肾病/高脂血症/肥胖，每条带 PDF 出处）。")
     bullet(doc, "rag/ingest.py、indexing/parser_router.py、rag/retriever.py、rag/store.py：知识库构建与检索。")
-    bullet(doc, "agent_tools.py：6 个工具（web_search / get_file / nearby_food / calorie_lookup / exercise_equiv / nutrition_kb_search）。")
-    bullet(doc, "agent_schemas.py：ChefAnswer 含 sources 引文字段，实现权威依据进结构化卡片。")
+    bullet(doc, "agent_tools/__init__.py：8 个工具（web_search / get_file / nearby_food / nutrition_kb_search / healthy_remix / fridge_gap / query_fridge_inventory / query_weekly_report）。")
+    bullet(doc, "agent/schemas.py：ChefAnswer 含 sources 引文字段，实现权威依据进结构化卡片。")
     bullet(doc, "embedding：bge-small-zh-v1.5；向量库：Chroma（collection=dietary_kb）。")
 
     heading(doc, "2. 参考文献", 2)

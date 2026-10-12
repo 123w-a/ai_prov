@@ -1,5 +1,6 @@
 ﻿param(
-    [switch]$PreflightOnly
+    [switch]$PreflightOnly,
+    [switch]$RestartBackend
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +49,84 @@ function Wait-Http([string]$Url, [int]$TimeoutSeconds, [int]$ExpectedStatus = 20
     return $false
 }
 
+function Stop-BackendOnPort([int]$Port) {
+    # 只杀"长得像本项目后端"的进程：可执行文件位于本项目 .venv 下，或命令行含 run.py。
+    # 拿不准的一律中止（绝不误杀别人的服务）——与 run.py 的 is_our_backend 同一套保守口径。
+    $VenvRoot = (Join-Path $Root ".venv").ToLowerInvariant()
+    $Conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $Conns) {
+        Write-Host "[OK] 端口 $Port 本来就空闲。"
+        return $true
+    }
+    foreach ($Conn in $Conns) {
+        $OwnerPid = $Conn.OwningProcess
+        if (-not $OwnerPid) { continue }
+        $Proc = Get-CimInstance Win32_Process -Filter "ProcessId=$OwnerPid" -ErrorAction SilentlyContinue
+        if (-not $Proc) {
+            Fail "端口 $Port 被 PID $OwnerPid 占用，但读不到该进程信息，已中止以免误杀。"
+        }
+        $ExePath = ""
+        if ($Proc.ExecutablePath) { $ExePath = $Proc.ExecutablePath.ToLowerInvariant() }
+        $CmdLine = ""
+        if ($Proc.CommandLine) { $CmdLine = $Proc.CommandLine.ToLowerInvariant() }
+        $LooksOurs = $ExePath.StartsWith($VenvRoot) -or (($CmdLine -match "\.venv") -and ($CmdLine -match "run\.py"))
+        if (-not $LooksOurs) {
+            Fail "端口 $Port 被非本项目进程占用（PID $OwnerPid，$ExePath），未做任何处理，请手动确认。"
+        }
+        Write-Host "[INFO] 正在关闭旧后端：PID $OwnerPid"
+        Stop-Process -Id $OwnerPid -Force -ErrorAction SilentlyContinue
+    }
+    # 等端口真正释放（Windows 释放有延迟），最多 5 秒
+    for ($i = 0; $i -lt 20; $i++) {
+        if (-not (Test-Port $Port)) {
+            Write-Host "[OK] 端口 $Port 已释放。"
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return -not (Test-Port $Port)
+}
+
+function Stop-FrontendOnPort([int]$Port) {
+    # 只杀"长得像本项目前端 dev server"的进程：命令行同时含本项目前端目录与 vite。
+    # 拿不准的一律中止（绝不误杀别人的服务）——与 Stop-BackendOnPort 同一套保守口径。
+    # 注意：vite 绑 IPv4 还是 IPv6 由 --host 决定（--host 127.0.0.1 只绑 IPv4，不带则绑 localhost/::1），
+    # 这里按端口取全部监听连接，不区分协议族，避免漏杀。
+    $FrontendDirLower = $FrontendDir.ToLowerInvariant().Replace("/", "\")
+    $Conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $Conns) {
+        Write-Host "[OK] 端口 $Port 本来就空闲。"
+        return $true
+    }
+    foreach ($Conn in $Conns) {
+        $OwnerPid = $Conn.OwningProcess
+        if (-not $OwnerPid) { continue }
+        $Proc = Get-CimInstance Win32_Process -Filter "ProcessId=$OwnerPid" -ErrorAction SilentlyContinue
+        if (-not $Proc) {
+            Fail "端口 $Port 被 PID $OwnerPid 占用，但读不到该进程信息，已中止以免误杀。"
+        }
+        $ExePath = ""
+        if ($Proc.ExecutablePath) { $ExePath = $Proc.ExecutablePath.ToLowerInvariant() }
+        $CmdNorm = ""
+        if ($Proc.CommandLine) { $CmdNorm = $Proc.CommandLine.ToLowerInvariant().Replace("/", "\") }
+        $LooksOurs = $CmdNorm.Contains($FrontendDirLower) -and ($CmdNorm -match "vite")
+        if (-not $LooksOurs) {
+            Fail "端口 $Port 被非本项目进程占用（PID $OwnerPid，$ExePath），未做任何处理，请手动确认。"
+        }
+        Write-Host "[INFO] 正在关闭旧前端 dev server：PID $OwnerPid"
+        Stop-Process -Id $OwnerPid -Force -ErrorAction SilentlyContinue
+    }
+    # 等端口真正释放（Windows 释放有延迟），最多 5 秒
+    for ($i = 0; $i -lt 20; $i++) {
+        if (-not (Test-Port $Port)) {
+            Write-Host "[OK] 端口 $Port 已释放。"
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return -not (Test-Port $Port)
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $Root ".env"))) {
     Fail "缺少 .env。请先按 .env.example 配置模型与知识库参数。"
 }
@@ -67,6 +146,15 @@ if (-not $Node -or -not $Npm) {
 }
 
 $BackendRunning = Test-Port $BackendPort
+if ($BackendRunning -and $RestartBackend -and -not $PreflightOnly) {
+    # -RestartBackend：不要"复用旧进程"，先把它关掉，让新代码真正生效。
+    # 只在显式传开关时走到这里；不加开关时下面的 readiness 复用逻辑一字不动。
+    Write-Host "[INFO] -RestartBackend 已指定，正在关闭 $BackendPort 上的旧后端…"
+    if (-not (Stop-BackendOnPort -Port $BackendPort)) {
+        Fail "无法释放后端端口 $BackendPort，请手动处理占用进程后重试。"
+    }
+    $BackendRunning = Test-Port $BackendPort
+}
 if ($BackendRunning) {
     try {
         $Ready = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/health/ready" -TimeoutSec 3
@@ -78,15 +166,21 @@ if ($BackendRunning) {
     }
 }
 
-$FrontendPort = $null
-for ($Port = $FrontendStartPort; $Port -le ($FrontendStartPort + 20); $Port++) {
-    if (-not (Test-Port $Port)) {
-        $FrontendPort = $Port
-        break
+# 前端固定跑在 $FrontendStartPort（5178）：不再向上扫空闲端口——
+# 否则旧实例占着 5178 时新实例会漂到 5179，浏览器就开错端口。
+# 默认行为 = 先回收本项目旧前端（只杀自家 vite 进程），再在原端口启动，保证"始终只有一个前端"。
+$FrontendPort = $FrontendStartPort
+if ($PreflightOnly) {
+    if (Test-Port $FrontendPort) {
+        Write-Host "[INFO] 预检：前端端口 $FrontendPort 已被占用（启动时会先回收本项目旧实例）。"
+    } else {
+        Write-Host "[INFO] 预检：前端端口 $FrontendPort 空闲。"
     }
-}
-if (-not $FrontendPort) {
-    Fail "找不到空闲前端端口（$FrontendStartPort-$($FrontendStartPort + 20)）。"
+} elseif (Test-Port $FrontendPort) {
+    Write-Host "[INFO] 端口 $FrontendPort 已被占用，正在回收本项目旧前端…"
+    if (-not (Stop-FrontendOnPort -Port $FrontendPort)) {
+        Fail "无法释放前端端口 $FrontendPort，请手动处理占用进程后重试。"
+    }
 }
 
 Write-Host "[OK] 预检通过：Python、Node、目录、.env 和端口均可用。"
@@ -133,7 +227,16 @@ if (-not $BackendRunning) {
     }
     Write-Host "[OK] 后端已启动：http://127.0.0.1:$BackendPort（PID $($Backend.Id)，单 worker）"
 } else {
-    Write-Host "[OK] 后端已运行：http://127.0.0.1:$BackendPort（复用现有进程）"
+    $Reused = Get-NetTCPConnection -LocalPort $BackendPort -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $ReusedPid = if ($Reused) { $Reused.OwningProcess } else { '?' }
+    $ReusedStart = ''
+    if ($ReusedPid -ne '?') {
+        $ReusedProc = Get-CimInstance Win32_Process -Filter "ProcessId=$ReusedPid" -ErrorAction SilentlyContinue
+        if ($ReusedProc) { $ReusedStart = $ReusedProc.CreationDate }
+    }
+    Write-Host "[OK] 后端已运行：http://127.0.0.1:$BackendPort（复用现有进程 PID $ReusedPid，启动于 $ReusedStart）"
+    Write-Host "     若刚改过代码要生效，请用：.\start.ps1 -RestartBackend（先杀旧进程再起新的）"
 }
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)

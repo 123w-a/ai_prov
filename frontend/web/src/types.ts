@@ -45,6 +45,8 @@ export interface DishMatrixItem {
 
 export interface ChefAnswer {
   opening?: string
+  /** 后端已按本轮选定目标校准 opening，配图回填同步时不得被旧流式正文覆盖 */
+  opening_authoritative?: boolean
   recipes: Recipe[]
   image_url?: string | null
   image_ai_generated?: boolean

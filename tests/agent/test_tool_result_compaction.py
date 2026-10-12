@@ -34,7 +34,7 @@ class ToolResultCompactionTest(unittest.TestCase):
         raw = json.dumps(payload, ensure_ascii=False)
         self.assertEqual(g._compact_tool_result(_tool_msg("web_search", payload)), raw)
 
-    def test_kb_hits_drop_redundant_excerpt_and_control_count(self):
+    def test_kb_hits_drop_redundant_excerpt_when_text_exists(self):
         hits = [{
             "source": f"指南{i}.pdf", "section": "少盐", "distance": 0.1,
             "excerpt": "与 text 重复的片段" * 40,
@@ -50,6 +50,29 @@ class ToolResultCompactionTest(unittest.TestCase):
             self.assertIn("source", hit)
             self.assertIn("anchor", hit["metadata"])
             self.assertLessEqual(len(hit["text"]), 800 + 8)
+        self.assertTrue(out["found"])
+
+    def test_kb_hits_keep_excerpt_when_no_text(self):
+        # 真实 nutrition_kb_search 只返回 excerpt（见 agent_tools/__init__.py），
+        # 没有 text。此时若仍按「excerpt 冗余」丢掉，命中片段会在进结构化链前
+        # 整个消失，sources.snippet 无原文可取——只能靠模型编或留空。
+        hits = [{
+            "source": f"指南{i}.pdf", "section": "少盐", "distance": 0.1,
+            "excerpt": "减盐片段" * 300,
+            "metadata": {"anchor": f"指南{i}.pdf_p{10 + i}"},
+        } for i in range(10)]
+        out = json.loads(g._compact_tool_result(
+            _tool_msg("nutrition_kb_search", {"found": True, "hits": hits})))
+        self.assertEqual(len(out["hits"]), g._MAX_RESULT_ITEMS)
+        for hit in out["hits"]:
+            # 没有 text 时 excerpt 是唯一正文来源，必须保留并截断
+            self.assertNotIn("text", hit)
+            self.assertIn("excerpt", hit)
+            self.assertTrue(hit["excerpt"].startswith("减盐片段"))
+            self.assertLessEqual(len(hit["excerpt"]), 800 + 8)
+            self.assertTrue(hit["excerpt"].endswith("…（已截断）"))
+            self.assertIn("source", hit)
+            self.assertIn("anchor", hit["metadata"])
         self.assertTrue(out["found"])
 
     def test_non_json_falls_back_to_whole_clip(self):
