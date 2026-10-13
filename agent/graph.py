@@ -4,6 +4,7 @@
 
 import json#结构化回答打包成 JSON 字符串落进消息
 import logging#结构化节点异常观测：静默降级也必须留下可定位证据
+import os#充分性门控增强开关（CHEF_SUFFICIENCY_FULL）
 import re
 from pathlib import Path#读取 data/profile.json（家庭档案激活成员）
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
@@ -4912,6 +4913,69 @@ def _is_vague_health_input(user_text: str) -> bool:
     return not any(marker in text for marker in specific_markers)
 
 
+# --------------------------------------------------------------------------- #
+#  充分性增强档（默认关闭：CHEF_SUFFICIENCY_FULL=1 打开）
+#
+#  背景：基线刻意「放宽」——用户自述病种即视为信息充分、不再追问
+#  （见 tests/domain/test_profile_gate.py 的 *_does_not_repeat_question）。
+#  本段补的是「控制强度」这一维：自述病种 ≠ 说清了要控制到什么程度。
+#  默认关闭以保证既有基线与它的测试一字不变；打开后，门控会在用户自述病种、
+#  且没有说明控制强度时追一次，说清即不再问。
+# --------------------------------------------------------------------------- #
+SUFFICIENCY_FULL = os.getenv("CHEF_SUFFICIENCY_FULL", "").strip() in ("1", "true", "True")
+
+_MISSING_INTENSITY = "该病种的控制强度（是否遵医嘱严格限制）"
+_MISSING_PREGNANCY = "是否已怀孕及孕周"
+
+# 控制强度标记：命中即认为用户已说明「严到什么程度」，不再追问。
+_INTENSITY_MARKERS = (
+    "严格控", "严格限", "严格控制", "遵医嘱", "医生要求", "医生让", "医生说要",
+    "医嘱", "控制稳定", "控制得还行", "控制得不错", "控制得不好",
+    "吃药", "在服药", "按时服药", "平时注意", "日常注意", "注意一点", "注意点",
+    "清淡就行", "少盐就行", "轻度", "轻度偏高", "偏高一点", "临界", "刚查出来",
+)
+
+
+def _self_declared_intensity(user_text: str) -> bool:
+    """用户本轮是否已说明该病种的控制强度（严格遵医嘱 vs 平时注意）。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _INTENSITY_MARKERS)
+
+
+def _active_profile_restricts() -> list:
+    """读 data/profile.json 激活成员的医嘱/长期硬限制。
+
+    与 _active_profile_conditions 同源同兜底：档案里已写明硬限制，
+    说明强度已明确，门控不再追问。读不到档案一律返回空。
+    """
+    try:
+        path = _profile_path()
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return []
+        members = raw.get("members")
+        if isinstance(members, list) and members:
+            active_id = raw.get("active_id")
+            member = next((m for m in members if m.get("id") == active_id), members[0])
+            profile = member.get("profile") or {}
+        else:  # v1 平铺档案
+            profile = raw
+        return [
+            str(value).strip()
+            for value in (profile.get("restricts") or [])
+            if str(value or "").strip()
+        ]
+    except Exception:
+        return []
+
+
+def _intensity_sufficient(user_text: str) -> bool:
+    """控制强度是否已经明确：本轮说过，或档案里有医嘱硬限制。"""
+    return _self_declared_intensity(user_text) or bool(_active_profile_restricts())
+
+
 def _is_ambiguous_health_safety_question(user_text: str, messages) -> bool:
     """拦截没有明确食物对象的「能不能吃」安全判断请求。"""
     text = (user_text or "").replace(" ", "")
@@ -4964,6 +5028,10 @@ def profile_gate_node(state: ChefState):
             "profile_missing": [missing],
         }
     if not conditions:
+        # 人群维度也要过门：备孕≠孕期（见 _self_declared_conditions 同名分支），
+        # 孕周与营养建议强相关，宁可追问一次。仅在增强档生效。
+        if SUFFICIENCY_FULL and "备孕" in (user_text or "").replace(" ", ""):
+            return {"profile_ready": False, "profile_missing": [_MISSING_PREGNANCY]}
         return {"profile_ready": True, "profile_missing": []}
 
     declared = (
@@ -4974,6 +5042,15 @@ def profile_gate_node(state: ChefState):
     missing = [c for c in conditions if not _declared_covers(c, declared)]
     if missing:
         return {"profile_ready": False, "profile_missing": missing}
+
+    # 增强档：病种已声明只代表「知道有这个病」，不代表「知道要控制到什么程度」。
+    # 仅当病种来自用户本轮原话（不是只靠档案带入）时才补问；说清强度即不再问。
+    if (
+        SUFFICIENCY_FULL
+        and detect_conditions(user_text)
+        and not _intensity_sufficient(user_text)
+    ):
+        return {"profile_ready": False, "profile_missing": [_MISSING_INTENSITY]}
 
     return {"profile_ready": True, "profile_missing": []}
 
@@ -4996,6 +5073,8 @@ def ask_user_node(state: ChefState):
         "具体食物或做法": "请告诉我具体想判断哪种食物或做法，例如菜名、主要食材或烹饪方式。",
         "具体是哪一道菜（或回复候选序号）": "请告诉我具体是哪一道菜，或直接回复候选序号，我再按对应成员的约束判断。",
         "具体症状、持续时间及严重程度": "请补充具体症状、持续了多久，以及是否有明显或严重表现，我再给你更安全的饮食建议。",
+        _MISSING_INTENSITY: "想确认一下：医生有没有给你具体的忌口要求（比如严格控盐、限嘌呤），还是平时注意一下就行？",
+        _MISSING_PREGNANCY: "想确认一下：是已经怀孕了吗？如果已怀孕，现在孕几周了？我好按对应的营养要求来安排。",
     }
     if len(missing) == 1 and missing[0] in direct_questions:
         return {"messages": [AIMessage(content=direct_questions[missing[0]])]}
