@@ -36,10 +36,20 @@ import type {
 
 function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
   if (!raw) return null
+  const trimmed = raw.trim()
+  // 历史里绝大多数回答是纯文本正文，只有控制 JSON 才需要解析成结构化答案。
+  // 先按首字符快速跳过纯文本，避免对每一条历史消息都尝试 JSON.parse。
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as ChefAnswer).recipes)) {
-      return normalizeChefAnswer(parsed as ChefAnswer)
+    const parsed: unknown = JSON.parse(trimmed)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const candidate = parsed as ChefAnswer
+      // 完整菜谱包（recipes 数组）与无 recipes 的结构化包（安全拒绝、成员判定等，
+      // 只有 opening）都要被识别成 answer：否则历史加载会走 `record.answer || ''`
+      // 分支，把整坨 JSON 原文当正文渲染，前端直接露出原始 JSON。
+      if (Array.isArray(candidate.recipes) || typeof candidate.opening === 'string') {
+        return normalizeChefAnswer(candidate)
+      }
     }
   } catch {
     // 历史数据可能是旧版纯文本回答。

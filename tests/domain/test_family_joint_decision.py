@@ -101,6 +101,27 @@ class FamilyJointDecisionTest(unittest.TestCase):
             self.assertIn("弟弟", rendered)
             self.assertIn("减重", rendered)
 
+    def test_active_profile_allergens_do_not_union_members(self):
+        profile_path = Path("data/.test-profile-active-allergens.json")
+        try:
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "active_id": "child",
+                        "members": [
+                            {"id": "child", "profile": {"allergens": ["花生"]}},
+                            {"id": "parent", "profile": {"allergens": ["虾"]}},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(agent_graph, "_PROFILE_PATH", profile_path):
+                self.assertEqual(agent_graph._active_profile_allergens(), ["花生"])
+        finally:
+            profile_path.unlink(missing_ok=True)
+
     def test_schema_fields_are_backward_compatible(self):
         answer = ChefAnswer(recipes=[_recipe("清炒时蔬")])
         self.assertEqual(answer.member_adjustments, [])

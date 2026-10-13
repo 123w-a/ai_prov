@@ -325,7 +325,7 @@ def _in_spans(start: int, end: int, spans: List[tuple]) -> bool:
 
 
 _NEGATION_HEAD = (
-    r"(?:切勿|切莫|绝无|绝不|并不|不再|不要|不能|不应|不得|不可|"
+    r"(?:切勿|切莫|绝无|绝非|绝不|并不|不是|不再|不要|不能|不应|不得|不可|"
     r"严禁|禁止|没有|没|未|无|不|别|避免|避开|禁用|拒绝|"
     # 「非」也是否定词，但必须紧邻过敏原词才算否定（详见下方两个 lookahead）。
     # 实测翻车点：分餐矩阵写「只需确认用油非花生油、砧板锅具没沾花生碎」，
@@ -365,6 +365,11 @@ _ALLERGEN_QUESTION_SUFFIX_RE = re.compile(r"^\s*(?:吗|么)?[？?]")
 _POSTFIX_NEGATION_ACTION = (
     r"(?:不加(?:入)?|不放(?:入)?|不添加|不使用|不采用|不食用|不饮用|"
     r"不保留|不含(?:有)?|不得(?:添加|加入|使用|采用|食用|饮用|含有|含)?|"
+    # 词后否定：过敏原在前、否决在后，如「花生油不能上桌」「花生酱都很不行」。
+    # 但「花生油不能少/不要太多」是“必须用、别过量”，仍算真下料，用 lookahead 兜回。
+    # 刻意不收裸「不可」：它会被「非花生油不可」这种强调式双重否定利用，那是真下料。
+    r"不可以|不允许|不能(?![少缺没无太])|不要(?![少缺没无太])|"
+    r"不行|不宜|"
     r"严禁|禁止|禁用|避免|拒绝|杜绝)"
 )
 _POSTFIX_NEGATION_MODIFIER = (
@@ -419,6 +424,41 @@ def _is_postfix_negated_mention(text: str, end: int) -> bool:
         _POSTFIX_NEGATION_RE.match(tail)
         or _POSTFIX_LIST_NEGATION_RE.match(tail)
     )
+
+
+# 整句级安全说明：分句后若整句是「…都不行」这类否决，或整句在讲清洗/交叉污染，
+# 则该句里的过敏原词只是被提及，不是在教怎么下料。
+_CLAUSE_BOUNDARY_CHARS = "。；;！？!?\n，,"
+_CLAUSE_TERMINAL_PROHIBITION_RE = re.compile(
+    r"(?:都|一律|全都|统统|通通|均|全)"
+    r"(?:不行|不可以|不允许|不能|不可|不宜)"
+    r"[\s。；;！？!?]*$"
+)
+_CLEANING_DIRECTIVE_RE = re.compile(
+    r"(?:清洗|冲洗|擦洗|刷洗|涮洗|烫洗|消毒|洗干净|洗净|洗一洗|洗一遍|"
+    r"擦干净|刷干净)"
+)
+
+
+def _clause_around(text: str, pos: int) -> str:
+    """取 pos 所在的整句（以句读/换行/逗号切分），用于整句级安全判定。"""
+    start = pos
+    while start > 0 and text[start - 1] not in _CLAUSE_BOUNDARY_CHARS:
+        start -= 1
+    end = pos
+    while end < len(text) and text[end] not in _CLAUSE_BOUNDARY_CHARS:
+        end += 1
+    return text[start:end]
+
+
+def _is_safety_explanation_clause(text: str, pos: int) -> bool:
+    """整句是不是安全说明：句尾否决，或是清洗/交叉污染指令。"""
+    clause = _clause_around(text, pos)
+    if not clause:
+        return False
+    if _CLAUSE_TERMINAL_PROHIBITION_RE.search(clause):
+        return True
+    return bool(_CLEANING_DIRECTIVE_RE.search(clause))
 
 
 def _is_informational_allergen_mention(text: str, start: int, end: int) -> bool:
@@ -482,6 +522,8 @@ def _first_match(
         ):
             continue
         if _is_postfix_negated_mention(text, end):
+            continue
+        if _is_safety_explanation_clause(text, start):
             continue
         if _is_informational_allergen_mention(text, start, end):
             continue

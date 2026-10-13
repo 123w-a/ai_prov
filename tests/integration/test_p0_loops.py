@@ -117,9 +117,28 @@ class FeedbackEndpointTest(unittest.TestCase):
         self.assertEqual(len(json.loads(self.path.read_text(encoding="utf-8"))), 1)
 
     def test_weekly_report_includes_feedback_summary(self):
-        with patch.object(reports_route, "_FEEDBACK_LOG", self.path):
-            self.client.post("/api/reports/feedback", json={"dish": "清蒸鱼", "rating": 5, "tags": ["好吃"]})
-            resp = self.client.get("/api/reports/weekly")
+        # 周报在「近 7 天无饮食记录」时会提前返回 has_data=False，不带 feedback_summary。
+        # 这里显式给一份带今天记录的 meals 夹具，让用例自包含，不再依赖仓库里的运行数据。
+        meals = Path(__file__).with_name(".meals-test.json")
+        meals.write_text(
+            json.dumps(
+                [{
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "dish": "清蒸鱼",
+                    "lights": [],
+                    "guardrails": 0,
+                }],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        try:
+            with patch.object(reports_route, "_FEEDBACK_LOG", self.path), \
+                    patch.object(reports_route, "_MEALS", meals):
+                self.client.post("/api/reports/feedback", json={"dish": "清蒸鱼", "rating": 5, "tags": ["好吃"]})
+                resp = self.client.get("/api/reports/weekly")
+        finally:
+            meals.unlink(missing_ok=True)
 
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()

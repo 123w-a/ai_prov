@@ -6,8 +6,10 @@ from unittest.mock import patch
 from agent.graph import (
     _declared_covers,
     _hit_without_negation,
+    _is_ambiguous_health_safety_question,
     _parse_declared_conditions,
     _self_declared_conditions,
+    ask_user_node,
     profile_gate_node,
 )
 from langchain_core.messages import AIMessage, HumanMessage
@@ -97,6 +99,90 @@ class SelfDeclaredTest(unittest.TestCase):
     def test_pregnancy_week_number_matches(self):
         self.assertIn("孕期", _self_declared_conditions("我孕18周，想吃面条"))
         self.assertNotIn("孕期", _self_declared_conditions("我在备孕，想调理饮食"))
+
+    def test_vague_discomfort_requires_clarification(self):
+        result = profile_gate_node({
+            "messages": [HumanMessage(content="我最近不舒服，吃啥？")],
+        })
+        self.assertFalse(result["profile_ready"])
+        self.assertIn("具体症状", result["profile_missing"][0])
+
+    def test_specific_discomfort_can_pass_existing_gate(self):
+        result = profile_gate_node({
+            "messages": [HumanMessage(content="我胃不舒服，吃啥？")],
+        })
+        self.assertTrue(result["profile_ready"])
+        self.assertEqual(result["profile_missing"], [])
+
+    def test_ambiguous_safety_question_requires_food_target(self):
+        state = {
+            "messages": [HumanMessage(content="我妈能吃这个吗？")],
+        }
+        self.assertTrue(
+            _is_ambiguous_health_safety_question(
+                "我妈能吃这个吗？",
+                state["messages"],
+            )
+        )
+        result = profile_gate_node(state)
+        self.assertFalse(result["profile_ready"])
+        self.assertIn("具体食物或做法", result["profile_missing"][0])
+
+    def test_common_colloquial_safety_questions_require_food_target(self):
+        for text in (
+            "我妈适合吃这道菜吗？",
+            "我妈吃这个行吗？",
+        ):
+            with self.subTest(text=text):
+                state = {"messages": [HumanMessage(content=text)]}
+                result = profile_gate_node(state)
+                self.assertFalse(result["profile_ready"])
+                self.assertIn("具体食物或做法", result["profile_missing"][0])
+
+    def test_safety_clarification_asks_for_the_missing_food_target(self):
+        result = ask_user_node({
+            "messages": [HumanMessage(content="我妈吃这个行吗？")],
+            "profile_missing": ["具体食物或做法"],
+        })
+        self.assertIn("具体想判断哪种食物或做法", result["messages"][0].content)
+        self.assertNotIn("饮食控制情况", result["messages"][0].content)
+
+    def test_explicit_food_in_colloquial_safety_question_can_pass(self):
+        state = {
+            "messages": [
+                HumanMessage(content="清蒸鲈鱼适合我妈吃吗？"),
+            ],
+        }
+        result = profile_gate_node(state)
+        self.assertTrue(result["profile_ready"])
+        self.assertEqual(result["profile_missing"], [])
+
+    def test_candidate_context_requires_candidate_selection(self):
+        state = {
+            "messages": [
+                HumanMessage(content="今晚吃什么？"),
+                AIMessage(content="1. 番茄炒蛋\n2. 蒜蓉蒸冬瓜"),
+                HumanMessage(content="我妈能吃这个吗？"),
+            ],
+        }
+        with patch("agent.graph._recent_candidates", return_value=["番茄炒蛋", "蒜蓉蒸冬瓜"]):
+            result = profile_gate_node(state)
+        self.assertFalse(result["profile_ready"])
+        self.assertIn("候选序号", result["profile_missing"][0])
+
+    def test_selected_card_context_allows_safety_followup(self):
+        state = {
+            "messages": [
+                HumanMessage(content="做番茄炒蛋"),
+                AIMessage(
+                    content='{"recipes":[{"name":"番茄炒蛋"}]}'
+                ),
+                HumanMessage(content="我妈能吃这个吗？"),
+            ],
+        }
+        result = profile_gate_node(state)
+        self.assertTrue(result["profile_ready"])
+        self.assertEqual(result["profile_missing"], [])
 
 
 if __name__ == "__main__":

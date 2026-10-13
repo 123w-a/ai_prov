@@ -1042,8 +1042,13 @@ _INFORMATION_PREP_PATTERN = re.compile(
     r"(?:处理|清洗|洗|去腥|去皮|腌|腌制|挑选|挑|选购|保存|储存|存放|解冻|泡发|焯水|切)"
 )
 _INFORMATION_SAFETY_PATTERN = re.compile(
-    r"(?:不能一起吃|相克|过敏|忌口|不能吃|吃不了|"
-    r"(?:能|可以)(?:吃|喝).{0,8}(?:吗|么)|"
+    # 只认「问能不能入口/下料」这类信息问句。裸词「过敏」「忌口」不再算：
+    # 用户说「爸爸高血压，妈妈痛风，孩子花生过敏」是在交代约束、要一份菜单，
+    # 不是在做安全问答。把它当成信息请求会短路整个候选轮，用户只拿到兜底句
+    # （实测 result2 A1：一家人异质约束的泛推荐）。
+    r"(?:不能一起吃|相克|不能吃|吃不了|"
+    r"(?:能|可以|能不能|可不可以)(?:吃|喝|放|加|用|沾|蘸)"
+    r"[^，。！？\n]{0,10}(?:吗|么|嘛|？|\?)|"
     r"会胖吗|会长胖吗|升糖吗|"
     r"(?:别忘|记得|注意).{0,10}(?:不能吃|吃不了|过敏|忌口))"
 )
@@ -2811,21 +2816,66 @@ def tool_budget_finalize_node(state: "ChefState"):
     evidence = _tool_result_evidence(messages)
     blocked_tools = _latest_tool_call_count(messages) > 0
     if evidence or blocked_tools:
+        # 本轮是不是「泛推荐」阶段：收口正文的形态与审计口径都要跟着走，
+        # 否则候选轮会被塞进一道单菜，或用整篇 prose 去过菜名级审计。
+        try:
+            is_candidate_turn = _is_candidate_turn(
+                messages,
+                ingredient_gate_ready=bool(state.get("ingredient_gate_ready")),
+            )
+        except Exception:
+            is_candidate_turn = False
+        # 本轮是不是「纯健康/安全咨询」：这类轮次要的是解释和替代方案，
+        # 逼模型「收口一道菜」会把用户的问题替换成一道无关菜谱（实测 D1）。
+        try:
+            is_information_turn = (
+                not is_candidate_turn
+                and is_non_recipe_information_request(user_text)
+                and not _is_dish_pick_turn(messages)
+            )
+        except Exception:
+            is_information_turn = False
         _ensure_llms()
         if evidence:
-            system_prompt = (
-                "你是小膳管家。请只根据用户需求和已经检索到的资料，直接给出最终中文建议。"
-                "不要再索取或调用工具，不要描述内部流程；优先用一道可执行、少油少盐的菜收口。"
-                "资料不足时明确说明不确定，不要编造。"
-            )
+            if is_candidate_turn:
+                system_prompt = (
+                    "你是小膳管家。本轮是「泛推荐」：用户没有点名具体哪一道菜。"
+                    "请只根据用户需求和已经检索到的资料，直接给出编号候选清单，"
+                    "不要描述检索次数、预算或任何内部流程。"
+                    "格式必须是每行一条、编号从 1 开始、菜名后接「 —— 」再写一句约 30 字的推荐理由；"
+                    "只输出候选菜名清单，不要写做法、步骤、调料、火候，不要输出 JSON 或卡片。"
+                    "候选菜名必须避开家庭成员的忌口与过敏原（含隐含来源），资料不足时少给几道，不要编造。"
+                )
+            elif is_information_turn:
+                system_prompt = (
+                    "你是小膳管家。本轮用户问的是「能不能吃/能不能放」这类饮食安全咨询，"
+                    "不是点菜。请只根据用户需求和已经检索到的资料，直接给出面向用户的中文解答："
+                    "先给明确结论，再给可执行的替代方案或注意事项；"
+                    "不要输出 JSON、不要输出菜谱卡片、不要描述内部流程。"
+                    "家庭成员的过敏原是硬约束，绝不能建议加入；资料不足时说明不确定，不要编造。"
+                )
+            else:
+                system_prompt = (
+                    "你是小膳管家。请只根据用户需求和已经检索到的资料，直接给出最终中文建议。"
+                    "不要再索取或调用工具，不要描述内部流程；优先用一道可执行、少油少盐的菜收口。"
+                    "资料不足时明确说明不确定，不要编造。"
+                )
             evidence_block = f"已检索到的工具资料：\n{evidence}"
         else:
-            system_prompt = (
-                "你是小膳管家。本轮没有检索到可用资料，请只根据用户需求直接给出最终中文建议。"
-                "不要再索取或调用工具，不要描述检索次数、预算或任何内部流程；"
-                "优先给出一道家常、可执行、少油少盐的菜，写清主要食材与关键步骤。"
-                "没有把握的营养数据或功效就说明不确定，不要编造。"
-            )
+            if is_information_turn:
+                system_prompt = (
+                    "你是小膳管家。本轮用户问的是饮食安全咨询，但本轮没有检索到可用资料。"
+                    "请只根据用户需求直接给出面向用户的中文解答：先给明确结论，再给替代方案；"
+                    "不要输出 JSON、不要输出菜谱卡片、不要描述内部流程。"
+                    "家庭成员的过敏原是硬约束，绝不能建议加入；没有把握的部分要说明不确定，不要编造。"
+                )
+            else:
+                system_prompt = (
+                    "你是小膳管家。本轮没有检索到可用资料，请只根据用户需求直接给出最终中文建议。"
+                    "不要再索取或调用工具，不要描述检索次数、预算或任何内部流程；"
+                    "优先给出一道家常、可执行、少油少盐的菜，写清主要食材与关键步骤。"
+                    "没有把握的营养数据或功效就说明不确定，不要编造。"
+                )
             evidence_block = "（本轮没有检索到可用资料，请只依据用户需求给出稳妥做法）"
         try:
             response = llm.invoke([
@@ -2842,11 +2892,37 @@ def tool_budget_finalize_node(state: "ChefState"):
                     if isinstance(block, dict)
                 )
             candidate = str(candidate or "").strip()
-            if (
-                candidate
-                and not audit(candidate, _merged_conditions(user_text))
-                and not _contains_internal_marker(candidate)
-            ):
+            # 审计口径与 verify_answer_node 完全一致：候选轮只看候选菜名，单菜轮看正文；
+            # 过敏原审计沿用「先剥掉安全说明句」的做法。
+            # 不复用整篇 prose 的直接原因（实测 user_b60716de29）：模型在收口正文里写
+            # 「避免：浓肉汤/动物内脏/咸菜…」这类提醒句，会被菜名级规则当成真实下料，
+            # 好答案因此被丢弃、用户只看到「这次没查到足够具体的做法」的系统自述。
+            candidate_names = (
+                _extract_candidate_names(candidate) if is_candidate_turn else []
+            )
+            plain_refusal = _is_plain_safety_refusal_turn(
+                messages, candidate, is_candidate_turn=is_candidate_turn
+            )
+            audit_text, allergen_audit_text = _audit_texts_for_answer(
+                candidate,
+                candidate_names=candidate_names,
+                plain_safety_refusal=plain_refusal,
+            )
+            violations = audit(audit_text, _merged_conditions(user_text))
+            try:
+                violations = violations + audit_allergens(
+                    allergen_audit_text,
+                    _allergens_for_audit(state.get("session_id")),
+                    use_optional=True,
+                )
+                violations = violations + _allergen_permission_violations(
+                    candidate,
+                    _allergens_for_audit(state.get("session_id")),
+                    plain_safety_refusal=plain_refusal,
+                )
+            except Exception:
+                pass
+            if candidate and not violations and not _contains_internal_marker(candidate):
                 content = candidate
         except Exception:
             pass
@@ -4138,6 +4214,193 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
 # --------------------------------------------------------------------------- #
 MAX_VERIFY = 3  # 打回重生成的上限，防无限循环
 
+
+# 纯口头安全问答里，正文讲的是「别放/为什么不能放/换成什么」，
+# 这些提醒句本身会反复出现过敏原名字，不能当成真实下料。
+# 只在 `_is_plain_safety_refusal_turn` 成立时才启用这一层。
+_ADVISORY_LINE_MARKERS = (
+    "过敏", "忌口", "红线", "硬约束", "回避", "排除", "剔除",
+    "不能用", "不要用", "不能吃", "不要吃", "不宜", "不建议", "不推荐",
+    "不能放", "不要放", "不宜放", "不能加", "不要加", "不宜加",
+    "不能沾", "不能蘸", "不要沾", "不要蘸",
+    "替代", "换成", "改成", "换掉", "风险", "危险", "可能含有",
+    "掺", "隐形", "误食", "标签", "配料表", "成分", "来源", "依据",
+    "指南", "标准", "白皮书", "医生", "医师", "营养师", "咨询",
+    "观察", "注意", "提醒", "警惕", "症状", "反应", "急救", "就医",
+)
+# 正文已经交付可执行菜谱结构时，不再走「口头问答」这条放宽路径。
+_ANSWER_RECIPE_STRUCTURE_MARKERS = (
+    "食材", "用料", "主料", "配料", "调料", "步骤", "备料",
+)
+# 正文明确表达拒绝/回避，才说明它在讲安全，而不是在教怎么下料。
+_ANSWER_REFUSAL_MARKERS = (
+    "不能放", "不要放", "不宜放", "不能加", "不要加", "不宜加",
+    "不能吃", "不要吃", "不宜吃", "不能用", "不要用", "禁止",
+    "避免", "不推荐", "不建议", "不含", "排除", "回避", "禁用",
+)
+# 纯口头安全问答里真正危险的方向只有一个：「把过敏原当下料加进去」。
+# 因此定点检测「下料动词 + 紧邻的过敏原名」，而不是把整篇提到过敏原的提醒都当违规。
+_ALLERGEN_ADD_VERBS = frozenset("放加用吃喝拌淋倒蘸沾撒添")
+_ALLERGEN_ADD_MODIFIER_CHARS = frozenset(
+    "一点些的上下入进去来勺滴克半两几茶杯个块片张把"
+)
+_ALLERGEN_NEGATION_CHARS = ("不", "别", "勿", "莫", "禁", "免", "无")
+
+
+def _has_recipe_structure(answer_text: str) -> bool:
+    """正文是否已经交付可执行菜谱结构（食材清单/步骤分节）。
+
+    只在行首、且后面紧跟冒号时才认，避免把安全说明里的
+    「替代食材：芝麻酱」这类提醒误判成菜谱分节，从而把纯问答轮挡在放宽路径外。
+    """
+    for line in str(answer_text or "").splitlines():
+        stripped = line.strip().lstrip("#*-•·>【 ").strip()
+        stripped = re.sub(r"^\d+[.、)）]\s*", "", stripped)
+        for marker in _ANSWER_RECIPE_STRUCTURE_MARKERS:
+            if stripped.startswith(marker) and re.match(
+                rf"{re.escape(marker)}\s*[:：]", stripped
+            ):
+                return True
+    return False
+
+
+def _recipe_content_for_audit(answer_text: str, *, advisory_only: bool = False) -> str:
+    """排除安全说明句，只保留候选菜名、食材和做法供过敏原硬审计。"""
+    kept = []
+    safety_markers = (
+        "不能推荐", "禁止", "绝对禁止", "不含", "不使用", "不用", "不放",
+        "不得", "避免", "交叉接触", "交叉污染", "硬约束", "安全替代",
+    )
+    if advisory_only:
+        safety_markers = safety_markers + _ADVISORY_LINE_MARKERS
+    for line in str(answer_text or "").splitlines():
+        compact = line.replace(" ", "")
+        if any(marker in compact for marker in safety_markers):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _is_plain_safety_refusal_turn(
+    messages,
+    answer_text: str,
+    *,
+    is_candidate_turn: bool,
+) -> bool:
+    """本轮是不是「只为解答一句安全疑问」的口头回答（不交付菜谱）。
+
+    三个条件同时成立才算成立，任一不成立都继续按整篇审计：
+      1. 用户这一轮问的是能不能吃/能不能放某样东西，不是点菜；
+      2. 正文没有交付菜谱结构（没有食材/步骤这类可执行清单）；
+      3. 正文自己已经明确表达拒绝/回避。
+    实测 D1：正文「花生酱属于花生及其制品…不能放」被整篇过敏原审计判成
+    「在下料」，连续重生成后前端只剩一道与提问无关的成品菜谱。
+    """
+    if is_candidate_turn:
+        return False
+    raw = _latest_user_text(messages)
+    if not raw or not is_non_recipe_information_request(raw):
+        return False
+    if _is_dish_pick_turn(messages) or _is_explicit_recipe_detail_request(raw):
+        return False
+    compact = re.sub(r"\s+", "", str(answer_text or ""))
+    if not compact:
+        return False
+    if _has_recipe_structure(answer_text):
+        return False
+    return any(marker in compact for marker in _ANSWER_REFUSAL_MARKERS)
+
+
+def _audit_texts_for_answer(
+    answer_text: str,
+    *,
+    candidate_names,
+    plain_safety_refusal: bool,
+) -> tuple[str, str]:
+    """按轮次形态给出 (慢病审计文本, 过敏原审计文本)。
+
+    - 候选轮：只审计用户看到的候选菜名，提醒句不进审计；
+    - 纯口头安全问答：正文必然反复提到过敏原本身，先剥掉提醒句再审计；
+    - 其余轮次：过敏原审计沿用「剥掉安全说明句」的既有口径，慢病审计看整篇。
+    """
+    if candidate_names:
+        names = "\n".join(candidate_names)
+        return names, names
+    if plain_safety_refusal:
+        stripped = _recipe_content_for_audit(answer_text, advisory_only=True)
+        # 纯口头问答必然反复点名过敏原本身来解释，通用过敏原审计在这里只会误伤；
+        # 这一支的过敏原风险交给 `_allergen_permission_violations` 的定点下料检测。
+        return stripped, ""
+    return answer_text, _recipe_content_for_audit(answer_text)
+
+
+def _allergen_permission_violations(
+    answer_text: str,
+    allergens,
+    *,
+    plain_safety_refusal: bool,
+) -> list:
+    """纯口头安全问答里的定点兜底：正文若「许可加入/食用」过敏原，仍要判违规。
+
+    只认「下料动词紧邻过敏原名」这一种形态（放花生酱/加花生碎/用花生油…），
+    并且动词前 3 字内不能是否定（不能放/别加/避免用）。
+    实测 D1 正文里「刚拌过花生酱的勺子」「再放任何带花生的酱」「直接放回货架」
+    这类安全提醒都会被宽松的中心词匹配误伤，所以窗口收窄到动词与过敏原相邻。
+    提醒句剥离只放宽「提到名字」，不能放过「可以放一点花生酱提香」这种危险建议。
+    """
+    if not plain_safety_refusal or not allergens:
+        return []
+    words = _allergen_surface_words(allergens)
+    if not words:
+        return []
+    violations: list = []
+    for clause in re.split(r"[。；;！？!?\n]", str(answer_text or "")):
+        if not clause.strip():
+            continue
+        if not any(word in clause for word in words):
+            continue
+        if not _clause_adds_allergen(clause, words):
+            continue
+        violations.extend(audit_allergens(clause, allergens, use_optional=True))
+    return violations
+
+
+def _allergen_surface_words(allergens) -> list[str]:
+    """取该过敏原在规则表里的全部表层词（别名 + 隐含来源），用于定位下料对象。"""
+    from domain import allergen_rules
+
+    try:
+        codes, _ = allergen_rules.resolve_allergens(allergens, use_optional=True)
+    except Exception:
+        return []
+    words: list[str] = []
+    for code in codes:
+        rule = allergen_rules.ALLERGEN_RULES.get(code) or {}
+        for key in ("aliases", "hidden"):
+            for word in rule.get(key) or []:
+                if word and word not in words:
+                    words.append(word)
+    # 长词优先，避免「花生」抢先匹配掉「花生酱」导致窗口错位。
+    words.sort(key=len, reverse=True)
+    return words
+
+
+def _clause_adds_allergen(clause: str, words) -> bool:
+    """分句里是否存在「下料动词 + 修饰 + 过敏原名」的许可式下料。"""
+    for word in words:
+        idx = clause.find(word)
+        while idx >= 0:
+            window = clause[max(0, idx - 4):idx]
+            probe = window.rstrip("".join(_ALLERGEN_ADD_MODIFIER_CHARS))
+            if probe and probe[-1] in _ALLERGEN_ADD_VERBS:
+                verb_at = max(0, idx - 4) + len(probe) - 1
+                prefix = clause[max(0, verb_at - 3):verb_at]
+                if not any(ch in prefix for ch in _ALLERGEN_NEGATION_CHARS):
+                    return True
+            idx = clause.find(word, idx + len(word))
+    return False
+
+
 # 自定义状态：在 MessagesState 基础上扩展护栏所需的计数字段
 class ChefState(MessagesState):
     session_id: str = ""
@@ -4190,11 +4453,37 @@ def verify_answer_node(state: ChefState):
     candidate_names = _extract_candidate_names(answer_text) if is_candidate_turn else []
     # 候选轮的安全说明常会原样提到“虾/花生”等禁忌词来提醒用户，不能把说明本身
     # 当成菜品违规，否则会触发无谓重生成。真正需要硬审计的是用户看到的候选菜名。
-    audit_text = "\n".join(candidate_names) if candidate_names else answer_text
+    # 同理，纯口头安全问答（如「花生酱能不能放」）的正文必然反复出现过敏原本身，
+    # 必须剥掉提醒句再审计，否则正确答案会被判违规、连续重生成成一道无关菜谱。
+    plain_refusal = _is_plain_safety_refusal_turn(
+        state["messages"], answer_text, is_candidate_turn=is_candidate_turn
+    )
+    # 安全问答轮即使模型没有明确写拒绝语（例如直接建议「放一点花生酱」），
+    # 打回时也必须继续回答同一个疑问，不能改口去交付一道无关菜谱。
+    information_turn = False
+    if not is_candidate_turn:
+        try:
+            information_turn = (
+                is_non_recipe_information_request(user_text)
+                and not _is_dish_pick_turn(state["messages"])
+                and not _is_explicit_recipe_detail_request(user_text)
+            )
+        except Exception:
+            information_turn = False
+    safety_retry_turn = plain_refusal or information_turn
+    audit_text, allergen_audit_text = _audit_texts_for_answer(
+        answer_text,
+        candidate_names=candidate_names,
+        plain_safety_refusal=plain_refusal,
+    )
     allergen_violations = audit_allergens(
-        audit_text,
+        allergen_audit_text,
         allergens,
         use_optional=True,
+    )
+    # 提醒句剥离只放宽「提到名字」，不能放过「可以放一点花生酱提香」这类危险许可。
+    allergen_violations = allergen_violations + _allergen_permission_violations(
+        answer_text, allergens, plain_safety_refusal=plain_refusal
     )
     violations = audit(audit_text, conditions) + allergen_violations
     has_allergen_violation = any(
@@ -4246,7 +4535,14 @@ def verify_answer_node(state: ChefState):
             "请保持候选清单格式：只输出编号候选菜名和简短理由，替换违规候选，"
             "不要输出完整做法、步骤、调料或卡片。"
             if is_candidate_turn
-            else "请换用符合该人群膳食原则的食材与调料，保持菜谱可执行，只输出一道菜。"
+            else (
+                # 安全问答轮即使被判违规，也必须继续回答同一个疑问；
+                # 逼模型「换一道菜」会把用户的问题替换成无关菜谱（实测 D1）。
+                "请重新直接回答用户的饮食安全疑问：先给明确结论（能不能），"
+                "再给可执行的替代方案；不要输出菜谱卡片、步骤或 JSON。"
+                if safety_retry_turn
+                else "请换用符合该人群膳食原则的食材与调料，保持菜谱可执行，只输出一道菜。"
+            )
         )
         feedback = HumanMessage(content=(
             "[健康护栏审核] 你给出的方案违反了以下硬禁忌，必须重新生成一道合规的菜：\n"
@@ -4546,6 +4842,7 @@ def _parse_declared_conditions(user_text: str) -> set:
         r"慢病约束\s*=\s*([^】\n]*)",
         r"慢病情况\s*[：:]\s*([^\n（(]*)",
         r"当前目标\s*[：:]\s*([^\n（(]*)",
+        r"医嘱[/／]?长期硬限制\s*[：:]\s*([^\n（(]*)",
     ):
         segments.extend(match.group(1) for match in re.finditer(pattern, user_text))
     declared = set()
@@ -4601,6 +4898,46 @@ def _self_declared_conditions(user_text: str) -> set:
     return out
 
 
+def _is_vague_health_input(user_text: str) -> bool:
+    """识别只有泛化不适、没有具体症状的健康求餐表达。"""
+    text = (user_text or "").replace(" ", "")
+    vague_markers = ("不舒服", "难受", "身体不适", "不太舒服", "不大舒服")
+    if not any(marker in text for marker in vague_markers):
+        return False
+    specific_markers = (
+        "胃", "肚", "腹", "恶心", "呕吐", "腹泻", "拉肚", "便秘", "发烧",
+        "发热", "咳嗽", "喉咙", "咽痛", "头痛", "胸痛", "气短", "过敏",
+        "疼", "痛", "眩晕", "头晕", "血压", "血糖", "尿酸",
+    )
+    return not any(marker in text for marker in specific_markers)
+
+
+def _is_ambiguous_health_safety_question(user_text: str, messages) -> bool:
+    """拦截没有明确食物对象的「能不能吃」安全判断请求。"""
+    text = (user_text or "").replace(" ", "")
+    if not text:
+        return False
+    safety_question = re.search(
+        r"(能不能吃|可不可以吃|可以吃|能吃|该不该吃|要不要吃|适合吃)"
+        r"[^，。！？\n]{0,8}[吗么嘛？?]"
+        r"|适合(?!吃什么|吃啥|吃哪)[^，。！？\n]{0,10}吃"
+        r"[^，。！？\n]{0,4}[吗么嘛？?]"
+        r"|吃(?!什么|啥|哪|哪些)[^，。！？\n]{0,10}"
+        r"(行不行|行吗|可以吗|吗|么|嘛)",
+        text,
+    )
+    if not safety_question:
+        return False
+    contextual_refs = ("这个", "这道", "这道菜", "它", "那道", "那份", "这份")
+    if not any(ref in text for ref in contextual_refs) and _mentions_food_ingredients(text):
+        return False
+    # 已经交付单菜卡片时，「这个能吃吗」是有效的卡片后追问。
+    if _latest_delivered_card_recipe_names(messages):
+        return False
+    # 只有候选清单或没有菜品锚点时，指代对象仍不明确，必须先澄清。
+    return True
+
+
 @trace_node("profile_gate")
 def profile_gate_node(state: ChefState):
     """充分性门控节点：进入 chef_think 前，确定性判断健康画像是否足够。
@@ -4612,6 +4949,20 @@ def profile_gate_node(state: ChefState):
     messages = state["messages"]
     user_text = _latest_user_text(messages)
     conditions = _merged_conditions(user_text)
+    if _is_vague_health_input(user_text):
+        return {
+            "profile_ready": False,
+            "profile_missing": ["具体症状、持续时间及严重程度"],
+        }
+    if _is_ambiguous_health_safety_question(user_text, messages):
+        if _recent_candidates(messages):
+            missing = "具体是哪一道菜（或回复候选序号）"
+        else:
+            missing = "具体食物或做法"
+        return {
+            "profile_ready": False,
+            "profile_missing": [missing],
+        }
     if not conditions:
         return {"profile_ready": True, "profile_missing": []}
 
@@ -4621,10 +4972,10 @@ def profile_gate_node(state: ChefState):
         | set(_active_profile_conditions())
     )
     missing = [c for c in conditions if not _declared_covers(c, declared)]
-    if not missing:
-        return {"profile_ready": True, "profile_missing": []}
+    if missing:
+        return {"profile_ready": False, "profile_missing": missing}
 
-    return {"profile_ready": False, "profile_missing": missing}
+    return {"profile_ready": True, "profile_missing": []}
 
 
 @trace_node("ask_user")
@@ -4638,6 +4989,16 @@ def ask_user_node(state: ChefState):
                 AIMessage(content="请补充一下你的健康情况，我才能给出更安全的饮食建议。")
             ]
         }
+
+    # 这些是路由层确定的缺失输入，必须原样问到点上，不能交给模型改写成
+    # 泛泛的健康情况追问，否则用户仍不知道下一轮要补什么。
+    direct_questions = {
+        "具体食物或做法": "请告诉我具体想判断哪种食物或做法，例如菜名、主要食材或烹饪方式。",
+        "具体是哪一道菜（或回复候选序号）": "请告诉我具体是哪一道菜，或直接回复候选序号，我再按对应成员的约束判断。",
+        "具体症状、持续时间及严重程度": "请补充具体症状、持续了多久，以及是否有明显或严重表现，我再给你更安全的饮食建议。",
+    }
+    if len(missing) == 1 and missing[0] in direct_questions:
+        return {"messages": [AIMessage(content=direct_questions[missing[0]])]}
 
     user_text = _latest_user_text(state["messages"])
     try:

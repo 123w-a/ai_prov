@@ -543,6 +543,31 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertEqual(result["verify_attempts"], 1)
         self.assertNotIn("messages", result)
 
+    def test_selected_recipe_safety_explanation_does_not_trigger_retry(self):
+        text = (
+            "含花生及其制品的做法我不能推荐，已换成安全替代：蒜蓉蒸丝瓜。\n"
+            "食材：丝瓜、大蒜、玉米油、香油。\n"
+            "做法：蒸熟后拌匀。孩子那份避免交叉接触。"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
+
+    def test_selected_recipe_actual_allergen_still_retries(self):
+        text = "蒜蓉蒸丝瓜。食材：丝瓜、花生酱、大蒜。"
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
+
     def test_allergen_exhaustion_blocks_instead_of_degrading(self):
         with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.verify_answer_node(
@@ -866,6 +891,131 @@ class TestGuardrailVisibilityAndStream(unittest.TestCase):
         rendered = main._render_health_profile({"allergens": ["虾"]})
         self.assertIn("硬约束", rendered)
         self.assertIn("确定性审计", rendered)
+
+
+class TestInformationTurnRouting(unittest.TestCase):
+    """实测 A/D 两条前端可见问题的路由层复现：约束交代不能当安全问答短路。"""
+
+    _FAMILY_REQUEST = (
+        "今晚一家三口吃什么？爸爸高血压，妈妈痛风，孩子花生过敏。"
+    )
+    _SAFETY_QUESTION = "孩子花生过敏，这道菜里能不能放花生酱？"
+
+    def test_family_constraint_request_is_not_information_only(self):
+        self.assertFalse(
+            agent_graph.is_non_recipe_information_request(self._FAMILY_REQUEST)
+        )
+        messages = [HumanMessage(content=self._FAMILY_REQUEST)]
+        self.assertTrue(agent_graph._is_candidate_turn(messages))
+
+    def test_allergen_permission_question_is_information_request(self):
+        self.assertTrue(
+            agent_graph.is_non_recipe_information_request(self._SAFETY_QUESTION)
+        )
+        messages = [HumanMessage(content=self._SAFETY_QUESTION)]
+        self.assertFalse(agent_graph._is_candidate_turn(messages))
+
+    def test_plain_safety_answer_is_recognized_as_refusal_turn(self):
+        answer = (
+            "花生酱属于花生及其制品，孩子花生过敏，这道菜里不能放花生酱。\n"
+            "替代方案：换成芝麻酱或直接不放酱，出锅后再单独调味。"
+        )
+        messages = [HumanMessage(content=self._SAFETY_QUESTION)]
+        self.assertTrue(
+            agent_graph._is_plain_safety_refusal_turn(
+                messages, answer, is_candidate_turn=False
+            )
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(
+                {
+                    "messages": messages + [AIMessage(content=answer)],
+                    "verify_attempts": 0,
+                }
+            )
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertNotIn("messages", result)
+
+    def test_safety_answer_permitting_allergen_still_retries(self):
+        answer = "花生酱很香，可以放一点花生酱提香，孩子也会喜欢。"
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(
+                {
+                    "messages": [
+                        HumanMessage(content=self._SAFETY_QUESTION),
+                        AIMessage(content=answer),
+                    ],
+                    "verify_attempts": 0,
+                }
+            )
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
+
+    def test_recipe_with_allergen_ingredient_still_retries(self):
+        answer = "蒜蓉蒸丝瓜。食材：丝瓜、花生酱、大蒜。"
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(
+                {
+                    "messages": [
+                        HumanMessage(content="做个蒜蓉蒸丝瓜"),
+                        AIMessage(content=answer),
+                    ],
+                    "verify_attempts": 0,
+                }
+            )
+        self.assertEqual(result["verify_status"], "retry")
+
+    def test_plain_safety_answer_mentioning_allergen_in_warnings_is_ok(self):
+        answer = (
+            "结论：不能放，一口都不要。花生是孩子的绝对过敏原。\n"
+            "刚拌过花生酱的勺子、同一块砧板都要单独洗，避免交叉污染。\n"
+            "买酱料时看到配料表里加粗的「花生」字样就直接放回货架。\n"
+            "替代方案：换成芝麻酱，或者用蒜末生抽香醋拌。"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(
+                {
+                    "messages": [
+                        HumanMessage(content="孩子花生过敏，这道菜里能不能放花生酱？"),
+                        AIMessage(content=answer),
+                    ],
+                    "verify_attempts": 0,
+                }
+            )
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertNotIn("messages", result)
+
+    def test_safety_retry_instruction_stays_on_topic(self):
+        answer = "可以放一点花生酱提香，孩子也会喜欢。"
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(
+                {
+                    "messages": [
+                        HumanMessage(content="孩子花生过敏，这道菜里能不能放花生酱？"),
+                        AIMessage(content=answer),
+                    ],
+                    "verify_attempts": 0,
+                }
+            )
+        self.assertEqual(result["verify_status"], "retry")
+        instruction = result["messages"][0].content
+        self.assertIn("安全疑问", instruction)
+        self.assertNotIn("只输出一道菜", instruction)
 
 
 if __name__ == "__main__":
