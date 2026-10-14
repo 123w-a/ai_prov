@@ -22,5 +22,12 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /*
+   * 测试文件跑在 node --test 下（node 自带 type stripping，不需要任何依赖），
+   * 不进构建图，也不参与 tsc：它 import 的 'node:test' 需要 @types/node，
+   * 而这个项目刻意没有装任何测试依赖。排除它是"测试不属于应用编译面"，不是"不检查它"——
+   * 它的判据是断言跑绿，不是类型过关。
+   */
+  "exclude": ["src/**/*.test.ts"]
 }

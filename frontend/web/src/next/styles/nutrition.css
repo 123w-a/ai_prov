@@ -1,0 +1,138 @@
+/* ── 营养数值表（第 5 项）─────────────────────────────────────────────────
+
+   形态照用户裁定的预期图：一行六列、数值大单位小、列间一根发丝竖线。
+   不画格子、不填底色——六列数字本身就是一张表，再套一层框就变成卡片里嵌表格。
+
+   单独成片而不追加进 result-v3.css：那个文件实测 943 行，追加会越过 checkScale
+   的 1000 行上限。本片只定义 .nutri-* 新类名，与前面所有片的选择器不相交，
+   插在 result-v3 之后不会挪动已有层叠。
+
+   位置：首屏两栏（图 | 文）**之下**、通栏。它讲的是「这顿」，
+   不属于左图或右文任何一栏——这是它唯一可能的家。
+
+   状态用 [data-status] 承载，不靠额外类名：三档的差别是"这张表算什么口径"，
+   那是数据属性，不是样式变体。 */
+
+.nutri {
+  margin: 6px 0 30px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.nutri-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 13px;
+}
+
+.nutri-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.35px currentColor;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+/* 口径说明压到最弱：它是这张表的「读数条件」，不该和标题抢同一级注意力。
+   但它在 partial 时会变成一句要紧的话（「已覆盖食材小计」），所以只压颜色、不藏。 */
+.nutri-basis {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.nutri-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 列间只有一根发丝竖线，第一项不画。比画满格线安静，列却仍然分得开。 */
+.nutri-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 1px 0 1px 18px;
+  border-left: 1px solid var(--line);
+}
+
+.nutri-cell:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.nutri-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+/* 数值是这一块的主角：衬线大字 + 等宽数字。
+   tabular-nums 不是装饰——六列并排时，只有等宽数字才会让小数点对齐成一条线。 */
+.nutri-value {
+  font-family: var(--serif);
+  font-size: 25px;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.4px currentColor;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.16;
+}
+
+/* 没查到的那一项：字号落回正文级、颜色退到最弱。
+   特意**不用红色**——缺数据不是错误，是这一项没收录，红色会把"没查到"说成"出问题了"。 */
+.nutri-cell[data-unknown='true'] .nutri-value {
+  font-size: 15px;
+  -webkit-text-stroke: 0;
+  color: var(--ink-faint);
+}
+
+.nutri-unit {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  min-height: 14px; /* 未收录那一列没有单位，留出等高才知道六列是同级的 */
+}
+
+/* 缺口一行（partial 才出现）：未收录谁、谁缺克数。
+   排得像脚注，压得很轻——但它必须在，否则上面那排数字会被当成整顿的热量。 */
+.nutri-gaps {
+  margin: 13px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+/* 算不出时的那一句。不排六列：没有数值就没有列可排，
+   排一整行「未收录」反而像"数据全坏了"，而实际可能只是正文没写用量。 */
+.nutri-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+/* 窄屏：六列并排会把「碳水化合物」挤到换行，改两行三列。
+   竖线跟着换列的节奏走——每行第一列不画线，所以用 3n+1 而不是 first-child。 */
+@media (max-width: 720px) {
+  .nutri-grid {
+    grid-template-columns: repeat(3, 1fr);
+    row-gap: 14px;
+  }
+
+  .nutri-cell {
+    padding-left: 14px;
+  }
+
+  .nutri-cell:nth-child(3n + 1) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .nutri-value {
+    font-size: 21px;
+  }
+}

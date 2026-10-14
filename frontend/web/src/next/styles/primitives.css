@@ -1,0 +1,34 @@
+/*
+ * 原语层样式。类名前缀 .p-*，只写原语，只读 tokens。
+ *
+ * 两条边界（方案第三节）：
+ *   1 低层不得引用高层 —— 这里不出现 .wait-* / .result-* / .rail-* 这些业务类名
+ *   2 原语不管布局 —— 这里不写 margin，也不写栅格；放哪儿由 blocks/ 与 views/ 决定
+ *
+ * 所以和旧的 .wait-facts 相比，这里只搬来**盒子本身**（补白、描边、圆角、底色），
+ * 那个 margin-top: 30px 是等待页的版式节奏，留在 wait.css 的 .wait-facts 上。
+ */
+
+.p-panel {
+  border-radius: var(--radius);
+}
+
+/* 抬一档底色 + 一根 1px 发丝线分离，不用投影：
+   投影是"悬浮面板"的语言，而等待页要读起来像一张已经填好的收据。 */
+.p-panel[data-variant='outline'] {
+  padding: 26px 28px 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+
+/* 结果页常驻右栏的那块浅底面板。三处数字都是从 .result-rail 的原规则**抄下来的**，
+   不是估的：padding 22px 20px、圆角 --radius-lg、底色 --panel、描边 --panel-line。
+   底色用 --panel（#F4F0E8）而不是白：它比页面底 --bg（#F8F4F0）**更深**一点，
+   读起来是"压在纸面上的一块浅底"，不是浮起来的白卡——白卡正是被否决的玻璃感。
+   光有底色不够：两者只差 4/4/8，截图里完全看不出是面板，所以描边是必需的。 */
+.p-panel[data-variant='filled'] {
+  padding: 22px 20px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}

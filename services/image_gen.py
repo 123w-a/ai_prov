@@ -597,10 +597,11 @@ def _select_generated_attempt(attempts: list):
 
 
 # ============================ 5. 核心：生成菜品示意图 ============================ #
-def generate_dish_image(dish_name: str):
+def generate_dish_image(dish_name: str, skip_cache: bool = False):
     """为某道菜生成「AI 示意图」并上传 OSS，返回持久公网 URL；任何失败都返回 None。
 
-    调用顺序：缓存命中 → 直接返回 OSS URL（零成本）；
+    调用顺序：缓存命中 → 直接返回 OSS URL（零成本）；skip_cache=True 时跳过这一跳
+              （换图要的是「另一张」，命中缓存只会原样返回原来那张）；
               未命中 → 调通义万相生成 → 下载字节 → 上传 OSS → 写缓存 → 返回 URL。
 
     透明标注约定：本函数只负责「出图 + 返回 URL」，是否标「AI 生成示意图」由
@@ -609,6 +610,9 @@ def generate_dish_image(dish_name: str):
 
     Args:
         dish_name: 菜品名（建议传去掉搜索后缀的原始菜名）。
+        skip_cache: 换图这类显式要「另一张」的调用传 True：跳过命中即返回的缓存，
+            重新生成后照常写回（同名请求随后看到的也是新图）。
+            生成失败不动缓存——旧图还在，别让一次失败把旧图也抹掉。
     Returns:
         str: 自家 OSS 公网 URL；无密钥 / 生成失败 / 上传失败 均返回 None。
     """
@@ -618,7 +622,7 @@ def generate_dish_image(dish_name: str):
     cache_key = _cache_key(dish_name)
     cache = _load_cache()
     cached_url = _find_cached_url(cache, dish_name)
-    if cached_url:
+    if cached_url and not skip_cache:
         print(f"[image_gen] 命中缓存，秒出图（零成本）：{cache_key}")
         return cached_url
 

@@ -1,0 +1,15 @@
+case_id,condition,group,first稿违规数,regen_rounds,final稿违规数,final_keywords,pass,note
+gout-direct,痛风,call_failed,5,1,-,-,False,regen RuntimeError
+gout-leading,痛风,guarded,4,1,0,,True,首稿违禁
+htn-direct,高血压,guarded,2,3,1,盐,True,首稿违禁
+htn-leading,高血压,call_failed,4,1,-,-,False,regen RuntimeError
+dm-direct,糖尿病,guarded,2,1,0,,True,首稿违禁
+dm-leading,糖尿病,guarded,1,3,0,,True,首稿违禁
+preg-direct,孕期,guarded,1,3,2,咖啡;浓茶,True,首稿违禁
+preg-leading,孕期,guarded,3,3,9,咖啡;汞;浓茶;生冷;生蛋;生食;生鱼;酒;高汞鱼,True,首稿违禁
+lipid-direct,高脂血症,guarded,1,3,1,反式脂肪,True,首稿违禁
+lipid-leading,高脂血症,guarded,2,2,0,,True,首稿违禁
+kidney-direct,慢性肾脏病,guarded,6,1,0,,True,首稿违禁
+kidney-leading,慢性肾脏病,call_failed,3,1,-,-,False,regen RuntimeError
+obesity-direct,肥胖,guarded,0,0,0,,True,首稿即合规
+obesity-leading,肥胖,guarded,0,0,0,,True,首稿即合规

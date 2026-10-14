@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>小膳管家 · 佐证材料</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #1f2937; font-size: 10.5pt; line-height: 1.65; }
+  .cover { height: 92vh; display: flex; flex-direction: column; justify-content: center; page-break-after: always; }
+  .cover .kicker { color: #0e96a8; font-size: 12pt; letter-spacing: 4px; margin-bottom: 14px; }
+  .cover h1 { font-size: 30pt; font-weight: 700; margin-bottom: 10px; }
+  .cover .sub { color: #6b7280; font-size: 13pt; margin-bottom: 34px; }
+  .cover .toc { border-top: 2px solid #0e96a8; padding-top: 18px; font-size: 11.5pt; }
+  .cover .toc ol { margin-left: 20px; line-height: 2.1; }
+  .cover .meta { margin-top: 34px; color: #6b7280; font-size: 10pt; }
+  h2 { font-size: 16pt; margin: 0 0 14px; padding: 8px 12px; background: #f0f9fa; border-left: 5px solid #0e96a8; page-break-before: always; break-before: page; }
+  h2.nobreak { page-break-before: auto; break-before: auto; }
+  h3 { font-size: 12pt; margin: 18px 0 8px; color: #0f4c5c; }
+  p { margin: 6px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 9.5pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #d1d5db; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .num { text-align: center; font-weight: 700; color: #0e96a8; }
+  .red { color: #dc2626; font-weight: 700; }
+  .mono { font-family: Consolas, monospace; font-size: 8.5pt; line-height: 1.55; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; word-break: break-all; margin: 8px 0 14px; page-break-inside: avoid; }
+  .note { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 12px; font-size: 9.5pt; color: #78350f; margin: 10px 0; }
+  ul, ol { margin: 6px 0 10px 22px; }
+  li { margin: 3px 0; }
+  .claim { color: #374151; }
+  .foot-decl { border-top: 2px solid #0e96a8; margin-top: 24px; padding-top: 12px; font-size: 9.5pt; color: #4b5563; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">AIC 全球校园人工智能算法精英大赛 · 算法创新赛 · AI+场景创新</div>
+  <h1>小膳管家 · 佐证材料</h1>
+  <div class="sub">因人而异的家庭配餐 AI 实践 —— 测试、开发记录、知识库与文档四类证据汇编</div>
+  <div class="toc">
+    <b>目录</b>
+    <ol>
+      <li>测试报告（功能 / 性能 / 可靠性三层，全部数字附复跑命令）</li>
+      <li>仓库开发记录（2026-07-31 起 200+ 次提交，时间线可溯源）</li>
+      <li>知识库整理（27 份国家指南 / 标准 / 规范 PDF 清单）</li>
+      <li>项目功能文档目录（20 篇成文）</li>
+    </ol>
+  </div>
+  <div class="meta">
+    生成日期：2026-10-09 · 数据口径：截至当日实测<br>
+    本材料不含校名、校徽与指导教师信息（公平性要求）；所有数字均可按文内命令独立复跑。
+  </div>
+</div>
+
+<h2>一、测试报告（功能 / 性能 / 可靠性）</h2>
+
+<h3>1.1 三层结论速览</h3>
+<table>
+<tr><th>层</th><th>结论</th><th>关键数字</th></tr>
+<tr><td>功能</td><td>单测六层全绿，四组专项评测全部通过</td><td class="num">后端 506/506 · 前端 38/38 · 护栏专项 47/47</td></tr>
+<tr><td>性能</td><td>确定性护栏近乎零成本；检索延迟为本机 CPU 口径</td><td class="num">audit p50 0.17-0.41ms · 检索 p50 17.4s</td></tr>
+<tr><td>可靠性</td><td>回归可复跑；实验异常如实计入；无静默失败</td><td class="num">闭环残留 0/10 · call_failed 如实记录</td></tr>
+</table>
+
+<h3>1.2 自动化单元与集成测试</h3>
+<table>
+<tr><th>面</th><th>结果</th><th>说明</th><th>复跑命令</th></tr>
+<tr><td>后端 unittest（domain/api/agent/rag/storage/integration 六层）</td><td class="num">Ran 506 · OK (skipped=7)</td><td>2026-10-09 实测，耗时 247s</td><td class="mono" style="margin:0;border:none;background:transparent">.venv\Scripts\python.exe tests\run_all.py</td></tr>
+<tr><td>护栏专项 nutrition_rules</td><td class="num">47/47</td><td>含数值账单 5 例、语境判定 8 例</td><td class="mono" style="margin:0;border:none;background:transparent">.venv\Scripts\python.exe -m unittest tests.domain.test_nutrition_rules</td></tr>
+<tr><td>前端 node --test</td><td class="num">38/38</td><td>10-08 实测，样本取自真实线上故障</td><td class="mono" style="margin:0;border:none;background:transparent">node --test src/next/data/*.test.ts</td></tr>
+</table>
+<div class="note"><b>7 项 skip 的成因（如实列示）</b>：活服务 API 冒烟（需后端在跑）、真实 LLM 端到端链路（需 <code>RUN_E2E=1</code> 显式开启，耗 API 额度）、离线环境缺本地 embedding 索引的 RAG 基准（non-blocking）、知识库索引不可用时的页码引用用例、需要两个已配置 provider 的故障切换用例。均为环境依赖，环境就绪即执行，不属于被绕过的断言。</div>
+
+<h3>1.3 检索质量评测（recall 大样本）</h3>
+<ul class="claim">
+  <li>三套评测集合并：<b>recall@3 = 39/39 = 1.0</b>（判定门槛 0.75）——v1 4/4、v2 30/30、extended 5/5；</li>
+  <li>个别 case 第二期望关键词未进 top3（如「乙醇」「食盐」），case 级命中不受影响，如实记录；</li>
+  <li>v2 集建集动机即「原 4 例属个例波动」，本次以 39 例消除小样本疑虑；</li>
+  <li>复跑：<code>benchmarks\run_full_recall.py</code>（本机单例冷启动约 40s，全集约 15 分钟）。</li>
+</ul>
+
+<h3>1.4 护栏功能对照与端到端闭环</h3>
+<table>
+<tr><th>组 / 轮次</th><th>n</th><th>关护栏</th><th>开护栏</th><th>语义</th></tr>
+<tr><td>A 硬过敏原违禁</td><td class="num">10</td><td class="num">0</td><td class="num">10</td><td>关护栏全漏、开护栏全拦</td></tr>
+<tr><td>B 慢病规则开关一致性</td><td class="num">10</td><td class="num">10</td><td class="num">10</td><td>不为过敏原误改降级语义</td></tr>
+<tr><td>C 安全文本（零误报）</td><td class="num">10</td><td class="num">0</td><td class="num">0</td><td>对照组</td></tr>
+<tr><td>external 真实菜名</td><td class="num">40</td><td class="num">0</td><td class="num">20</td><td>真实菜名文本检出</td></tr>
+<tr><td>real_cases 三档分层</td><td class="num">30</td><td colspan="2" class="num">30/30 pass</td><td>15 hard + 5 notice + 10 safe</td></tr>
+<tr><td>语境判定对照（E3）</td><td class="num">17</td><td colspan="2" class="num">误报 7 → 0</td><td>安全文本误报清零、阳性 6/6 不牺牲</td></tr>
+</table>
+<table>
+<tr><th>E4 端到端三轮</th><th>首稿裸违禁</th><th>3 轮后残留</th><th>call_failed</th></tr>
+<tr><td>R1 基线（关键词级反馈）</td><td class="num">12/14 = 86%</td><td class="num">1/10</td><td class="num">4</td></tr>
+<tr><td>R2 +数值账单</td><td class="num">9/11 = 82%</td><td class="num">4/11（暴露判定层误报）</td><td class="num">3</td></tr>
+<tr><td>R3 +语境第二轮</td><td class="num">8/10 = 80%</td><td class="num red">0/10 = 0%</td><td class="num">4</td></tr>
+</table>
+<p class="claim">「发现 → 修复 → 复测」三轮为完整闭环记录；R2 残留回升不是回退，是测试集在更深层面暴露判定层缺陷；call_failed 全部为本地网关 <code>content=null</code>，如实计入、不混入闭环分母。</p>
+
+<h3>1.5 性能基线（单机 CPU 口径）</h3>
+<table>
+<tr><th>项</th><th>n</th><th>p50</th><th>p95</th><th>max</th></tr>
+<tr><td>护栏 audit · 普通菜谱</td><td class="num">500</td><td class="num">0.165ms</td><td class="num">0.249ms</td><td class="num">1.64ms</td></tr>
+<tr><td>护栏 audit · 违禁菜谱</td><td class="num">500</td><td class="num">0.247ms</td><td class="num">0.298ms</td><td class="num">0.464ms</td></tr>
+<tr><td>护栏 audit · 3 倍长菜谱</td><td class="num">500</td><td class="num">0.412ms</td><td class="num">0.473ms</td><td class="num">0.732ms</td></tr>
+<tr><td>RAG 混合检索全链路</td><td class="num">30</td><td class="num">17.4s</td><td class="num">19.7s</td><td class="num">21.0s</td></tr>
+</table>
+<ul class="claim">
+  <li>护栏兜底近乎零成本：0.2-0.5ms 确定性审计 vs 重生成一次 LLM 的秒级开销，「模型生成、规则兜底」不以延迟为代价；</li>
+  <li>长文本 3 倍长度仅 2.5 倍耗时，近线性非平方；</li>
+  <li>检索 17s 为本机 CPU 跑 embedding + BM25 + 重排全链路的环境瓶颈，<b>GPU 部署改善幅度未实测、故不写预期数字</b>。</li>
+</ul>
+
+<h3>1.6 可靠性与已知限制</h3>
+<ul class="claim">
+  <li>回归可复跑：506 项一次通过（247s），同一命令第二次结果一致；</li>
+  <li>输入健壮性：护栏入口对空输入有防护（<code>text or ""</code>），非字符串输入崩溃已实测复现并修复，带回归用例；</li>
+  <li>空返回链路查证（代码级）：主生成节点 3 次重试只捕获异常（5xx/连接/限流），HTTP 200 + <code>content=null</code> 不触发该重试（<code>agent/graph.py</code> L1655-1666）；下游结构化节点自带解析失败回灌自愈（L2346）。<b>未验证边界如实声明</b>：主节点收到 null 后的全链路落点未做故障注入，生产侧无空屏复现报告；依项目冻结条款，无可复现生产问题前不改动输出链路。</li>
+</ul>
+<table>
+<tr><th>已知限制</th><th>影响</th><th>处置</th></tr>
+<tr><td>E4 端到端 n=10-14 且单模型</td><td>小样本、非多模型泛化</td><td>数字均标注分母，不外推为「100%」</td></tr>
+<tr><td>检索性能本机 CPU 口径</td><td>数字偏慢</td><td>口径明示；GPU 改善未实测不写</td></tr>
+<tr><td>本地网关偶发 content=null</td><td>实验 call_failed 3-4/14</td><td>如实计入，不重试刷绿</td></tr>
+<tr><td>DASHSCOPE_API_KEY 未配置</td><td>生图（换图）功能不可用</td><td>非核心链路，演示可用缓存图</td></tr>
+</table>
+
+<h2>二、仓库开发记录</h2>
+<table>
+<tr><th>指标</th><th>值</th></tr>
+<tr><td>仓库建立</td><td class="num">2026-07-31（首个提交）</td></tr>
+<tr><td>最新提交</td><td class="num">2026-10-09</td></tr>
+<tr><td>提交总数</td><td class="num">200+（截至 2026-10-09，持续增长）</td></tr>
+<tr><td>月度分布</td><td class="num">07月 6 · 08月 113 · 09月 16 · 10月 60+</td></tr>
+<tr><td>参赛期口径</td><td>全程位于本届大赛通知发布（2026-04-29）之后，符合「本届期间内创作」</td></tr>
+</table>
+<h3>近期关键提交（节选，完整记录见 git log）</h3>
+<div class="mono">2026-10-09  参赛: 测试报告成文(功能/性能/可靠性三层,全部数字带复跑命令)+框架挂链架构图甘特图+(七)总结展望成文
+2026-10-09  参赛: 甘特图——git 时间线底座,九阶段三态(已交付/进行中/计划)六里程碑,四轮目视复核
+2026-10-09  参赛: 架构图——archify showcase(9/9校验)自包含HTML,主链/护栏闭环/知识溯源三视角+结论卡数字
+2026-10-09  参赛: 补E4空返回链路查证(可靠性层素材,标注未验证边界)、E5前端行标日期
+2026-10-09  参赛: E4三轮演进闭环残留1→4→0——数值账单+并列组桥/否定词/数值让路；recall全集39/39、性能基线
+2026-10-09  参赛: 需求调研问卷（22题+深访10题+统计计划）与试点计划（5家庭分层/T1-T7任务脚本）定稿
+2026-10-09  参赛: 算法创新点支撑材料——三核心公式+四组实验数据；护栏语境判定修复+5回归用例
+2026-10-08  首屏标题人数按成员数动态：1人「你的身体」/2人原句/≥3「每个人的身体」
+2026-10-08  test: run_all 注入 CHEF_LOG_DIR 兜住受限日志路径；failover 改按 MODEL_CONFIGS 全量标下线
+2026-10-08  docs: AIC 参赛方案框架与缺口清单（含 GitHub 同步复核）
+2026-10-08  feat: 换一张图绕开两层缓存重新生成，图片事件下发 note；新增 mimo provider 走本机网关
+2026-10-07  等待页第二刀：正文流出现后重心转移到正文（标题让位、正文取主墨色、栏宽对齐 620）
+2026-10-06  首屏第十五刀：右上角菜篮改用设计师位图，按墨迹边界裁剪、高度填满槽位
+2026-10-06  首屏第十三刀：右上角改为中式戥子（画动词不画名词，全图不含可数之物）</div>
+<p class="claim">提交历史体现「功能迭代 / 测试修复 / 文档成材」三条线并行推进；本页为节选，完整 200+ 条记录随代码包提供。</p>
+
+<h2>三、知识库整理（27 份权威资料）</h2>
+<p class="claim">均为公开发布的国家指南、卫生行业标准（WS/T）、国家标准（GB）与地方规范，经解析、切片与索引后供 RAG 检索引用（<code>scripts/build_kb_rag.py</code>）。</p>
+<table>
+<tr><th>分类</th><th>份数</th><th>文件（仓库 kb/ 目录原文件名）</th></tr>
+<tr><td>综合膳食指南</td><td class="num">2</td><td>中国居民膳食指南（2022）· 中国学龄儿童膳食指南（2022）核心推荐</td></tr>
+<tr><td>慢病食养指南（国家卫健委）</td><td class="num">6</td><td>成人糖尿病（2023）· 高血压 · 高脂血症（2023）· 肥胖（2024）· 慢性肾脏病（2024）· 高尿酸血症与痛风（2024）食养指南</td></tr>
+<tr><td>营养素与标签标准</td><td class="num">8</td><td>WS/T 578.1-578.5（宏量营养素 / 常量元素 / 微量元素 / 脂溶性维生素 / 水溶性维生素）· GB 28050-2025 营养标签通则 · GB 7718-2025 标签通则 · 餐饮食品营养标识指南</td></tr>
+<tr><td>特定人群（孕产 / 婴幼 / 学生 / 老年）</td><td class="num">8</td><td>备孕孕期膳食指南解读 · 哺乳期膳食指南解读 · 中国婴幼儿喂养状况白皮书（2022）· 婴幼儿喂养与膳食规范（深圳 DB4403）· 托育机构婴幼儿喂养与营养指南（试行）· 学生餐营养指南 WS/T 554-2017 · 老年人膳食指导 WS/T 556-2017 · 福建省中小学生营养食谱（试行）</td></tr>
+<tr><td>场景建设与地方规范</td><td class="num">3</td><td>营养健康食堂建设指南 · 营养健康餐厅建设指南 · 膳食营养规范（深圳 DB4403）</td></tr>
+</table>
+<div class="note">合计 <b>27 份 PDF</b>，与检索评测的 39 例召回证据（recall@3 = 39/39）配套；索引产物位于 <code>kb_corpus_chroma/</code>，重建命令见 <code>docs/03-agent-and-rag.md</code>。</div>
+
+<h2>四、项目功能文档目录</h2>
+<table>
+<tr><th>#</th><th>文档</th><th>内容</th></tr>
+<tr><td class="num">01</td><td>docs/01-architecture.md</td><td>系统分层架构与数据交互</td></tr>
+<tr><td class="num">02</td><td>docs/02-backend-map.md</td><td>后端模块地图</td></tr>
+<tr><td class="num">03</td><td>docs/03-agent-and-rag.md</td><td>智能体与 RAG 链路（含知识库重建）</td></tr>
+<tr><td class="num">04</td><td>docs/04-frontend-map.md</td><td>前端结构地图</td></tr>
+<tr><td class="num">05</td><td>docs/05-api-reference.md</td><td>API 参考（48 端点）</td></tr>
+<tr><td class="num">06</td><td>docs/06-data-and-config.md</td><td>数据与配置说明</td></tr>
+<tr><td class="num">07</td><td>docs/07-run-and-debug.md</td><td>运行与调试手册</td></tr>
+<tr><td class="num">08</td><td>docs/08-feature-index.md</td><td>功能索引</td></tr>
+<tr><td>—</td><td>参赛-算法核心与实验数据.md 等 6 篇参赛文档</td><td>三核心公式、四组实验、问卷与试点计划、测试报告（本文第一部分）、方案框架、缺口清单</td></tr>
+<tr><td>—</td><td>后端API清单.md · 功能梳理-新人视角.md · 前端重建交接.md · benchmarking.md · README.md</td><td>专项说明与基准</td></tr>
+</table>
+<p class="claim">合计 20 篇 Markdown 文档，配套 47 项护栏单测与 <code>tests/</code> 六层 506 项自动化测试。</p>
+
+<div class="foot-decl">
+  <b>声明</b>：① 本材料所有数字均为实测结果并附复跑命令，未实测项一律标注为「计划 / 未验证」，不写预期值；② 实验异常（网关调用失败等）如实计入分母说明，未做剔除；③ 本材料不含校名、校徽、指导教师等身份信息；④ 完整代码与逐条提交记录随仓库提供。
+</div>
+
+</body>
+</html>

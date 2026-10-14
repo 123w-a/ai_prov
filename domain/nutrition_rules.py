@@ -149,16 +149,58 @@ _REVERSED_QUALIFIERS = (
     "不", "不能", "不要", "不做", "不采用", "不接受", "拒绝",
     "没有", "没", "不是", "并非", "未",
 )
+# 并列组桥（E4 复测）：限定词修饰的是整个并列组，
+# 「避免[生冷和生食]」「不喝[浓茶和咖啡]」「不放[味精和鸡精]」里，
+# 组内后一个词的前缀只剩「组内词 + 连词」，只按紧邻前缀比对必然漏判成真下料。
+_CONJUNCTIONS = ("和", "与", "跟", "及", "、", ",", "，")
+# 限定词与关键词之间允许隔一个动词（「拒绝饮酒」「避免喝酒」）；
+# 动词集收窄，保证「拒绝不了喝」这类反向句不被误豁免。
+_VERB_BRIDGE = ("饮", "吃", "喝")
+# forbidden 模式的数值让路双条件之一：「限制语 + 数字」同时出现才算合规表述。
+_LIMIT_DISCLOSURE_RE = re.compile(
+    r"(?:控制在|不超过|不低于|少于|小于|低于|以内|之内|以下|只放|只用|仅放|仅用|≤|<)"
+)
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:g|克|毫升|ml|mg|毫克)")
 
 
-def _qualified_by_suffix(before: str, qualifiers) -> bool:
-    for qualifier in sorted(qualifiers, key=len, reverse=True):
-        if not before.endswith(qualifier):
+def _qualified_by_suffix(before: str, qualifiers, series_words=()) -> bool:
+    """尾部限定词匹配；限定词与关键词之间可隔一个动词（_VERB_BRIDGE），
+    或隔并列组的「组内词 + 连词」序列（series_words 须来自本规则词表）。
+
+    保留原口径：限定词前面紧跟否定词（「不少盐」「不能不加盐」）是翻案，不算限量。
+    """
+    # 先循环剥掉尾部的（连词 | 组内词）单元，让限定词落回尾部再比对。
+    stripped = before
+    while stripped:
+        if stripped[-1] in _CONJUNCTIONS:
+            stripped = stripped[:-1]
             continue
-        preceding = before[:-len(qualifier)]
-        if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
-            return False
-        return True
+        peeled = False
+        for word in sorted(
+            (w for w in series_words if w and stripped.endswith(w)),
+            key=len,
+            reverse=True,
+        ):
+            stripped = stripped[:-len(word)]
+            peeled = True
+            break
+        if not peeled:
+            break
+    for qualifier in sorted(qualifiers, key=len, reverse=True):
+        if stripped.endswith(qualifier):
+            preceding = stripped[:-len(qualifier)]
+            if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+                return False
+            return True
+        if (
+            len(stripped) >= len(qualifier) + 1
+            and stripped[-1] in _VERB_BRIDGE
+            and stripped[:-1].endswith(qualifier)
+        ):
+            preceding = stripped[:-(len(qualifier) + 1)]
+            if any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+                return False
+            return True
     return False
 
 
@@ -183,7 +225,7 @@ def _ends_with_reversed(text: str) -> bool:
     return any(text.endswith(item) for item in _REVERSED_QUALIFIERS)
 
 
-def _salt_is_limited(compact: str, start: int, end: int) -> bool:
+def _salt_is_limited(compact: str, start: int, end: int, series_words=()) -> bool:
     """判断这一处盐/高钠调味料是在讲「少放/别放/减量」，还是真在下料。
 
     四种证据，任一成立即视为限量表述（不算违规）：
@@ -195,7 +237,7 @@ def _salt_is_limited(compact: str, start: int, end: int) -> bool:
     """
     clause = _clause_before(compact, start)
     cursor = len(clause)  # 关键词在 clause 内的位置（clause 恰好结束于关键词）
-    if _qualified_by_suffix(clause, _SALT_QUALIFIERS):
+    if _qualified_by_suffix(clause, _SALT_QUALIFIERS, series_words):
         return True
     for match in _SALT_NEGATION_DOSE_RE.finditer(clause, 0, cursor):
         middle = match.group(0)[1:-1]
@@ -227,17 +269,29 @@ def _salt_is_limited(compact: str, start: int, end: int) -> bool:
     return False
 
 
-def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
+def _has_unqualified_occurrence(text: str, keyword: str, mode: str, series_words=()) -> bool:
     """Return True when at least one keyword occurrence expresses actual use/state."""
     compact = re.sub(r"\s+", "", text or "")
     for match in re.finditer(re.escape(keyword), compact):
         before = compact[max(0, match.start() - 12):match.start()]
+        after = compact[match.end():match.end() + 12]
         if mode == "condition" and _CONDITION_NEGATION_RE.search(before):
             continue
-        if mode == "salt" and _salt_is_limited(compact, match.start(), match.end()):
+        if mode == "salt" and _salt_is_limited(compact, match.start(), match.end(), series_words):
             continue
-        if mode == "forbidden" and _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
-            continue
+        if mode == "forbidden":
+            if _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS, series_words):
+                continue
+            # 后置否定：「任何酒都不喝」的否定落在关键词之后，只查前缀会把安全文本误报。
+            if after[:4].startswith(("都不", "都别", "绝不", "从不")):
+                continue
+            # 数值让路双条件：邻域同时有「限制语 + 数字」= 合规表述
+            # （「反式脂肪控制在2克以内」）；缺一不豁免（「一天吃4克」照拦）。
+            if (
+                (_LIMIT_DISCLOSURE_RE.search(before) or _LIMIT_DISCLOSURE_RE.search(after[:10]))
+                and (_NUMBER_RE.search(after[:12]) or _NUMBER_RE.search(before[-8:]))
+            ):
+                continue
         return True
     return False
 
@@ -323,28 +377,45 @@ def detect_conditions(text: str) -> List[str]:
     return found
 
 
+# 数值账单的钠源/糖源：钠源比旧版硬编码更宽——模型常用味精/鸡精顶替食盐、
+# 用蜂蜜顶替白砂糖，窄词表算不到就会漏（E4 实测：7g 钠里只算得出一小部分）。
+_SALT_SOURCES = _SALT_SEASONING + ["鱼露", "咸菜", "豆豉"]
+_SUGAR_SOURCES = ["白砂糖", "冰糖", "麦芽糖", "蜂蜜", "红糖", "蔗糖", "糖"]
+
+
+def _total_g_detail(text: str, keywords, units: str = r"g|克|ml|毫升") -> List[Dict]:
+    """同 _total_g 的逐项明细：[{"item": 关键词, "grams": 克数}]（按文本区间去重）。
+
+    长词优先 + 区间去重的语义与 _total_g 完全一致（_total_g 即对本函数求和，
+    单一数据源，避免两处逻辑漂移）。
+    """
+    text = text or ""
+    matches = []
+    for kw in sorted(set(keywords), key=len, reverse=True):
+        pattern = rf"{re.escape(kw)}\s*(?:约|大约)?\s*(\d+(?:\.\d+)?)\s*(?:{units})"
+        for m in re.finditer(pattern, text):
+            matches.append((m.start(), m.end(), float(m.group(1)), kw))
+    detail: List[Dict] = []
+    taken = []
+    for start, end, value, kw in sorted(matches):
+        if any(start < prev_end and end > prev_start for prev_start, prev_end in taken):
+            continue
+        taken.append((start, end))
+        detail.append({"item": kw, "grams": value})
+    return detail
+
+
 def _total_g(text: str, keywords, units: str = r"g|克|ml|毫升") -> float:
     """尽力估算关键词后标注数量的克数总和（最佳努力，非精确）。
 
     长词优先并按文本区间去重："白砂糖30g"里的"糖"不再重复计入。
     """
-    matches = []
-    for kw in sorted(set(keywords), key=len, reverse=True):
-        pattern = rf"{re.escape(kw)}\s*(?:约|大约)?\s*(\d+(?:\.\d+)?)\s*(?:{units})"
-        for m in re.finditer(pattern, text):
-            matches.append((m.start(), m.end(), float(m.group(1))))
-    total, taken = 0.0, []
-    for start, end, value in sorted(matches):
-        if any(start < prev_end and end > prev_start for prev_start, prev_end in taken):
-            continue
-        taken.append((start, end))
-        total += value
-    return total
+    return sum(d["grams"] for d in _total_g_detail(text, keywords, units))
 
 
 def _salt_total_g(text: str) -> float:
     """尽力从菜谱文本里估算食盐/高钠调料的克数（最佳努力，非精确）。"""
-    return _total_g(text, ["盐", "酱油", "生抽", "老抽", "蚝油"])
+    return _total_g(text, _SALT_SOURCES)
 
 
 def audit(text: str, conditions: List[str]) -> List[Dict]:
@@ -352,6 +423,8 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
 
     返回元素：{"condition","keyword","message","source","todo_source"?}
     """
+    # None 防御：LLM 空回复 content=None 时不能把下游 re.finditer 打崩。
+    text = text or ""
     violations: List[Dict] = []
     seen = set()
     for cond in conditions:
@@ -360,7 +433,10 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
             continue
         for kw in rule.get("forbidden", []):
             mode = "salt" if kw in _SALT_QUALIFIABLE else "forbidden"
-            if _has_unqualified_occurrence(text, kw, mode) and (cond, kw) not in seen:
+            # 并列组桥的组内词表：salt 组内是调料（少放盐和酱油），
+            # forbidden 组内是本规则禁忌词（避免生冷和生食）。
+            series = _SALT_SEASONING if mode == "salt" else rule.get("forbidden", [])
+            if _has_unqualified_occurrence(text, kw, mode, series) and (cond, kw) not in seen:
                 seen.add((cond, kw))
                 violations.append({
                     "condition": cond,
@@ -383,11 +459,15 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
                             "keyword": f"食盐约{total:.0f}g(> {cap}g)",
                             "message": rule["message"],
                             "source": rule["source"],
+                            # 数值账单：只给总量时模型会用同钠调料替换、总钠压不下来，
+                            # 必须给逐项克数，模型才知道该减哪几项（E4 实测）。
+                            "detail": _total_g_detail(text, _SALT_SOURCES),
+                            "cap": cap,
                         })
         # 添加糖上限检查（如肥胖：添加糖≤25g/日）
         sugar_cap = rule.get("sugar_cap_g")
         if sugar_cap:
-            total = _total_g(text, ["白砂糖", "冰糖", "麦芽糖", "糖"], r"g|克")
+            total = _total_g(text, _SUGAR_SOURCES, r"g|克")
             if total > sugar_cap:
                 key = (cond, "添加糖")
                 if key not in seen:
@@ -397,6 +477,8 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
                         "keyword": f"糖约{total:.0f}g(> {sugar_cap}g)",
                         "message": rule["message"],
                         "source": rule["source"],
+                        "detail": _total_g_detail(text, _SUGAR_SOURCES, r"g|克"),
+                        "cap": sugar_cap,
                     })
     return violations
 
@@ -409,6 +491,17 @@ def describe(violations: List[Dict]) -> str:
     for v in violations:
         flag = " [待补权威源]" if v.get("todo_source") else ""
         lines.append(f"- {v['condition']}：命中「{v['keyword']}」→ {v['message']}（来源：{v['source']}{flag}）")
+        # 数值类违禁追加账单行：逐项克数 + 差额 +「替换品类无效」的改法提示。
+        # 这行直接进重生成反馈——模型要照着「减哪几项」改，而不是换个咸味调料了事。
+        detail, cap = v.get("detail"), v.get("cap")
+        if detail and cap:
+            parts = " + ".join(f"{d['item']}{d['grams']:g}g" for d in detail)
+            total = sum(d["grams"] for d in detail)
+            lines.append(
+                f"  数值账单：{parts} = {total:g}g，上限 {cap:g}g，超 {total - cap:g}g；"
+                "重写时按比例下调上述每一项用量——仅替换品类（如食盐换鸡精/蜂蜜）而总克数不降，"
+                "本项仍会再次命中。"
+            )
     return "\n".join(lines)
 
 

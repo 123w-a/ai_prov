@@ -41,7 +41,13 @@ from .turn_decision import (
 )
 from agent_tools import find_recipe_image, set_query_transform_llm, tools, web_search
 from .chains import build_structured_answer, rank_recipes#LCEL 结构化链(prompt|llm|parser)+排序+格式自动重试
-from .schemas import DishMatrixItem, GuardrailItem, HealthLight, SourceRef  # 结构化输出的确定性注入字段
+from .schemas import (  # 结构化输出的确定性注入字段
+    DishMatrixItem,
+    GuardrailItem,
+    HealthLight,
+    NutritionFacts,
+    SourceRef,
+)
 #build_structured_answer标准链+parser检查出错误后再进行重试
 from domain.nutrition_rules import (
     RULES,
@@ -51,6 +57,7 @@ from domain.nutrition_rules import (
     detect_conditions,
     sodium_light_reason,
 )  # L3 硬护栏：确定性健康禁忌审计
+from domain.dish_nutrition import compute_nutrition_facts  # 营养数值：查国标表确定性累加，不经模型
 from domain.allergen_rules import (  # 过敏原 L3 硬护栏：与慢病规则分开，避免改变既有慢病降级语义
     allergen_label,
     audit_allergen_advisories,
@@ -1947,6 +1954,8 @@ def _is_candidate_turn(messages, *, ingredient_gate_ready: bool = False) -> bool
         return False
     # “还能吃什么 / 能吃什么”是泛推荐，不是“能否食用”的安全追问。
     # 只把带明确疑问收尾的“能吃/能喝”识别成信息问题，保留真实安全问答。
+    # 注：裸「能吃」「能喝」必须紧跟疑问标记才算健康提问——「做个我们俩都能吃的」
+    # 「能喝汤的菜」都是点菜句，误判会关掉「先推荐候选」通道（2026-09-22 实测）。
     if re.search(
         r"(能不能吃|可不可以吃|能吃(?!什么)[^，。！？\n]{0,8}[吗么嘛？?]|"
         r"能喝(?!什么)[^，。！？\n]{0,8}[吗么嘛？?]|适合吃|该不该吃|要不要吃|可以吃吗)",
@@ -3190,13 +3199,22 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
             parts.append("用户需求：" + text)
             break
     # 把本轮 Agent 已经确认的自然语言回答交给结构化模型。
-    # 这样卡片使用同一轮已经识别出的菜名，不会根据旧搜索结果重新猜一道菜。
+    # 2026-09-22 起：这段正文是结构化链的**唯一菜谱来源**——它已经是流式发给用户、
+    # 用户已经看到的那份答案，结构化只做提取，不再照着搜索结果重写一遍。
+    # 所以这里不能再用 800 字截断：一份带步骤和调料的菜谱常超过 800 字，
+    # 截断会把 steps 砍掉，反而逼模型去"补"，正好退回重新生成。
+    _OPENING_EXCERPT_LIMIT = 3000
     for m in reversed(context_messages):
         if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
             ai_text = str(m.content).strip()
             if ai_text and not ai_text.startswith('{"opening"'):
-                _excerpt = ai_text[:800] + ("…（正文已截断）" if len(ai_text) > 800 else "")
-                parts.append("本轮 Agent 已确认的回答（菜名和食材以此为准）：\n" + _excerpt)
+                _excerpt = ai_text[:_OPENING_EXCERPT_LIMIT] + (
+                    "…（正文已截断）" if len(ai_text) > _OPENING_EXCERPT_LIMIT else ""
+                )
+                parts.append(
+                    "本轮 Agent 已确认的回答（已发给用户的正文；"
+                    "菜名/做法/调料以本段为准，不得引入本段之外的做法或食材）：\n" + _excerpt
+                )
             break
     # 本轮所有 web_search 工具返回（JSON 字符串：text 搜索结果 + image_url 图片 + image_source 图源）
     search_blocks = []#2.有连坐删除，删的时候会把工具的返回结果也会删除不搞混
@@ -3217,7 +3235,9 @@ def _build_structure_context(messages, isolate_old_context=False):#解析出了�
     if search_blocks:
         parts.append(
             "搜索结果（每条是 JSON：text 为搜索文本、image_url 为成品图链接或 null、"
-            "image_source 为图源 real/ai）：\n"
+            "image_source 为图源 real/ai）。"
+            "注意：此段只供判断难度/营养星级与取配图，禁止据此新增或改写菜谱正文"
+            "（正文以上面『本轮 Agent 已确认的回答』为准）：\n"
             + "\n\n".join(search_blocks[-2:])#最多取最近2次搜索（单条已按结果预算压缩）
         )
     # 本轮所有 nutrition_kb_search 工具返回（权威健康依据，JSON 含 source 文件名与命中片段 excerpt）
@@ -3536,6 +3556,10 @@ def _build_guardrails(
     items = []
     for cond in conditions:
         rule_msg = RULES.get(cond, {}).get("message", "")
+        # 出处与 message 取自同一个规则字典，保证「结论」和「依据」是同一份规则的
+        # 两个字段，不会出现"结论来自 A 规则、出处写 B 指南"的错配。过敏原这类
+        # 不走 RULES 的条件没有 source，保持空串（前端据此显示"无出处"）。
+        rule_src = RULES.get(cond, {}).get("source", "")
         if not rule_msg and str(cond).startswith("过敏原:"):
             rule_msg = f"必须完全不含{str(cond).split(':', 1)[-1]}，包括调料与隐含来源"
         # 分支顺序不可调换：blocked 必须先判，否则会落进 adjusted 分支，
@@ -3549,7 +3573,11 @@ def _build_guardrails(
             status, reason = "adjusted", "初始方案命中硬禁忌，已由健康护栏自动调整至合规：" + rule_msg
         else:
             status, reason = "pass", "已符合" + cond + "膳食原则"
-        items.append(GuardrailItem(condition=cond, rule=rule_msg, status=status, reason=reason))
+        items.append(
+            GuardrailItem(
+                condition=cond, rule=rule_msg, status=status, reason=reason, source=rule_src
+            )
+        )
     # 同餐成员冲突必须以矩阵为准：没有健康标签不等于没有冲突。
     items.extend(_family_conflict_guardrails(dish_matrix))
     # 档案不可用时护栏必然降级：必须让用户看见，不能让"没有约束"冒充"全部通过"。
@@ -4011,6 +4039,14 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
             # 口味调整只更新原卡片对应的菜，不接受结构化模型擅自换名或扩展候选。
             answer.recipes = answer.recipes[:1]
             answer.recipes[0].name = taste_followup_target
+        # 营养数值在结构化的**后面**由 domain 层算出，不让模型碰数字（理由见 domain/dish_nutrition.py）。
+        # 顺序要紧：上面的口味调整/rank_recipes 之后 recipes[0] 才是最终主推的那道菜，这张表必须跟它对上。
+        # 模型没给出 ingredients（正文里没有用量清单）时这里得到 status=unavailable，
+        # 卡片照旧要能渲染出「算不出来」和原因——那不是异常路径，是常态之一。
+        if answer.recipes:
+            answer.nutrition_facts = NutritionFacts(
+                **compute_nutrition_facts(answer.recipes[0].ingredients)
+            )
         # 自然语言已通过一次审计，但结构化模型仍可能改写食材或调料。
         # 卡片输出前再审一次，命中过敏原时直接放弃卡片，保留已通过审计的正文。
         structured_text = "\n".join(

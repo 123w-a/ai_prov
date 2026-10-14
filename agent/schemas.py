@@ -14,12 +14,37 @@ class Seasoning(BaseModel):#调料结构#告诉模型输入的东西必须是什
     amount: str = Field(description="用量，带生活化比喻")
 
 
+class Ingredient(BaseModel):
+    """主食材（带克数）。
+
+    与 seasonings 分开的理由：调料用「一小勺」「一撮」这类生活化比喻就够，而营养数值
+    只认克数——比喻算不出数值。两者混在一起时，要么调料被迫编克数，要么主食材拿不到用量，
+    结果就是那张营养表永远算不出来。
+
+    amount_g 允许为 null，且**必须是正文真给了克数才填**：这一步的职责是提取，不是补全
+    （见 agent_chains.py 的 STRUCTURE_PROMPT 第 1 条）。算不出数值比写一个像模像样的错数字好。
+    """
+    name: str = Field(description="食材名，如 西兰花")
+    amount_g: Optional[float] = Field(
+        default=None,
+        description="可食部克数，只填数字不要单位；正文没给克数就填 null，禁止按常识补一个",
+    )
+
+
 class Recipe(BaseModel):#菜谱结构
     """菜谱"""
     name: str = Field(description="菜名")
     intro: str = Field(description="30字内简介")
     difficulty: int = Field(ge=1, le=5, description="难度1-5")
     nutrition: int = Field(ge=1, le=5, description="营养1-5")
+    ingredients: list[Ingredient] = Field(
+        default_factory=list,
+        description="主食材与克数（营养数值表的输入；正文没给用量就留空）",
+    )
+    flavor_tags: list[str] = Field(
+        default_factory=list,
+        description="口味风格标签 2-4 个（如 清淡/开胃/家常），只能取自正文已有的说法",
+    )
     seasonings: list[Seasoning] = Field(#列表元素类型 Seasoning，列表中嵌套列表
         default_factory=list,
         description="调料清单"#不同材料的描述
@@ -45,6 +70,55 @@ class HealthLight(BaseModel):
     reason: str = Field(default="", description="理由")
 
 
+class NutrientValue(BaseModel):
+    """一项营养：值 + 它到底有没有值。
+
+    0 和「没有值」必须分开表达：0 克膳食纤维是一句结论，「未收录」只是一句实话。
+    合成一个数字字段（缺失就写 0）会让页面把「没查到」印成「没有」。
+    """
+    value: Optional[float] = Field(default=None, description="数值；未收录时为 null")
+    status: str = Field(default="unavailable", description="known | unavailable")
+
+
+class NutritionIngredient(BaseModel):
+    """营养账目里的一行：这样食材有没有被算进去，以及算的是国标表里哪一条。"""
+    name: str = Field(description="正文里的食材名")
+    amount_g: Optional[float] = Field(default=None, description="克数；没有则为 null")
+    lookup_name: Optional[str] = Field(
+        default=None, description="映射到的国标表条目名；未收录为 null（页面可追溯）",
+    )
+    status: str = Field(description="covered（算进去了）| missing（表里没收录）| no_amount（没有克数）")
+
+
+class NutritionFacts(BaseModel):
+    """这顿的营养数值表。
+
+    ⚠️ 这个模型**不由模型填写**：agent_graph 在结构化成 ChefAnswer 之后，用
+    domain/dish_nutrition.py 从 recipes[0].ingredients 确定性算出后赋值。放进 schema
+    只是为了让前端拿到稳定形状，并让存量数据反序列化时不缺字段。
+
+    status 三档的含义是全篇最关键的一处诚实标注：
+      complete    全部食材已收录且都有克数
+      partial     算出了小计，但有食材未收录或缺克数 —— 页面必须说明这是「已覆盖食材的小计」
+      unavailable 一个都没算成（无食材 / 全未收录 / 全无克数）
+    """
+    status: str = Field(default="unavailable", description="complete | partial | unavailable")
+    nutrients: dict[str, NutrientValue] = Field(
+        default_factory=dict,
+        description="六项，键固定为 energy_kcal/protein_g/fat_g/carb_g/fiber_g/sodium_mg",
+    )
+    ingredients: list[NutritionIngredient] = Field(
+        default_factory=list, description="算这张表用到的食材账目"
+    )
+    basis: str = Field(
+        default="recipe_ingredient_amounts",
+        description="计算口径：按菜谱食材用量 × 国标《中国食物成分表》",
+    )
+    covered: list[str] = Field(default_factory=list, description="算进去了的食材名")
+    missing: list[str] = Field(default_factory=list, description="国标表未收录的食材名")
+    no_amount: list[str] = Field(default_factory=list, description="有食材但正文没给克数的")
+
+
 class SourceRef(BaseModel):#权威信息
     """出处"""
     source: str = Field(description="文件名")
@@ -65,6 +139,14 @@ class GuardrailItem(BaseModel):
         description="pass/warn/adjusted/blocked/member_conflict"
     )
     reason: str = Field(default="", description="原因")
+    # 出处：**由后端从确定性规则库机械注入，不是模型填的**。
+    # 取 domain/nutrition_rules.py 的 RULES[condition]["source"]，形如
+    # 「成人高血压食养指南（2023年版）p6-7」；该字段是慢病/孕期规则在代码里的固定组成部分，
+    # 可以对着指南原文逐条核对。前端据此把「结论」与「依据」对上，不必让模型自述来源
+    # ——模型自述的出处既可能为空（实测多数轮次不填 SourceRef），也可能引错页码。
+    # 没有对应规则的条件（如过敏原、家庭成员冲突、档案不可用）留空字符串：
+    # 宁可显示"没有出处"，也不要给它编一个。
+    source: str = Field(default="", description="该约束的出处（指南名 + 页码），来自确定性规则库")
 
 
 class DishMatrixItem(BaseModel):
@@ -109,6 +191,10 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
         default_factory=list,
         description="红绿灯",
     )
+    nutrition_facts: Optional[NutritionFacts] = Field(
+        default=None,
+        description="这顿的营养数值表（系统按食材用量算出，模型不填）",
+    )
     guardrails: list[GuardrailItem] = Field(
         default_factory=list,
         description="护栏结论",
@@ -122,3 +208,4 @@ class ChefAnswer(BaseModel):#最顶层的大模型其中嵌套了各种菜谱
         default_factory=list,
         description="菜品与成员的可用性矩阵",
     )
+

@@ -1,0 +1,626 @@
+/**
+ * 视图模型：**唯一**接触后端原始响应类型的地方（架构方案第三节）。
+ *
+ * 目的只有一个：把"这个字段在不在、空不空、坏没坏"的判断从 JSX 里彻底挪出来。
+ * 以前这些判断散在 795 行组件的 25 个 `&&` 里，每个块各写各的，于是同类问题反复出现
+ * （后端把 Python 的 None 序列化成字面量 "None"、空右栏渲染成一个明晃晃的圆角空框）。
+ *
+ * ── 降级契约（方案第五节）────────────────────────────────────────────────
+ *
+ *   内部判**五态**：present / absent / empty / invalid / error
+ *   对外只输出**三态**：show / hide / placeholder
+ *
+ * 为什么不让五态进 JSX：那样每个块都要写五个分支，而 invalid 与 absent 在界面上
+ * 本来没有区别，分支迟早各改各的——那就是崩法。为什么又不只用三态：只用三态会丢掉原因，
+ * 测试就分不清"数据为空"和"数据坏了"，所以 state 保留在返回值上给测试看，JSX 不读它。
+ *
+ * `error` 是**请求级**的，由状态机处理，不按字段处理——所以这里不产出 error。
+ *
+ * ── 本文件是**迁移**不是重写 ────────────────────────────────────────────────
+ *
+ * 每一条规则都照抄 Result.tsx 里原有的判断，一个字没改（包括"空右栏不渲染"这种
+ * 因为踩过坑才补上的外层条件）。判据是「迁移前后渲染结果完全一致」，由基线逐元素比对。
+ * 阅读顺序的调整（结论 → 关键调整 → 步骤 → 需留意 → 备选来源）不在这里做，留到第 5 步。
+ */
+
+import type {
+  ChefAnswer,
+  DishMatrixItem,
+  GuardrailItem,
+  HealthLight,
+  Ingredient,
+  NutritionFacts,
+  Recipe,
+  Seasoning,
+  SourceRef,
+} from '../../types.ts'
+import { cleanOpening, echoRequest, stripDishPrefix } from './clean.ts'
+import { formatSpoken } from './model.ts'
+
+/* 后端类型只从这里转出。
+   blocks / views 不得直接 import ../../types.ts —— check-layers 的 e 条会拦。
+   它们一律从 viewModel 拿，否则块就开始直接认后端形状、跳过降级了。 */
+export type { Recipe }
+
+/* ── 契约类型 ─────────────────────────────────────────────────────────── */
+
+export type FieldState = 'present' | 'absent' | 'empty' | 'invalid' | 'error'
+
+export type Display<T> =
+  | { display: 'show'; data: T; state: FieldState; reason?: string }
+  | { display: 'hide'; state: FieldState; reason?: string }
+  | { display: 'placeholder'; text: string; state: FieldState; reason?: string }
+
+/** 三态在 JSX 里的读法。state/reason 是给测试看的，JSX 不读。 */
+export function isShown<T>(d: Display<T>): d is { display: 'show'; data: T; state: FieldState; reason?: string } {
+  return d.display === 'show'
+}
+
+export const show = <T,>(data: T, state: FieldState = 'present', reason?: string): Display<T> => ({
+  display: 'show',
+  data,
+  state,
+  reason,
+})
+
+export const hide = <T,>(state: FieldState, reason?: string): Display<T> => ({ display: 'hide', state, reason })
+
+export const placeholder = <T,>(text: string, state: FieldState, reason?: string): Display<T> => ({
+  display: 'placeholder',
+  text,
+  state,
+  reason,
+})
+
+/** 判五态。只回答"这是什么状态"，不回答"该怎么显示"——显示规则上面那三个函数负责。 */
+export function classify(value: unknown): FieldState {
+  if (value === undefined || value === null) return 'absent'
+  if (typeof value === 'string') return value.trim() === '' ? 'empty' : 'present'
+  if (Array.isArray(value)) return value.length === 0 ? 'empty' : 'present'
+  if (typeof value === 'number') return Number.isFinite(value) ? 'present' : 'invalid'
+  if (typeof value === 'boolean') return 'present'
+  return 'present'
+}
+
+/**
+ * 非空数组才 show。空数组和缺字段在界面上没有区别，但**原因要能区分**，
+ * 所以 state 一路带下去：空数组是 empty，缺字段是 absent。
+ */
+function list<T>(value: T[] | undefined | null, reason?: string): Display<T[]> {
+  const items = value ?? []
+  const state = classify(value)
+  if (items.length === 0) return hide<T[]>(state, reason ?? (state === 'absent' ? '后端未给该字段' : '后端给了空数组'))
+  return show(items, state)
+}
+
+/** 数字字段：有值才 show。NaN 也是 number，但它是**坏值**不是有值——
+ *  两者都不显示，而 state 要分得开，这就是五态存在的全部理由。 */
+function value(n: number | undefined | null, reason: string): Display<number> {
+  const state = classify(n)
+  return state === 'present' ? show(n as number) : hide<number>(state, reason)
+}
+
+/** 非空字符串才 show（先 trim，全空白等同于空）。 */
+function text(value: string | undefined | null, reason?: string): Display<string> {
+  const raw = value ?? ''
+  const state = classify(value)
+  const trimmed = raw.trim()
+  if (!trimmed) return hide<string>(state, reason ?? (state === 'absent' ? '后端未给该字段' : '字段是空白串'))
+  return show(trimmed, state)
+}
+
+/* ── 视图模型 ─────────────────────────────────────────────────────────── */
+
+/** 灯级 → 语义色名。方案第四节：这个映射**只准写在这里**。 */
+export type Tone = 'ok' | 'warn' | 'risk'
+
+const LEVEL_TONE: Record<HealthLight['level'], Tone> = { green: 'ok', yellow: 'warn', red: 'risk' }
+
+export interface LightVM {
+  label: string
+  /** 后端原样取值，当前 CSS 的类名还在用它（.light.is-red）。第 5 步换成 data-tone。 */
+  level: HealthLight['level']
+  tone: Tone
+  reason: Display<string>
+}
+
+export interface GuardVM {
+  condition: string
+  /** guardText 的产物：已经翻译成中文，没有可显示内容时是 hide。 */
+  text: Display<string>
+  /** 这条约束**要求什么**（后端 RULES[condition]["message"] 原值）。
+   *  与 source 取自同一个规则字典，是「依据」栏的主句：没有它，两条同条件的
+   *  护栏在右栏长得一模一样（实测两条"孕期"都是「孕期 + 同一份指南 + p4·p5」，
+   *  读的人根本分不清哪条对应"水产要熟透"、哪条对应"钠不超 2000mg"）。 */
+  rule: string
+  /** 出处（指南名 + 页码），由后端从确定性规则库**机械注入**
+   *  （agent/schemas.py 的 GuardrailItem.source，取自 domain/nutrition_rules.py
+   *  的 RULES[cond]["source"]，与这条结论的 message 同属一份规则）。
+   *  没有对应规则的条件（过敏原/成员冲突/档案不可用）是空串——空就表示
+   *  本产品给不出处，不补默认值、不写"暂无"。 */
+  source: string
+}
+
+export interface MemberLineVM {
+  key: string
+  verdict: string
+  dish: string
+  body: string
+}
+
+export interface MembersVM {
+  /** 有数据的人，顺序按 dish_matrix 出现顺序。 */
+  order: string[]
+  lines: Record<string, MemberLineVM[]>
+  /** 没归到任何人的调整文案。 */
+  orphans: string[]
+  /** 矩阵里出现超过一个菜名时才在每行印菜名（实测单菜答案里那是纯噪声）。 */
+  showDish: boolean
+}
+
+/* ── 营养数值表 ───────────────────────────────────────────────────────── */
+
+/** 六项的显示名与单位。
+ *
+ *  顺序即页面列序，与后端 domain/dish_nutrition.NUTRIENT_FIELDS 一一对应。
+ *  为什么标签不放进后端契约：那是排版文案，不是数据。后端给数值和口径已经够，
+ *  把中文标签塞进契约只会让改一次文案要动两端。 */
+const NUTRIENT_ROWS: Array<{ key: string; label: string; unit: string }> = [
+  { key: 'energy_kcal', label: '能量', unit: '千卡' },
+  { key: 'protein_g', label: '蛋白质', unit: '克' },
+  { key: 'fat_g', label: '脂肪', unit: '克' },
+  { key: 'carb_g', label: '碳水化合物', unit: '克' },
+  { key: 'fiber_g', label: '膳食纤维', unit: '克' },
+  { key: 'sodium_mg', label: '钠', unit: '毫克' },
+]
+
+export interface NutrientRowVM {
+  key: string
+  label: string
+  unit: string
+  /** 已格式化；null = 这一项没查到（页面印「未收录」，绝不印 0） */
+  value: string | null
+}
+
+export interface NutritionVM {
+  status: NutritionFacts['status']
+  /** 表头右侧的口径说明 */
+  basis: string
+  /** 六行。unavailable 时是空数组——没有数值就没有列可排 */
+  rows: NutrientRowVM[]
+  /** 缺口说明，如「未收录：培根 · 缺克数：豆腐」；没有缺口时为空串 */
+  gaps: string
+  /** 没有数值时那句原因 */
+  empty: string
+}
+
+/** 整数不带小数点（后端 round(…,1) 会把 612 变成 612.0），小数保留一位。 */
+function fmtNutrient(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+/**
+ * 营养数值表的视图模型。
+ *
+ * 这块只有一个设计要点：**不完整时必须自己说出来**。后端已经分好 complete/partial/
+ * unavailable 三档，这里负责翻成人话——「已覆盖食材小计」和「未收录：培根」这类交代
+ * 一句都不能省，否则用户会把一个只算了半样的数字当成整顿的热量。
+ */
+export function buildNutritionVM(facts: NutritionFacts | null | undefined): NutritionVM | null {
+  if (!facts || !facts.status) return null
+
+  const cells = facts.nutrients ?? {}
+  const rows: NutrientRowVM[] = NUTRIENT_ROWS.map((r) => {
+    const cell = cells[r.key]
+    const v = cell?.value
+    const known = cell?.status === 'known' && typeof v === 'number' && Number.isFinite(v)
+    return { key: r.key, label: r.label, unit: r.unit, value: known ? fmtNutrient(v as number) : null }
+  })
+
+  const covered = facts.covered ?? []
+  const missing = (facts.missing ?? []).filter(Boolean)
+  const noAmount = (facts.no_amount ?? []).filter(Boolean)
+  const gaps = [
+    missing.length ? `未收录：${missing.join('、')}` : '',
+    noAmount.length ? `缺克数：${noAmount.join('、')}` : '',
+  ].filter(Boolean).join(' · ')
+
+  if (facts.status === 'unavailable') {
+    // 算不出也要说清是哪一种算不出：正文没给用量，还是食材没收录。
+    const why = !covered.length && (missing.length || noAmount.length)
+      ? gaps
+      : '这道菜没有给出食材用量'
+    return { status: 'unavailable', basis: '', rows: [], gaps, empty: `算不出营养数值：${why}` }
+  }
+
+  return {
+    status: facts.status,
+    // 不写「每份」：后端算的是菜谱给的整份用量，标「每份」会暗示还有几份没算。
+    basis: facts.status === 'partial' ? '按菜谱用量 · 已覆盖食材小计' : '按菜谱用量',
+    rows,
+    gaps,
+    empty: '',
+  }
+}
+
+/** 口味标签：去空白、去重、最多 4 个。
+ *
+ *  为什么限 4 个：这一行是紧挨菜名的短标签，多了会把菜名挤到换行去——
+ *  标签是给菜名做注脚的，不是反过来。 */
+function cleanTags(tags: string[] | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of tags ?? []) {
+    const t = (raw ?? '').trim()
+    if (!t || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+    if (out.length === 4) break
+  }
+  return out
+}
+
+/** 食材与调味料同名去重：同一个名字两边都出现时，只留在**有量**的那一边。
+ *
+ *  实测后端会把「大蒜」同时写进两张清单，而且两边不一定都有量：
+ *    · 2026-10-07 真实一轮：ingredients 大蒜 amount_g=null，seasonings「大蒜 3瓣，切末分两份」
+ *    · 夹具 typical：ingredients 大蒜 10g，seasonings「大蒜 4 瓣」
+ *  两张清单各渲染一次 = 同一份用料写了两遍，而且「10g」与「4 瓣」并排会被读成两个用量。
+ *
+ *  规则按"哪边有信息"定，不按栏位定：
+ *    · 食材这边有克数 → 留食材那条（它是营养数值表的输入，删了台账就对不上），调味料那条删掉；
+ *    · 食材这边没克数、调味料有文本量 → 留调味料那条，食材那条删掉。
+ *      旧实现无条件留食材那条，于是上面第一种真实数据里「3瓣，切末分两份」整条消失，
+ *      页面上只剩一个没有用量的「大蒜」——那是丢真实数据，不是排版取舍。
+ *
+ *  undefined 原样透传：`list()` 靠它区分「后端没给」与「给了但是空」，
+ *  这里不许把两者压成一个空数组。 */
+function splitPantry(
+  ingredients: Ingredient[] | undefined,
+  seasonings: Seasoning[] | undefined,
+): { ingredients: Ingredient[] | undefined; seasonings: Seasoning[] | undefined } {
+  if (!ingredients?.length || !seasonings?.length) return { ingredients, seasonings }
+  const seasoningNames = new Set(seasonings.map((s) => s.name))
+  // 名字重复、且食材这边**没有**克数 → 这一条让给调味料。
+  const duplicated = ingredients.filter((i) => seasoningNames.has(i.name))
+  // 早退只允许在「根本没有重名」时用：重名且留食材那条，动的正是调味料那一半。
+  // 第一版这里按「有没有让给调味料的」早退，结果夹具里 大蒜 10g 与 大蒜 4 瓣 并排还在。
+  if (duplicated.length === 0) return { ingredients, seasonings }
+  // 食材这边**没有**克数 → 这一条让给调味料（食材那边删掉）。
+  const handedToSeasonings = new Set(
+    duplicated.filter((i) => i.amount_g === null).map((i) => i.name),
+  )
+  // 食材这边**有**克数 → 调味料那条删掉，避免同一份用量列两次。
+  const keptOnIngredients = new Set(
+    duplicated.filter((i) => i.amount_g !== null).map((i) => i.name),
+  )
+  return {
+    ingredients: ingredients.filter((i) => !handedToSeasonings.has(i.name)),
+    seasonings: seasonings.filter((s) => !keptOnIngredients.has(s.name)),
+  }
+}
+
+export interface ResultVM {
+  form: 'structured' | 'prose'
+  isStructured: boolean
+
+  opening: Display<string>
+  echo: Display<string>
+
+  lead: Recipe | undefined
+  /** 菜名旁的口味标签（清淡 / 开胃 / 家常）。
+   *  由整理阶段从正文已有的说法里提取——正文没说就整行不渲染，前端不按菜名猜一个。 */
+  dishTags: Display<string[]>
+  /** 顶层配图说明。菜品级那个实测 20/23 是空或字面量 "None"（usableNote 负责判）。 */
+  imageNote: string | undefined
+  rest: Display<Recipe[]>
+  steps: Display<string[]>
+  seasonings: Display<Seasoning[]>
+  /** 主食材与克数（后端 Recipe.ingredients）。做法区上方那张「食材」卡用它。
+   *  后端把它与调料分开是有理由的：调料是「一汤匙」这类生活化量，
+   *  只有主食材有克数——那张营养数值表正是按这个列表算出来的。
+   *  所以用料是两张卡，不合并成一张看不出差别的清单。
+   *  同名会用 splitPantry 去重（留"有量"的那边），这里拿到的是去过重的结果。 */
+  ingredients: Display<Ingredient[]>
+
+  difficulty: Display<number>
+  nutrition: Display<number>
+  intro: Display<string>
+  chefTip: Display<string>
+
+  reds: LightVM[]
+  yellows: LightVM[]
+  greens: LightVM[]
+  /** 右栏只用**一张**表，按严重度排。分两张会让同一条目在同一栏出现两遍
+   *  （钠既是"黄警告"又是"营养行"），一栏之内自相重复——截图已复现。 */
+  ranked: LightVM[]
+
+  guardrails: GuardVM[]
+  sources: SourceRef[]
+
+  /** 常驻右栏整块是否渲染。2026-09-26：右栏从发丝竖线改成填充面板后，
+   *  空栏会渲染成明晃晃的空圆角框（thin 形态实测如此），所以条件必须提到外层 aside 上。 */
+  rail: Display<null>
+  /** 右栏里「这顿要注意的」那一块（护栏 + 灯）。 */
+  notice: Display<null>
+
+  members: Display<MembersVM>
+
+  /** 这顿的营养数值表。**没有这个字段就整块不渲染**（而不是渲染一张空表）；
+   *  有字段但算不出时照样渲染，因为「为什么算不出」本身就是要给用户看的信息。
+   *
+   *  字段名带 Facts 是为了和上面那个 `nutrition`（后端给的 1–5 档指标，渲染成「营养 适中」）
+   *  分开：两者一个来自后端字段、一个来自按用量算出的表，同名会让读代码的人以为是一件事。 */
+  nutritionFacts: Display<NutritionVM>
+
+  /** 用时。正常结果来自状态机（不是后端响应），永远有值；
+   *  **收藏恢复态传 null ⇒ 空串 ⇒ 首屏不渲染「用时」这一格**——
+   *  收藏没存当时的真实用时，写 0 秒比不展示更糟。格式化归这里，视图不自己调 formatSpoken。 */
+  elapsed: string
+
+  /** 页底真实过程那一行的账目。 */
+  process: { searches: number; sources: number; chars: number }
+}
+
+function toLight(l: HealthLight): LightVM {
+  return {
+    label: l.label,
+    level: l.level,
+    tone: LEVEL_TONE[l.level] ?? 'warn',
+    reason: text(l.reason, '这条灯没有理由'),
+  }
+}
+
+/** 安全护栏。status 的翻译已在 clean.guardText 里做过（未知取值原样透出）。 */
+function toGuard(g: GuardrailItem, guardText: (status?: string, reason?: string) => string): GuardVM {
+  const texted = guardText(g.status, g.reason)
+  return {
+    condition: g.condition,
+    text: texted ? show(texted) : hide<string>('empty', '状态词与理由都为空（pass 且理由自述时就是这种）'),
+    rule: (g.rule ?? '').trim(),
+    source: (g.source ?? '').trim(),
+  }
+}
+
+/**
+ * 家人两列的数据整形。**只整形，不渲染**（渲染仍在 Result.tsx，第 5 步再搬）。
+ *
+ * 两条实测规则（看真实数据才发现的，注释保留原样）：
+ *  1. 同一条答案里 member_adjustments 与 dish_matrix 讲的是同一件事，两处都印会重复一遍。
+ *     合成方式：verdict 当引子，正文取调整文案、取不到才退回 matrix.reason；调整文案
+ *     开头的菜名前缀要剥掉。
+ *  2. 单菜答案里不重复印菜名——矩阵只有 1 个不同菜名时它是整页标题，每行再印是纯噪声。
+ */
+export function buildMembersVM(rows: DishMatrixItem[], notes: string[]): MembersVM | null {
+  const dishes = [...new Set(rows.map((r) => (r.dish || '').trim()).filter(Boolean))]
+  const showDish = dishes.length > 1
+
+  const order: string[] = []
+  const verdict = new Map<string, string>()
+  const reason = new Map<string, string[]>()
+  for (const r of rows) {
+    const name = (r.member || '').trim()
+    if (!name) continue
+    if (!order.includes(name)) order.push(name)
+    if (!verdict.get(name) && r.verdict) verdict.set(name, r.verdict)
+    if (r.reason) {
+      if (!reason.has(name)) reason.set(name, [])
+      const list = reason.get(name)!
+      if (!list.includes(r.reason)) list.push(r.reason)
+    }
+  }
+
+  // member_adjustments 是 "名字：说明" 形态的纯字符串。
+  const adjBody = new Map<string, string>()
+  const orphans: string[] = []
+  for (const raw of notes) {
+    const rawText = (raw || '').trim()
+    if (!rawText) continue
+    const at = rawText.search(/[:：]/)
+    const name = at > 0 ? rawText.slice(0, at).trim() : ''
+    const body = stripDishPrefix(at > 0 ? rawText.slice(at + 1) : rawText, dishes)
+    if (!body) continue
+    if (name && (order.includes(name) || rows.some((r) => (r.member || '').trim() === name))) {
+      if (!order.includes(name)) order.push(name)
+      if (!adjBody.has(name)) adjBody.set(name, body)
+    } else {
+      orphans.push(rawText)
+    }
+  }
+
+  if (order.length === 0 && orphans.length === 0) return null
+
+  const lines: Record<string, MemberLineVM[]> = {}
+  for (const name of order) {
+    const mine = rows.filter((r) => (r.member || '').trim() === name)
+    if (dishes.length > 1) {
+      // 多菜（观测中未出现，但 schema 允许）时按"每人×每菜"各占一行并带菜名。
+      lines[name] = mine.map((r, i) => ({
+        key: `${name}-${i}`,
+        verdict: r.verdict || '',
+        dish: showDish ? (r.dish || '') : '',
+        body: (r.reason || '').trim(),
+      }))
+    } else {
+      lines[name] = [
+        {
+          key: name,
+          verdict: verdict.get(name) || '',
+          dish: '',
+          body: adjBody.get(name) || (reason.get(name) ?? []).join(' '),
+        },
+      ]
+    }
+  }
+
+  return { order, lines, orphans, showDish }
+}
+
+/** 结构化答案的视图模型。 */
+export function buildResultVM(
+  answer: ChefAnswer | undefined,
+  /**
+   * 结构化路径下正文只按 opening 计字（照抄原实现：`isStructured ? 0 : run.body.length`），
+   * 所以这里刻意不读它——散文路径的字数在 buildProseVM 里算。
+   */
+  _body: string,
+  request: string,
+  /** null = 收藏恢复态，没有真实用时（见 ResultVM.elapsed 的说明）。 */
+  elapsed: number | null,
+  guardTextFn: (status?: string, reason?: string) => string,
+): ResultVM {
+  const a = answer
+  const recipes = a?.recipes ?? []
+  const lights = a?.health_lights ?? []
+  const rows = a?.dish_matrix ?? []
+  const adjustments = a?.member_adjustments ?? []
+  const guardrailsRaw = a?.guardrails ?? []
+  const sources = a?.sources ?? []
+
+  const opening = cleanOpening(a?.opening)
+  const lead = recipes[0]
+  const echo = echoRequest(request)
+
+  const lightVMs = lights.map(toLight)
+  const reds = lightVMs.filter((l) => l.level === 'red')
+  const yellows = lightVMs.filter((l) => l.level === 'yellow')
+  const greens = lightVMs.filter((l) => l.level === 'green')
+  const ranked = [...reds, ...yellows, ...greens]
+  const guardrails = guardrailsRaw.map((g) => toGuard(g, guardTextFn))
+
+  const members = buildMembersVM(rows, adjustments)
+  const nutritionVM = buildNutritionVM(a?.nutrition_facts)
+
+  // 两张用料清单的同名去重必须一次算好：两行各自调一次会各拿到半边结果。
+  const pantry = splitPantry(lead?.ingredients, lead?.seasonings)
+
+  return {
+    form: 'structured',
+    isStructured: true,
+
+    // opening 的"没给"和"给了但是空"要分得开，所以先看原始字段再看清洗结果。
+    opening: a?.opening === undefined || a?.opening === null
+      ? hide<string>('absent', '后端未给 opening')
+      : text(opening, 'opening 清洗后为空'),
+    echo: text(echo, '没有可回声的用户原话'),
+
+    lead,
+    dishTags: list(cleanTags(lead?.flavor_tags), '这道菜没有口味标签'),
+    imageNote: a?.image_note,
+    rest: list(recipes.slice(1), '只有一道菜'),
+    // 传**原始值**（不预先 ?? []），否则"后端没给"会被压成"给了空数组"，五态就白判了。
+    steps: list(lead?.steps, '这道菜没有步骤'),
+    seasonings: list(pantry.seasonings, '这道菜没有调料'),
+    ingredients: list(pantry.ingredients, '这道菜没有食材克重'),
+
+    difficulty: value(lead?.difficulty, '没有难度字段'),
+    nutrition: value(lead?.nutrition, '没有营养字段'),
+    intro: text(lead?.intro, '这道菜没有一句话介绍'),
+    chefTip: text(a?.chef_tip, '这轮没有给重点提示'),
+
+    reds,
+    yellows,
+    greens,
+    ranked,
+
+    guardrails,
+    sources,
+
+    // 外层条件照抄 Result.tsx 原文（含 2026-09-26 那次的修正）。
+    rail: ranked.length > 0 || guardrails.length > 0 || sources.length > 0
+      ? show(null)
+      : hide<null>('empty', '没有灯、没有护栏、没有依据——空栏会渲染成空圆角框，所以整块不渲染'),
+    notice: ranked.length > 0 || guardrails.length > 0
+      ? show(null)
+      : hide<null>('empty', '既没有营养灯也没有护栏'),
+
+    members: members ? show(members) : hide<MembersVM>('empty', '没有 dish_matrix 也没有 member_adjustments'),
+
+    nutritionFacts: nutritionVM ? show(nutritionVM) : hide<NutritionVM>('absent', '后端未给这顿的营养数值表'),
+
+    elapsed: elapsed === null ? '' : formatSpoken(elapsed),
+
+    process: {
+      searches: 0, // 由调用方按 run.events 填，这里不碰运行状态
+      sources: sources.length,
+      chars: opening.length,
+    },
+  }
+}
+
+export interface ProseVM {
+  empty: Display<null>
+  heading: Display<string>
+  echo: Display<string>
+  text: string
+  /** 页底账目里的正文字数。用**未 trim** 的原始长度，照抄原实现。 */
+  chars: number
+}
+
+/**
+ * 纯散文结局的数据整形。
+ *
+ * 首行如果是 Markdown 标题，它本来就承担着标题的角色，把它提到标题位、
+ * 不在正文里重复。正文全空时给的是**明确的空结果话术**，不是空白页——
+ * 「这是一次真实的空结果，不是页面没加载出来」。
+ */
+export function buildProseVM(body: string, request: string): ProseVM {
+  const source = body.trim()
+  const echo = echoRequest(request)
+  if (!source) {
+    return {
+      empty: show(null, 'empty', '后端没有送可读正文'),
+      heading: hide<string>('empty'),
+      echo: text(echo, '没有可回声的用户原话'),
+      text: '',
+      chars: body.length,
+    }
+  }
+  const lines = source.split('\n')
+  const firstAt = lines.findIndex((l) => l.trim())
+  const first = firstAt >= 0 ? lines[firstAt].trim() : ''
+  const heading = /^#{1,3}\s+/.test(first) ? first.replace(/^#{1,3}\s+/, '') : ''
+  const restText = heading ? lines.slice(firstAt + 1).join('\n').trim() : source
+  return {
+    empty: hide<null>('present', '有正文'),
+    heading: heading ? show(heading) : hide<string>('empty', '首行不是 Markdown 标题'),
+    echo: text(echo, '没有可回声的用户原话'),
+    text: restText,
+    chars: body.length,
+  }
+}
+
+/* ── 首屏主标题 ──────────────────────────────────────────────────────── */
+
+/**
+ * 首屏大标题 em 内的人数措辞（2026-10-08 用户裁决「改成按人数动态」）。
+ *
+ * 原来「两个人的身体」是写死的 JSX 字面量——与成员数据无关，永远显示「两个」。
+ * 与 2026-10-05 的图形红线同源：**人数一变，写死的说法就是错信息**。矛盾实证：
+ * 夹具台有单人用例（ask-single）、household.ts 有单人家庭逻辑、成员可增删（≤8）。
+ *
+ * 兜底语义：null / 未知 / ≥3 一律「每个人的身体」——它对任何家庭都成立，
+ * 数据未加载的瞬间也不会闪出一个错误人数。
+ *
+ * 放在本模块而不是 firstScreen.ts：那是数据拉取层（import 链含 api/client，
+ * 顶层读 import.meta.env，node --test 直接加载会崩），本文件是纯投影、可测。
+ */
+export function leadBodyPhrase(memberCount: number | null | undefined): string {
+  if (memberCount === 1) return '你的身体'
+  if (memberCount === 2) return '两个人的身体'
+  return '每个人的身体'
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

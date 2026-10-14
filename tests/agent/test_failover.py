@@ -6,6 +6,7 @@ from infrastructure.model_name import (
     _PROVIDER_COOLDOWN,
     _PROVIDER_COOLDOWN_SECONDS,
     _is_configured,
+    MODEL_CONFIGS,
     is_provider_failure,
     mark_provider_down,
     pick_fallback_provider,
@@ -33,14 +34,18 @@ class ProviderCooldownTest(unittest.TestCase):
         _PROVIDER_COOLDOWN.clear()
 
     def test_mark_down_blocks_pick(self):
-        providers = [n for n in ("gpt", "deepseek") if _is_configured(n)]
+        # 池子取 MODEL_CONFIGS 全量：写死 ("gpt", "deepseek") 在接入新 provider
+        # （2026-10 的 mimo）后会漏标下线，pick 按设计返回新 provider 而断言落空。
+        providers = [n for n in MODEL_CONFIGS if _is_configured(n)]
         if len(providers) < 2:
             self.skipTest("需要两个已配置 provider 才能验证备用挑选")
         first, second = providers[0], providers[1]
 
         mark_provider_down(first, seconds=120)
         self.assertEqual(pick_fallback_provider(exclude=None), second)
-        mark_provider_down(second, seconds=120)
+        # 全量逐一标记后才是 None——新增 provider 也被这条断言覆盖
+        for name in providers:
+            mark_provider_down(name, seconds=120)
         self.assertIsNone(pick_fallback_provider(exclude=None))
 
     def test_cooldown_expires(self):

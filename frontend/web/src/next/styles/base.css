@@ -1,0 +1,767 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  /* ── 地板（2026-10-01 解冻 → 2026-10-04 第二轮）────────────────
+   * 三层叠，顺序即上下关系（CSS 里第一个在最上）：
+   *   ① --paper  纸纹，最上，0.035 不透明度的噪点
+   *   ② --grid   图纸网格，居中
+   *   ③ --room-wash 房间底光，最下，**半透明**
+   * 最底下是 background-color 的 --bg-deep（比原来的 --bg 沉一档）。
+   *
+   * wash 的半透明是这轮的关键：它在顶部近似不透明，把网格盖住，
+   * 页头区域因此还是干净的；越往下越透明，网格与更沉的底露出来。
+   * 三层都 fixed：滚动时内容在动、光与网格不动，进深感才是真的
+   * （这是投影，不是贴图）。色值全部在 tokens.css，本文件只引 token
+   * （check-layers d 条）。 */
+  background-color: var(--bg-deep);
+  background-image: var(--paper), var(--grid), var(--room-wash);
+  background-attachment: fixed, fixed, fixed, fixed;
+  /* 四个尺寸值对应四层：纸纹 120px、网格横/纵两层各自 56px（必须与
+   * --grid-size 一致，否则瓦片边界与 56px 周期不整除、接缝处会挤出碎线）、
+   * wash 铺满。这一条是 getComputedStyle 读出来的：--grid 是**两层**渐变，
+   * 漏一个值就会让第 4 层回落成 120px 瓦片。 */
+  background-size: 120px 120px, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size), cover;
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 内容列宽 760px。
+ * 视觉席给的是 680px，我没照抄：结果页的调料区是 repeat(auto-fit, minmax(300px,1fr))
+ * 两列栅格，680 - 56(padding) = 624，两列 300+300 再加 24 间距 = 624，正好卡在崩成
+ * 单列的临界点上。760 留出余量，两列保住，同时比原来的 940 明显收窄——
+ * 收窄本身就是"去土"的一部分（宽栏 + 小字 = 后台面板感）。 */
+.tn {
+  /* 1010px 是用户 2026-09-23 在真实视口上把 1010/1200/1440/100% 四档切着比完
+   * 之后定的（暂定）。
+   *
+   * 结论反直觉，记在这里免得以后又走回头路：**1010 是四档里两侧空白最多的**，
+   * 而用户最初抱怨的正是"两侧空太宽"。让他退回去的是 1200/1440 的代价——
+   * 正文行宽被压在 42em 之后，多出来的宽度只能落在正文与右栏之间，
+   * 形成约 194px 的中缝。在真实视口上，**中缝比两侧留白更难受**。
+   * ⇒ 不要再把"把中间撑开"当作收窄留白的解法。
+   *
+   * 变量入口留着，便于对照台切宽度。 */
+  max-width: var(--content, 1010px);
+  margin: 0 auto;
+  padding: 40px 28px 96px;
+  font-size: 16px;
+  line-height: 1.7;
+  /* 四角裁切标记已迁到 .shell-room::before（styles/sheet.css，2026-10-04）：
+     它原本只挂在今晚页的 .tn 上，于是周报/收藏/服务三个房根本没有角标。
+     页面框架属于四个房共享的外壳，不属于其中一间。 */
+  position: relative;
+}
+
+/* ── 页头 ───────────────────────────────────────────── */
+
+/* 原来的分隔符是一颗 4px 灰色圆点（.tn-dot）：小膳管家 · 今晚这一顿。
+ * 灰点在网页里是典型的模板件。改成一根 1px × 12px 的竖向发丝线——
+ * 分隔仍然是分隔，但语汇从"装饰件"变成"排印"。 */
+.tn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--s4);
+}
+
+.tn-brand {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+}
+
+.tn-dot {
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
+  align-self: center;
+}
+
+.tn-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.tn-conn {
+  margin-left: auto;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tn-conn.is-bad {
+  color: var(--bad);
+}
+
+/* ── 起手：输入 ─────────────────────────────────────── */
+
+.starter {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 起手区的主标题。原来这一页根本没有大字——品牌 13 / 标题 15 / 标签 12 / 提示 13 /
+ * 正文 15，全都是同一档小字，所以整页平得像后台。视觉席说的"不是小本身，
+ * 是缺字号跳跃"，这是关键。这里给第一个真跳：40px。
+ * （视觉席建议 clamp(32px,6vw,56px)，我压到 40 封顶：这是一个安静的居家工具，
+ *  56px 会滑向杂志封面，过火。） */
+/* ── 首屏两栏（2026-09-27 定形；2026-10-04 第五轮对调）────────
+ * 原来是「标题→输入→按钮→脚注」的纯垂直堆叠，主因是布局不是内容太少。
+ * 栏宽仍逐字复用 .result-body 的 --rail，三视图同宽；科技感不靠装饰标签
+ * （TONIGHT / 01 那类被否决），靠真实数据本身。
+ * 第五轮按用户裁决与预期图 gpt-image-2.png **对调两栏**：预期图里窄栏在左
+ * （16.3%，推荐/日期/饮食平衡/贴士）、宽卡在右（75.1%）。只改视觉不挪 DOM——
+ * 主卡（首屏主任务）在文档里仍排前面，屏幕阅读器与 Tab 顺序仍是「主内容
+ * 优先」，而眼睛看到的是预期图的栏序。窄屏落回 block 时按 DOM 顺序：
+ * 主卡在上、窄栏在下，同样合理。 */
+.ask-layout {
+  display: grid;
+  /* ── 2026-10-04 骨架裁决：栏序再次对调 ──
+   * 上一条注释（窄栏在左、宽卡在右）是 09-23 按当时那张预期图定的；用户 10-04
+   * 选定的新骨架是「左侧常驻竖导航 + 中间主区 + 右窄栏」（result-expect.png 实测：
+   * 导航 16% / 主区 54% / 右栏 19%）。导航已经占了版心左列，家庭上下文若继续留在
+   * 左边，首屏就成了"导航 + 卡 + 宽卡"的四列观感——所以上下文卡移到主区右侧，
+   * 回到预期图里右窄栏的位置。
+   * 仍然只改视觉不挪 DOM：.ask-main 在文档里排前面，屏幕阅读器的朗读顺序与 Tab
+   * 顺序都还是「主内容优先」，眼睛看到的才是预期图的栏序；窄屏落回 block 时按
+   * DOM 顺序，依旧是主卡在上、窄栏在下，同样成立。 */
+  grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
+  /* ── 2026-10-01 解冻：两栏等高 ──
+   * 原来 align-items:start 让左右各按自身内容定高，主区那张"纸"只占
+   * 顶部三分之一、底部空出 400px 白地——那正是"家具没摆好"的直接原因。
+   * 改 stretch 之后两栏等高：主区卡片撑到与右栏四块齐平，底部空白
+   * 由"空地"变成"房间的地面"。 */
+  gap: 0 32px;
+  align-items: stretch;
+}
+
+.ask-main {
+  grid-area: 1 / 1; /* 行也要钉死：只写 grid-column 时 .ask-side 会被自动放置挪到第二行 */
+  min-width: 0;
+  /* ── 家具：主区容器（2026-10-01 解冻）───────────────────
+   * 从"裸排在纸上的一段文字"改成一张**有边、有光、有底**的卡片。
+   * 三件套缺一不可：亮一档的 --surface 让它从背景浮起，--shadow-paper
+   * 给它落地的光，--surface-line 描出边界。层次来自明度与光，
+   * 不碰任何语义色。圆角用 --radius-card（14px），比旧 3px 明显，
+   * 是解冻后第一处形态变化。 */
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-paper);
+  padding: 32px 44px 44px;
+}
+
+.ask-side {
+  grid-area: 1 / 2;
+}
+
+/* 与结果页同一个断点（result-v3.css L767），落回单列。
+ * 不写这条的话窄屏两栏会并排挤——用户主用 Android，测不到不代表不存在。 */
+@media (max-width: 900px) {
+  .ask-layout {
+    display: block;
+  }
+
+}
+
+.ask-lead {
+  margin: 0 0 var(--s3);
+  /* ── 篇首图形（2026-10-05 用户裁决：要"更具体的图形，而不是普通小玩意"）
+   * 由 lave1 的设计师模型（gpt-image-2）出稿，本处是按选定构图的矢量重绘。
+   * 左侧 52px 图形 + 66px 文字缩进：**不动字号、字重、字体**——40px 宋体已经够重，
+   * "高级"来自图形的体量与克制，不是把标题加大加粗。
+   * 上一版是"栏口线 + 朱红回纹小章"，被用户判为"普通小玩意"：抽象符号承载不了
+   * "具体图形"的期待，所以这次换成可辨认的物件形象。 */
+  position: relative;
+  padding-left: 66px;
+  /* 字体四件套与结果页 .dish-name 逐字对齐，修的是「同一产品首屏黑体、
+   * 结果页宋体」的断裂——那才是「看着素」的第一来源。
+   * 字重必须是 400、不能沿用原来的 600：Windows 上 SimSun 只有 400 一档，
+   * 给它 600 会触发**合成粗体**（同套字形向右下偏移重绘，发虚糊边），
+   * 而 stroke 是沿轮廓描一圈、不产生第二份字形。font-synthesis:none 是前提，
+   * 不关掉它浏览器照样合成，stroke 就白加了。详见 result-v3.css 的 .dish-name。 */
+  font-family: var(--serif);
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.5px currentColor;
+  line-height: 1.24;
+  /* 中文不该吃西文的负字距：-0.025em 是给拉丁大标题收紧用的，落到汉字上
+   * 会让笔画彼此相碰（40px 时尤其明显）。汉字取微正字距，读起来才透气。 */
+  letter-spacing: 0.01em;
+  /* balance 修的是孤字行：标题原来在 40px 下把「定。」单独顶到第二行，
+   * 两行长度悬殊。balance 让浏览器自己把两行排匀（一行放不下时才生效）。 */
+  text-wrap: balance;
+  color: var(--ink);
+}
+
+/* 篇首图形：绝对定位在文字左侧、不参与行盒，所以不影响 balance 的换行计算。 */
+.ask-lead-art {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 52px;
+  height: 52px;
+  /* 与 em 同色（--accent）：图形与强调文字共用一个色，整页是多一份呼应，
+     而不是多引入一种颜色。 */
+  color: var(--accent);
+  pointer-events: none;
+}
+
+/* 卡片右上角的菜篮：设计师（lave1 / gpt-image-2）的 P2 稿，**直接用位图**，不再矢量重绘。
+   我按同一张稿手绘了六版 path，篮身的扁度、提手的扁度和菜的大小始终追不上原稿——
+   与其交付一个"像但不如"的仿作，不如用设计师给的图。
+   资源在 public/next-basket.png（472×188 @2x，缩到 236×94 显示）；出图时已把线条
+   重新着色成 --accent 的精确值 rgb(169,111,78)，所以它与左侧碗筷、与 em 仍是同一个色，
+   不额外引入颜色（这也是当初不选位图的顾虑，现在已经解决）。
+   锚在 .ask-lead 上而非 .ask-main：后者是 flex 纵向容器且为 static，
+   图形若走流会占掉垂直空间、把整卡往下推。 */
+.ask-aside-art {
+  position: absolute;
+  /* 尺寸是照着那片空白的实际形状定的：标题两行右侧的空白实测 246×99（约 2.5:1），
+     所以用 236×94 的横条画幅、右边对齐内容区右边。 */
+  top: 2px;
+  right: 0;
+  width: 236px;
+  height: 94px;
+  pointer-events: none;
+}
+
+.ask-lead em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+/* 主卡内部的空白怎么处理（2026-10-04，两轮 lave 裁决）：
+ * 用户原话「想吃什么下面那里太空了」。甲＝把空白转成可用输入面，乙＝解耦
+ * 两栏高度让主卡回到内容高度（空白被推到卡片外，已否决为「退回原地」）。
+ * 甲保留但改由**纸高**去吃：.ask 不参与撑高，纸高见下方 .ask-field（第四轮改值）。 */
+.ask {
+  /* 2026-10-04 第三轮：不 flex:1（两版都实测否掉）。第二轮 .ask 吃掉剩余高度，
+   * 而书写面带 max-height:190、自己长不上去，空间落进 label **内部**——动作行
+   * 被推离稿纸 160px；纸无上限地长也不行（按钮底 941，掉出首屏 224px）。
+   * 最终裁决：按钮留首屏是硬约束，空白改由纸高（视口区间）吸收。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── 书写面的印刷语汇（2026-10-04 第二轮 / 第三轮）──────────────
+ * 第二轮用户说「太大了」＋想再添点什么；lave 裁决是**不塞插画**，把这块面
+ * 做成一件书写工具：图形全走伪元素，不进无障碍树、不加 DOM 语义、不占布局。
+ * 第三轮用户说"提问框不是很好看"：语言从"四角裁切标记 + 引导弧线"换成
+ * **稿纸**——上下发丝线定栏口、左侧一条边距线、面上按行高打横向格线；
+ * 装饰从四层收到两层，四角标记归页面级框架（.shell-room::before）。
+ * 理由："一叠稿纸"比"一个控件"更接近这个产品该有的样子。 */
+.ask-field {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+  /* 稿纸语汇（2026-10-04 第三轮）：书写区靠**上下两条发丝线**界定，
+     不再是四面围合的输入框。上一条压深当栏口，下一条浅当书写线。 */
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
+  /* 2026-10-04 第四轮（用户裁决「按预期图风格，严格按这个标准」）：
+   * 上一轮 lave 裁的 clamp(240px,42vh,420px) 在 1366×900 实测纸 378px，
+   * 而预期图 vocab.png 里那块书写面换算过来只有约 126–144px，**差近 3 倍**；
+   * 用户原话「纸太长了并且左右空白有点多」——是他先看出来的，不是我先发现的。
+   * 新值取 vocab 的比例：136px = 5 行格线（行高 27.2px），上界 16vh 封顶。
+   * 上一轮否掉的三个候选仍然否掉（纸无上限 / 给 .ask 配 calc 耦合值 /
+   * display:contents），理由不变。代价改为：一页纸固定 5 行，不随视口涨。 */
+  height: clamp(136px, 16vh, 190px);
+}
+
+/* 窄屏：纸收到 136px（min=max 把上面的 clamp 直接压平）。必须写在 .ask-field
+ * 主规则**之后**——同特异性下后写者胜，原先那条写在上面
+ * @media(max-width:900px) 块里，被主规则压掉，实测 420px 视口下从未生效。 */
+@media (max-width: 900px) {
+  .ask-field {
+    min-height: 136px;
+    max-height: 136px;
+  }
+}
+
+/* 左侧边距线：稿纸装订侧那道竖线，把输入文字与标签对齐到同一条栏口。
+ *
+ * 2026-10-04 第三轮：这里原来是四角裁切标记。用户看过后说"提问框不是很好看"，
+ * lave 的方向是把它做成**一张编辑台**——输入、提示、条件、提交像同一页稿纸上的
+ * 连续内容。四角标记与页面级框架（.shell-room::before）同族，落在书写面上等于
+ * 同一句话说了两遍，删掉；换成一条竖线，它承担的是**排版对齐**而不是装饰。 */
+.ask-field::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  background: var(--accent-line);
+}
+
+/* （原右下角引导弧线已移除，2026-10-04 第三轮。）它与四角标记、灰底、描边
+ * 叠在同一块面上是四层装饰争一个位置；编辑台要的是"一叠稿纸"，不是"一个控件"。
+ * 曲线留给结果页的章节轨道与营养表分隔线，首屏保持通篇直线。 */
+
+.ask-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s1);
+}
+
+/* ── 输入面（2026-10-01 解冻改版；2026-10-04 第三轮改回裸排）──────────
+ * 解冻那一版把它做成"面里有面"：浅底 + 描边 + 圆角（--surface-2 比卡片
+ * 暗半档），靠明度差而不是描边粗细分层。第三轮把这一切撤掉——外层
+ * .ask-field 已经是"一页稿纸"，纸上再套一个灰底输入框就变回"一个控件"。
+ * 现在它没有自己的底色、描边与圆角，只负责把文字排在稿纸的格线上。 */
+.ask-input {
+  width: 100%;
+  /* 高度交给外层 .ask-field：这层只负责填满那张纸。 */
+  flex: 1;
+  min-height: 0;
+  /* 2026-10-04 第三轮：从"面里有面"改回**直接写在稿纸上**。
+   * 原来这层是 --surface-2 灰底 + 描边 + 圆角 + inset 阴影，加上外层四角标记与
+   * 弧线，同一块面叠了四层装饰，读起来像一个**控件**而不是一页纸。
+   * 现在背景透明、无描边无圆角——界线全部由 .ask-field 的上下发丝线承担。
+   * 左内边距 18px 给边距线让位，让正文与上面的标签对齐到同一条栏口。 */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 0 12px 18px;
+  font-family: inherit;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ink);
+  resize: none;
+  transition: none;
+  /* ── 稿纸格线（2026-10-04 第三轮）────────────────────────────────
+   * 用户要的是"加点图画或别的东西进去，不然只有文字太单调"。这里没有画
+   * 任何图形，只是把这块面做成**真正的稿纸**：按行高 27.2px 画横向浅线，
+   * 从首行文字下方 39px 起（12px 上内边距 + 27.2px 行高），往下重复。
+   *
+   * 它之所以是"结构"而不是"花纹"：格线的间距由字号与行高算出来，文字正好
+   * 落在格子里；空着的部分也在说"这里可以写"。纯 CSS 背景，不增 DOM、
+   * 不进无障碍树、与打字和滚动都不冲突。
+   * attachment:local 让格线跟着 textarea 的内容一起滚，写满一屏也不错位。 */
+  background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 100% 27.2px;
+  background-position: 0 39px;
+  background-attachment: local;
+  background-repeat: repeat;
+}
+
+/* 滚过一屏后，格线在焦点态下也不该比文字抢眼——它恒用 --line。 */
+.ask-input:focus {
+  background-color: transparent;
+}
+
+.ask-input::placeholder {
+  color: var(--ink-faint);
+}
+
+/* 聚焦（2026-10-04 第三轮）：输入面已经透明、无描边，原来那套"描边转 accent +
+ * 一圈 accent 外环"没有了落点。焦点改由**左侧边距线**承担——它本来就是稿纸的
+ * 栏口线，聚焦时从陶土浅档提到正常档，正好是"笔已经落在这页上"的信号。
+ * 用 :focus-within 挂在容器上，因为要变色的是画在容器伪元素上的那条线。 */
+.ask-input:focus {
+  outline: none;
+}
+
+.ask-field:focus-within::before {
+  background: var(--accent);
+}
+
+/* ── 顶部需求回显框（2026-10-04 · 第 4 项）──────────────────────────
+ * 它和上面的 .ask-field 是**同一句话的两个形态**：写下来的那次，和结果页
+ * 回显的那次。所以放在同一个文件里、紧挨着——这两条规则必须一起改。
+ *
+ * 原话原来只是菜名下的一行小注脚（原 `.dish-echo`），现在升格成页首一个框，
+ * 并标上记录时刻：一轮结果可能几小时后被重新打开，没有时刻就分不清
+ * 这是刚点的还是昨天的。
+ *
+ * 角标：与页面级四角裁切标记（.shell-room::before，见 sheet.css）同一语汇。
+ * 注意它已不再是"书写面的角标"——书写面在 2026-10-04 第三轮改走稿纸语汇
+ * （上下发丝线 + 左侧边距线），两处不再呼应；这里保留是因为结果页这一框
+ * 本身是"打样"的框。
+ *
+ * 它在 .result-body 之前，所以是**通栏**的，不参与下方正文与右栏的两列栅格，
+ * 也不影响左侧章节轨道的定位基准。 */
+.ask-echo {
+  position: relative;
+  margin: 0 0 var(--s4);
+  padding: 15px 20px 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+
+/* 四角裁切标记：8 层渐变各画一段线（四角 × 横竖各 11px）。
+ * inset -5px 让标记落在边框外面，与书写面同一种"打样对位"的手感。 */
+.ask-echo::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  top: -5px;
+  bottom: -5px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 0 / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 0 / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 0 / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 0 / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 100% / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 0 100% / 1px 11px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 100% / 11px 1px no-repeat,
+    linear-gradient(var(--accent-line), var(--accent-line)) 100% 100% / 1px 11px no-repeat;
+}
+
+/* 原话用衬线体**照录**：这是用户本人的字，给它和标题同一套待遇。
+ * 不设行数上限、不加省略号——原话被截断就等于把"他说了什么"换成
+ * "系统认为他说了什么"。 */
+.ask-echo-text {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 16.5px;
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.35px currentColor;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+/* 记录时刻：等宽数字小字。它是账目不是装饰，所以走 faint。 */
+.ask-echo-stamp {
+  margin: 9px 0 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+/* ── 操作行（2026-10-01 解冻 → 2026-10-04 改版）────────────────
+ * 解冻那一版用 margin-top:auto 把它推到卡片底部（"标题在顶、操作在底"），
+ * 中间留白当作卡片纵深。实测右栏比主卡高得多，那块"纵深"变成约 250px
+ * 空白，用户直接指出「想吃什么下面那里太空了」。
+ * 现在空白由书写面吃掉，动作行改为固定 24px 紧跟其后。 */
+.ask-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  flex: none;
+}
+
+.ask-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  max-width: 34em;
+}
+
+/* ── 主行动按钮（2026-10-01 解冻）──────────────────────────
+ * 从描边改成 accent 填充 + accent 色投影。解冻前这里被"强调色绝不填充"
+ * 卡死，主按钮因此长期是个不起眼的线框——一个产品最重要的动作不该
+ * 长得最轻。现在它是整页唯一的实心色块，视觉重量与它的行为权重对齐；
+ * 投影用 --shadow-go（accent 自身色相的半透明），浮而不闪。 */
+.ask-go {
+  margin-left: auto;
+  flex: none;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--white);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 12px 30px;
+  cursor: pointer;
+  box-shadow: var(--shadow-go);
+  transition: border-color 0.18s, background 0.18s, color 0.18s,
+    box-shadow 0.18s, transform 0.18s;
+}
+
+.ask-go:hover:not(:disabled) {
+  border-color: var(--accent-ink);
+  background: var(--accent-ink);
+  box-shadow: var(--shadow-go-hi);
+  transform: translateY(-1px);
+}
+
+.ask-go:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-go);
+}
+
+.ask-go:disabled {
+  border-color: var(--line);
+  color: var(--ink-faint);
+  background: var(--surface-2);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ── 身份确认栏的内容（原首屏脚注）──────────────────────
+ * 2026-09-27 起它住在右栏的 Panel 里（见 TonightApp 的 ask-side），
+ * 不再是页面底部那条排印脚注——所以**原来那个 `.ctx` 容器已删**：
+ * 它自带的 margin-top + border-top 发丝线在有 padding 的面板里会变成
+ * 盒子内顶一条多余的线。下面两条直接作用在 Panel 内部。
+ *
+ * 原注释里「故意不做成面板，避免两块表」的排除理由已经失效：
+ * wait-facts 盒子在等待页，首屏自始至终只有这里这一个盒子。
+ * 推翻记录写在 TonightApp 对应的 JSX 注释里。 */
+/* 一人一列，横向排开；字号压到最小，只在需要时被读到。 */
+.ctx-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 30px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 第二行更淡一档：共同忌口与冰箱。它们比"谁在吃"次要。 */
+.ctx-rest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* ── 失败态：必须长得像失败，不能长得像空 ─────────────── */
+
+.failure {
+  border: 1px solid var(--bad-line);
+  border-left: 3px solid var(--bad);
+  border-radius: var(--radius);
+  background: var(--bad-soft);
+  padding: 18px 22px;
+  margin-bottom: 28px;
+  animation: rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.failure strong {
+  display: block;
+  font-size: 15px;
+  color: var(--bad);
+  margin-bottom: 6px;
+}
+
+.failure p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.failure .mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.failure-partial {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.failure-partial summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.failure-partial pre {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* ── 全局导航壳（2026-09-29 户型图第 2 步 · 2026-10-01 画风解冻）────────
+ * 只负责"另外三个房间看得见、点得动"，不改今晚房内任何布局。
+ * 房间切换走 hash（#room=xxx）而不是路由库：刷新靠 URL 恢复、后退靠浏览器
+ * 历史，两条都由浏览器自己保证（户型图红线：不引入路由依赖）。
+ *
+ * 解冻后曾升成**卡片门楣**：一条卡片顶栏，与屋内家具同族（亮面 / 描边 /
+ * 落地光 / 14px 圆角），激活房间用 accent-soft 浅底标出。
+ * 2026-10-04 第二轮起改为**排印门楣**，形态与理由见下方。 */
+/* ── 第二轮（2026-10-04，用户：「导航字体也需要重新排布」）──────────────
+ * 把门楣从**卡片**改回**排印**。起因是地板这一轮压沉了，白色悬浮卡在新
+ * 背景上反而像"贴上去的一块"；参考图给的形态则是刻在纸上的门楣：与内容
+ * 同宽、无底色无圆角，只有一根底线。
+ *
+ * 三处具体重排：
+ *   ① 品牌：左侧加一枚 24px 方形印章（内嵌一个「膳」字），品牌名本身
+ *      从 accent 色改成墨色、字号 15→17px。强调色因此只留在印章这一处，
+ *      比"品牌与激活项都是橙的"更收敛。
+ *   ② 房间标签：字号 15→17px、字距 0.05em、内距加大。Windows 上衬线
+ *      只有 400 一档，层级只能靠字号 + 字距 + 颜色，不能靠字重硬撑。
+ *   ③ 激活态：从 accent-soft 填充块改回下划线短线。这不是走回头路——
+ *      解冻前那条下划线是"四个房间长得一模一样"时唯一的信号；现在字号
+ *      与字距已经把房间排开了，下划线只需承担"是哪一间"。填充块在压沉
+ *      的背景上还会与下方卡片底撞成同一层明度。 */
+.shell-nav {
+  max-width: var(--content, 1010px);
+  margin: 0 auto;
+  /* 左右 28px 与 .tn 的内边距对齐：改成排印形态后导航自己没有了内边距，
+   * 品牌会比下方内容列左突 28px、右侧「就绪」也不与它对齐。形态变了，
+   * 列线不能变。 */
+  padding: 18px 28px 13px;
+  display: flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 印章：方形描边内一个「膳」字。用伪元素而不是往 DOM 里塞节点——它是纯
+ * 装饰，不该进无障碍树（品牌名本身已经是可读文本）。竖排四字在 24px 里
+ * 会糊，单字印章在这个尺寸上最清楚。 */
+.shell-brand {
+  position: relative;
+  padding-left: 32px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  margin-right: 34px;
+}
+
+.shell-brand::before {
+  content: '膳';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -12px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 3px;
+  background: var(--accent-soft);
+}
+
+.shell-tab {
+  position: relative;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 12px 18px;
+  cursor: pointer;
+  transition: color 0.16s;
+}
+
+.shell-tab:hover {
+  color: var(--ink);
+  background: none;
+}
+
+.shell-tab.is-on {
+  color: var(--accent-ink);
+  background: none;
+  font-weight: 600;
+}
+
+.shell-tab.is-on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 20px;
+  height: 2px;
+  margin-left: -10px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* 右侧上下文与左侧信息之间立一根发丝线：原来它只靠 margin-left:auto
+ * 飘在最右，与四个房间之间没有任何结构关系。 */
+.shell-ctx {
+  margin-left: auto;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-ctx-btn {
+  all: unset;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed transparent;
+}
+
+.shell-ctx-btn:hover {
+  color: var(--ink);
+  border-bottom-color: var(--line);
+}
+
+.shell-main {
+  min-height: 55vh;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
