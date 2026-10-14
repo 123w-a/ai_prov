@@ -4,7 +4,6 @@
 
 import json#结构化回答打包成 JSON 字符串落进消息
 import logging#结构化节点异常观测：静默降级也必须留下可定位证据
-import os#充分性门控增强开关（CHEF_SUFFICIENCY_FULL）
 import re
 from pathlib import Path#读取 data/profile.json（家庭档案激活成员）
 import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
@@ -1850,10 +1849,75 @@ def _taste_adjustment_followup_target(messages) -> str:
     return names[0] if len(names) == 1 else ""
 
 
+# 「换话题」信号：用户追问后的这一轮若带这些词，说明是在问别的（知识/闲聊/信息），
+# 不是在对追问作答 —— 不能用"追问前的求餐消息"去判定它算不算候选轮。
+# 注意：中文口语输入常常不带问号（「北京天气怎么样」无「？」），所以不能用句尾标点判。
+_TOPIC_SWITCH_MARKERS = (
+    "怎么样", "是什么", "什么是", "多少", "为什么", "如何", "哪一", "哪个",
+    "是不是", "能不能", "介绍", "讲讲", "科普", "吗", "呢",
+)
+
+
+def _messages_before_last_ask(messages) -> list:
+    """回到「追问之前」的消息序列：跳过尾部的追问话术，让判定输入回到真正的求餐轮。
+
+    背景：泛推荐轮可能先被追问一次，用户答完追问时
+    本轮原话往往不含求餐词（「我爸医生让严格控盐」），直接判定会被当闲聊 → 候选清单
+    （两阶段点菜第一跳）再也不出现。这里只影响**判定输入**，不改消息本身、不动图结构。
+    """
+    msgs = list(messages)
+    while msgs:
+        idx = None
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+                idx = i
+                break
+        if idx is None:
+            break
+        if not _last_ai_asked([msgs[idx]]):
+            break
+        msgs = msgs[:idx]
+    return msgs
+
+
+def _has_independent_intent_after_ask(user_text: str, messages) -> bool:
+    """判断追问后的本轮是否已经提出了独立意图。
+
+    只有没有独立意图时，才能把本轮视为上一条追问的回答。
+    这和候选轮的回溯口径一致，避免「上一轮问过」把新的求餐、知识或菜品问题
+    一并短路掉充分性门。
+    """
+    text = _current_request_text(user_text or "")
+    return (
+        is_non_recipe_information_request(text)
+        or _is_specific_dish_request(text)
+        or _is_recipe_detail_followup(messages, text)
+        or _looks_like_meal_request(text)
+        or any(marker in text for marker in _TOPIC_SWITCH_MARKERS)
+    )
+
+
 def _is_candidate_turn(messages, *, ingredient_gate_ready: bool = False) -> bool:
     """本轮是否走「候选清单」阶段（只给编号候选，不出卡片不配图）。"""
     if ingredient_gate_ready:
         return True
+    # 非求餐的提问 / 换话题轮（「什么是痛风」「北京天气怎么样」）不做候选清单。
+    # 求餐优先：「晚上吃什么呢」含疑问词但仍算候选轮，不受影响。
+    # （背景：既有 `_classify_turn_intent` 会把「什么是痛风」这类知识提问判成 recommend，
+    #  这里在候选层面挡一道，避免给知识问答回一份菜单。）
+    latest = _current_request_text(_latest_user_text(messages))
+    if not _looks_like_meal_request(latest) and any(
+        marker in latest for marker in _TOPIC_SWITCH_MARKERS
+    ):
+        return False
+    # 本轮若是对追问的回答，判定与文本都回到"追问前的求餐消息"——否则答完追问
+    # （「我爸医生让严格控盐」）会被判成 other/闲聊，候选清单（亮点①）不再出现。
+    # 但**本轮自身带独立意图时不算"回答追问"**（换话题），此时不能截断：
+    #   ① 信息问答 / 点名菜 / 做法追问；② 新的求餐请求；③ 含疑问词（知识/闲聊提问）
+    independent_intent = _has_independent_intent_after_ask(latest, messages)
+    if not independent_intent:
+        messages = _messages_before_last_ask(messages)
     intent = _classify_turn_intent(messages)
     if intent not in ("recommend", "change_one", "other"):
         return False
@@ -2036,7 +2100,11 @@ def _recent_candidates(messages, limit=8):
         if not isinstance(m, AIMessage) or getattr(m, "tool_calls", None):
             continue
         raw = str(getattr(m, "content", "") or "").strip()
+        if not raw:
+            # 空内容占位消息（工具调用后的空 AIMessage）——内部噪声，跳过继续找。
+            continue
         if not raw.startswith("{"):
+            # 一段真正的正文（markdown）——说明候选之后已经发生过别的对话轮，停。
             return []
         try:
             data = json.loads(raw)
@@ -2044,11 +2112,16 @@ def _recent_candidates(messages, limit=8):
             return []
         if not isinstance(data, dict):
             return []
-        if str(data.get("answer_kind") or "") != "candidates":
-            return []
-        names = [str(n).strip() for n in (data.get("candidates") or []) if str(n).strip()]
-        if names:
-            return names[:limit]
+        if str(data.get("answer_kind") or "") == "candidates":
+            names = [str(n).strip() for n in (data.get("candidates") or []) if str(n).strip()]
+            return names[:limit] if names else []
+        # JSON 但不是候选 payload：区分「内部工具结果」和「另一轮正文」。
+        # RAG 检索（found/hits）、联网搜索（text/query）、食材识别等工具结果
+        # 夹在候选与当前轮之间，是**同一轮的内部消息**，绝不能当成「隔了一轮」
+        # 而把候选锚点作废——否则工具链一多，序号选定就永远够不到候选（卡片消失）。
+        if set(data) & {"found", "hits", "text", "query", "results", "matches", "items"}:
+            continue
+        # 其余 JSON（如另一份食谱卡、结构化回答）视为隔轮，按基线语义不再认旧序号。
         return []
     return []
 
@@ -2908,6 +2981,7 @@ def tool_budget_finalize_node(state: "ChefState"):
                 candidate,
                 candidate_names=candidate_names,
                 plain_safety_refusal=plain_refusal,
+                allergens=_allergens_for_audit(state.get("session_id")),
             )
             violations = audit(audit_text, _merged_conditions(user_text))
             try:
@@ -3940,22 +4014,42 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
         # 自然语言已通过一次审计，但结构化模型仍可能改写食材或调料。
         # 卡片输出前再审一次，命中过敏原时直接放弃卡片，保留已通过审计的正文。
         structured_text = "\n".join(
-            " ".join([
+            line
+            for recipe in answer.recipes
+            for line in (
                 recipe.name,
                 recipe.intro,
                 " ".join(
                     f"{seasoning.name} {seasoning.amount}"
                     for seasoning in recipe.seasonings
                 ),
-                " ".join(recipe.steps),
-            ])
-            for recipe in answer.recipes
+                *(recipe.steps or []),
+            )
+        )
+        # 菜谱本体里的「不用花生油」「（替花生）」是否定/替代说明，不是下料。
+        # 这里必须用**保守口径** `_strip_all_negated_lines`：结构化审计是过敏原
+        # 安全底线，`_strip_negated_allergen_mentions`（自由正文那版）会把
+        # 「换花生油」「花生油 1 勺，不用花生碎」这类真下料整行剥掉 ⇒ 漏判。
+        # 且必须**保持逐行结构**：若把整道菜拼成一行，剥离会把整道菜从审计里
+        # 删掉，等于把硬审计放空，真下料一样漏过。
+        allergens_for_audit = _allergens_for_audit(state.get("session_id"))
+        structured_text = _strip_all_negated_lines(
+            structured_text, allergens_for_audit
         )
         structured_allergen_violations = audit_allergens(
             structured_text,
-            _allergens_for_audit(state.get("session_id")),
+            allergens_for_audit,
             use_optional=True,
         )
+        if structured_allergen_violations:
+            logger.warning(
+                "[tempdiag] structured allergen block violations=%s text=%r",
+                [
+                    {"c": v.get("condition"), "k": v.get("keyword")}
+                    for v in structured_allergen_violations
+                ],
+                structured_text[:1500],
+            )
         if structured_allergen_violations:
             structured_conditions = sorted({
                 violation["condition"] for violation in structured_allergen_violations
@@ -4282,6 +4376,181 @@ def _recipe_content_for_audit(answer_text: str, *, advisory_only: bool = False) 
     return "\n".join(kept)
 
 
+# 过敏原硬审计的范围边界：只有「菜谱本体」能触发重生成。
+# 提醒、分餐、依据、热量、小建议这些段落里出现过敏原名，属于安全说明或替代
+# 说明（实测：「脆感替代：用黄瓜丁+胡萝卜丁顶替花生」「确认酱料配料表无花生」
+# 「依据：《…白皮书》…花生是常见致敏食物」「传统版少一份油炸花生」），不是在
+# 教下料；把它们当违规会让一段好答案被反复打回、最后一句话兜底。
+# 因此硬审计只认食材/用料/调料分节与做法/步骤分节（含行内「食材：…」写法）。
+_INGREDIENT_SECTION_MARKERS = (
+    "食材", "用料", "主料", "配料", "调料", "材料", "原料", "备料", "腌料",
+)
+_STEP_SECTION_MARKERS = ("做法", "步骤", "制作", "操作", "流程", "烹饪")
+_SECTION_MARKERS = _INGREDIENT_SECTION_MARKERS + _STEP_SECTION_MARKERS
+_INLINE_SECTION_RE = re.compile(
+    r"(?:" + "|".join(_SECTION_MARKERS) + r")\s*[：:]"
+)
+
+
+def _strip_line_markup(line: str) -> str:
+    """去掉行首的标题符号、项目符号与序号，得到用于识别的正文。"""
+    text = str(line or "").strip()
+    text = re.sub(r"^#{1,6}\s*", "", text).strip()
+    text = re.sub(r"^[-*>•·]+\s*", "", text).strip()
+    text = re.sub(r"^\d+[.、)）]\s*", "", text).strip()
+    return text
+
+
+def _is_section_header_line(line: str) -> bool:
+    """这一行是不是一个新的分节标题（用来结束上一个分节）。"""
+    raw = str(line or "").strip()
+    if not raw:
+        return False
+    if raw.startswith("#"):
+        return True
+    if re.fullmatch(r"\*\*[^*]+\*\*[：:]?", raw):
+        return True
+    if re.fullmatch(r"【[^】]{1,12}】", raw):
+        return True
+    return False
+
+
+def _starts_with_section_marker(text: str) -> bool:
+    """这一行是不是「食材 / 做法」这类分节标题的开头。
+
+    只认标题形态：``食材``、``食材（2-3人份）``、``食材：…``、``步骤1：…``。
+    ``操作要点：…``、``材料不新鲜``、``配料表没写`` 这类只是借了同名前缀的
+    安全说明或普通句子，不算分节起点——否则提醒段会被当成菜谱本体重新卷进
+    硬审计，又回到「好答案被反复打回」的老问题。
+    """
+    for marker in _SECTION_MARKERS:
+        if not text.startswith(marker):
+            continue
+        rest = text[len(marker):].lstrip("*＊ \t")
+        if not rest:
+            return True
+        if rest[0] in "：:（(【":
+            return True
+        head = rest[:4]
+        if rest[0].isdigit() and (
+            "：" in head or ":" in head or any(ch in head for ch in "、.．")
+        ):
+            return True
+        return False
+    return False
+
+
+def _allergen_core_audit_text(answer_text: str) -> str:
+    """抽取能触发过敏原硬拦的「菜谱本体」文本。
+
+    食材/调料分节与做法/步骤分节里的过敏原名是真实下料风险，进硬审计；
+    提醒、分餐、依据、热量、小建议等段落里的名字只是被提及，交给提示层。
+    """
+    kept: list[str] = []
+    active = False
+    for line in str(answer_text or "").splitlines():
+        stripped = _strip_line_markup(line)
+        if not stripped:
+            continue
+        if _starts_with_section_marker(stripped):
+            active = True
+            kept.append(line)
+            continue
+        if _INLINE_SECTION_RE.search(line):
+            active = True
+            kept.append(line)
+            continue
+        if _is_section_header_line(line):
+            active = False
+            continue
+        if active:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+# 菜谱本体里模型会写「藕丁 80g（替花生）」「替代花生米的脆感」「不用花生油」这类
+# 否定/替代括注。字面包含过敏原名，语义却是「不加」，与真实下料正好相反。
+# 收窄到菜谱本体后它们仍会把好答案反复打回（实测 E1/E2 宫保鸡丁最终落成替换菜）。
+# 因此在硬审计前，把「紧邻否定/替代标记」的提及清掉；真正下料的写法
+# （花生油 2 勺 / 花生碎 1 小把 / 生抽、花生酱）前面没有这类标记，照旧命中。
+_ALLERGEN_MENTION_NEGATION_MARKERS = (
+    "不", "别", "勿", "莫", "禁", "免", "无", "替", "换", "改", "忌", "避",
+)
+
+
+def _strip_negated_allergen_mentions(text: str, allergens) -> str:
+    """丢掉审计文本里「整行都是否定/替代说明」的行，只留可能真实下料的部分。
+
+    判定粒度是「行」，不再逐词删除：逐词删除会把「不用花生、花生碎、花生油、
+    花生酱」里打头的「不用」一起吃掉，剩下的长词（花生油/花生酱）反而失去否
+    定语境，被当成真下料 —— 实测 E2 宫保鸡丁的好答案就是这样被反复打回、最后
+    落成一句兜底。整行删除后，同行里不再有任何过敏原残留，也就无从误判。
+    真下料的写法（花生油 2 勺 / 花生碎 1 小把）不含否定/替代标记，照旧命中。
+    """
+    if not text or not allergens:
+        return text
+    words = _allergen_surface_words(allergens)
+    if not words:
+        return text
+    kept_lines: list[str] = []
+    for line in str(text).splitlines():
+        if any(word in line for word in words) and any(
+            marker in line for marker in _ALLERGEN_MENTION_NEGATION_MARKERS
+        ):
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines)
+
+
+# 结构化审计专用的**保守**剥离标记：只认纯否定词。
+# 为什么不复用 `_strip_negated_allergen_mentions`（自由正文路径那版）：那版为了
+# 压住「（替花生）」这类替代说明，把「替/换/改」也算作警示，并**整行剔除**。
+# 这套口径搬到「食材/步骤」语境会漏判真下料，实测三条：
+#   「换花生油」                        → 整行被剥 → 漏判
+#   「替换成花生酱」                     → 整行被剥 → 漏判
+#   「花生油 1 勺，不用花生碎装饰」        → 整行被剥 → 真下料一起没了
+# 结构化审计是过敏原安全底线：**宁可多误报一次（最多不出卡片），也不能漏判**。
+# 因此这里只做一件事：该行内**每一处**过敏原提及都紧邻纯否定词时，才整行剔除。
+_SAFE_NEGATION_MARKERS = ("不", "别", "勿", "莫", "禁", "免", "无", "忌", "避")
+# 窗口取 6：覆盖「不可以使用花生油」「请不要放花生碎」这类双字否定短语（否定词
+# 距提及可达 5 字）。判定是「每一处提及都紧邻否定才整行剔除」+ 只看提及**前** window
+# 字符，加宽只影响单处提及的归属，不会把后置的真下料（「花生碎少许不用多」）误剥。
+_SAFE_NEGATION_WINDOW = 6
+
+
+def _strip_all_negated_lines(text: str, allergens) -> str:
+    """只剔除「整行每一处过敏原提及都被否定」的行；有任何一处像真下料就整行保留。"""
+    if not text or not allergens:
+        return text
+    words = _allergen_surface_words(allergens)
+    if not words:
+        return text
+    kept: list[str] = []
+    for line in str(text).splitlines():
+        mentions, start = [], 0
+        while True:
+            hits = [(line.find(w, start), w) for w in words]
+            hits = [(i, w) for i, w in hits if i >= 0]
+            if not hits:
+                break
+            index, word = min(hits)
+            mentions.append(index)
+            start = index + len(word)
+        if not mentions:
+            kept.append(line)
+            continue
+        if all(
+            any(
+                marker in line[max(0, index - _SAFE_NEGATION_WINDOW):index]
+                for marker in _SAFE_NEGATION_MARKERS
+            )
+            for index in mentions
+        ):
+            continue  # 整行都是「不用/无/忌…」的说明，剔除
+        kept.append(line)  # 有一处像真下料，整行保留交审计
+    return "\n".join(kept)
+
+
 def _is_plain_safety_refusal_turn(
     messages,
     answer_text: str,
@@ -4317,12 +4586,19 @@ def _audit_texts_for_answer(
     *,
     candidate_names,
     plain_safety_refusal: bool,
+    allergens=None,
 ) -> tuple[str, str]:
     """按轮次形态给出 (慢病审计文本, 过敏原审计文本)。
 
     - 候选轮：只审计用户看到的候选菜名，提醒句不进审计；
     - 纯口头安全问答：正文必然反复提到过敏原本身，先剥掉提醒句再审计；
-    - 其余轮次：过敏原审计沿用「剥掉安全说明句」的既有口径，慢病审计看整篇。
+    - 其余轮次：过敏原硬审计只看「菜谱本体」（食材/调料分节 + 做法/步骤分节），
+      慢病审计看整篇。
+
+    只有菜谱本体能触发过敏原重生成：提醒、分餐、依据、热量、小建议段落里出现
+    过敏原名是安全说明/替代说明，把它们当违规会把一段好答案反复打回、最后一
+    句话兜底（实测宫保鸡丁无花生版）。正文没有可识别分节时（模型偶发用纯口语
+    段落交付菜谱），退回既有的「剥掉安全说明句」口径，避免硬审计被整体放空。
     """
     if candidate_names:
         names = "\n".join(candidate_names)
@@ -4332,7 +4608,12 @@ def _audit_texts_for_answer(
         # 纯口头问答必然反复点名过敏原本身来解释，通用过敏原审计在这里只会误伤；
         # 这一支的过敏原风险交给 `_allergen_permission_violations` 的定点下料检测。
         return stripped, ""
-    return answer_text, _recipe_content_for_audit(answer_text)
+    core = _allergen_core_audit_text(answer_text)
+    if not core.strip():
+        core = _recipe_content_for_audit(answer_text)
+    # 菜谱本体里「（替花生）」「不用花生油」这类否定/替代括注字面含过敏原名，
+    # 但不是下料（实测 E1/E2 宫保鸡丁），审计前先清掉这一层。
+    return answer_text, _strip_negated_allergen_mentions(core, allergens)
 
 
 def _allergen_permission_violations(
@@ -4476,6 +4757,7 @@ def verify_answer_node(state: ChefState):
         answer_text,
         candidate_names=candidate_names,
         plain_safety_refusal=plain_refusal,
+        allergens=allergens,
     )
     allergen_violations = audit_allergens(
         allergen_audit_text,
@@ -4914,15 +5196,11 @@ def _is_vague_health_input(user_text: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-#  充分性增强档（默认关闭：CHEF_SUFFICIENCY_FULL=1 打开）
+#  充分性门控
 #
-#  背景：基线刻意「放宽」——用户自述病种即视为信息充分、不再追问
-#  （见 tests/domain/test_profile_gate.py 的 *_does_not_repeat_question）。
-#  本段补的是「控制强度」这一维：自述病种 ≠ 说清了要控制到什么程度。
-#  默认关闭以保证既有基线与它的测试一字不变；打开后，门控会在用户自述病种、
-#  且没有说明控制强度时追一次，说清即不再问。
+#  充分性门统一判断健康信息是否足够：用户只说明病种但没有说明控制强度时，
+#  先追问一次；症状、过敏原、人群和备孕信息也走同一套确定性判断。
 # --------------------------------------------------------------------------- #
-SUFFICIENCY_FULL = os.getenv("CHEF_SUFFICIENCY_FULL", "").strip() in ("1", "true", "True")
 
 _MISSING_INTENSITY = "该病种的控制强度（是否遵医嘱严格限制）"
 _MISSING_PREGNANCY = "是否已怀孕及孕周"
@@ -4932,7 +5210,11 @@ _INTENSITY_MARKERS = (
     "严格控", "严格限", "严格控制", "遵医嘱", "医生要求", "医生让", "医生说要",
     "医嘱", "控制稳定", "控制得还行", "控制得不错", "控制得不好",
     "吃药", "在服药", "按时服药", "平时注意", "日常注意", "注意一点", "注意点",
-    "清淡就行", "少盐就行", "轻度", "轻度偏高", "偏高一点", "临界", "刚查出来",
+    "清淡就行", "少盐就行",
+    # 「我想减肥」这类是用户自己给的目标口径 —— 等于已经说了控制到什么程度，
+    # 再问「医生有没有要求严格限制」就很怪。
+    "减肥", "减重", "瘦身", "控制体重", "想瘦", "控糖", "控盐", "控油",
+    "低盐饮食", "低脂饮食", "低糖饮食",
 )
 
 
@@ -4971,9 +5253,305 @@ def _active_profile_restricts() -> list:
         return []
 
 
+_MEMBER_PERSON_MARKERS = (
+    # 与 _CORRECTION_MEMBER_WORDS 同源扩充：父亲/母亲/妻子/丈夫/儿子/女儿/家人/全家
+    # 同样属于"点名了成员"。实测缺了它们，成员错配缺陷会在「我父亲高血压」上原样复现。
+    "爸爸", "父亲", "妈妈", "母亲", "儿子", "女儿", "孩子", "小孩", "宝宝",
+    "妻子", "老婆", "媳妇", "丈夫", "老公", "弟弟", "哥哥", "姐姐", "妹妹",
+    "爷爷", "奶奶", "外公", "外婆", "姥姥", "姥爷",
+    "岳父", "岳母", "公公", "婆婆", "家人", "全家", "家里人", "老人", "长辈",
+    # 「我爸」「我妈」这类口语变体不含「爸爸/妈妈」字样，必须单列
+    "我爸", "我妈",
+)
+
+
+def _mentions_specific_member(user_text: str) -> bool:
+    """本轮是否点名了某个具体家庭成员（区别于默认的「本人/激活成员」）。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _MEMBER_PERSON_MARKERS)
+
+
 def _intensity_sufficient(user_text: str) -> bool:
-    """控制强度是否已经明确：本轮说过，或档案里有医嘱硬限制。"""
-    return _self_declared_intensity(user_text) or bool(_active_profile_restricts())
+    """控制强度是否已经明确：本轮说过，或档案里有医嘱硬限制。
+
+    ⚠️ 档案 restricts 属于**激活成员**。当本轮点名了具体成员（「我爸高血压」）时，
+    不能拿激活成员的硬限制去顶——成员错配会让追问静默失效（实测：激活成员填了
+    医嘱后，问「我爸高血压」就完全不再追问）。精确的「成员×约束」绑定留到批 2；
+    这里点名了成员就一律视为「未说清」。
+    """
+    if _self_declared_intensity(user_text):
+        return True
+    if _mentions_specific_member(user_text):
+        return False
+    return bool(_active_profile_restricts())
+
+
+# —— B2：症状严重程度 / 过敏原强度；B3：人群维度 / 追问去重 ——
+_MISSING_SYMPTOM_SEVERITY = "症状的持续时间与严重程度"
+_MISSING_ALLERGEN_SEVERITY = "过敏反应的严重程度"
+_MISSING_POPULATION = "这位家人的年龄（或是否孕期 / 哺乳期）"
+
+# 具体主诉词：命中说明用户已说「哪儿不舒服」，但未必说了「到什么程度」。
+# 一律用多字词，避免单字（如裸「胃」）在「开胃」「胃口好」上误触发。
+_SYMPTOM_MARKERS = (
+    "胃疼", "胃痛", "胃胀", "胃不舒服", "胃不好", "反酸", "烧心", "腹胀", "腹泻",
+    "拉肚", "便秘", "恶心", "呕吐", "食欲不振", "没胃口", "不想吃",
+    "肚子胀", "肚子疼", "肚子痛", "肚子不", "腹部不适", "胃部不适",
+    "头痛", "偏头痛", "头晕", "眩晕", "失眠", "睡不好", "睡不着",
+    "咳嗽", "喉咙痛", "咽痛", "嗓子疼", "嗓子不",
+    "皮疹", "起疹", "湿疹", "发痒", "瘙痒", "乏力", "水肿", "抽筋", "口苦", "腰疼", "腰痛",
+)
+
+# 程度 / 时长词：命中即认为「严重程度」已说明，不再追问。
+# 末段是过敏式的程度表达（「吃一点就」「一碰就」），对症状同样成立，
+# 否则「吃一点就起疹」会被症状维度当成「没说程度」而误追问。
+_SEVERITY_MARKERS = (
+    "偶尔", "有时候", "有时", "经常", "老是", "总是", "一直", "反复", "好几天", "几天了",
+    "一周", "半个月", "一个月", "很久", "轻微", "有点", "稍微", "一点点", "厉害",
+    "严重", "很严重", "不严重", "刚出现", "昨天开始", "今天开始", "从上周", "近来",
+    "吃一点就", "碰一点", "一碰", "沾一点", "闻一下", "微量",
+)
+
+# 过敏反应程度词。
+_ALLERGEN_SEVERITY_MARKERS = (
+    "严重", "很严重", "不严重", "轻微", "一点点", "有点", "嘴痒", "嘴唇", "起疹", "皮疹",
+    "喉头", "呼吸困难", "休克", "急救", "送医", "碰一点", "吃一点就", "闻一下", "微量",
+)
+
+# 人群维度：提到这些人称、又没给年龄/生理状态、且对象不在档案成员里时才追问。
+_POPULATION_RULES = (
+    ("老年人", ("老人", "爷爷", "奶奶", "外公", "外婆", "姥爷", "姥姥", "长辈", "年纪大")),
+    ("儿童", ("小孩", "孩子", "儿童", "小朋友", "宝宝", "幼儿", "婴儿", "娃")),
+    ("哺乳期", ("哺乳", "喂奶", "母乳", "产妇", "产后")),
+)
+
+# 求餐意图词：充分性门的所有补问都只在「本轮确实在问吃什么」时触发。
+# 否则「我同事说他高血压挺久了」这类闲聊会被当成自我声明而误追问。
+_MEAL_REQUEST_MARKERS = (
+    "吃什么", "吃啥", "吃点什么", "吃哪", "怎么吃", "能吃什么", "想吃", "该吃",
+    "做饭", "做菜", "做顿", "下厨", "菜谱", "食谱", "菜单", "推荐", "搭配", "点餐",
+    "早餐", "午餐", "晚餐", "早饭", "午饭", "晚饭", "夜宵", "加餐", "外卖",
+    "吃点啥", "吃啥好", "吃点什么",
+    "饭", "菜",
+)
+
+# 非家庭第三人称标记：这类句子里的病名是「转述别人」，不是自己要吃，
+# 第三人称一律不补问（保守放行 —— 少问一次的安全代价远小于误追问）。
+_THIRD_PARTY_MARKERS = ("同事", "邻居", "网友", "别人", "他说", "她说", "听说", "朋友圈")
+
+
+def _looks_like_meal_request(user_text: str) -> bool:
+    """本轮是否在求餐（问吃什么 / 要菜谱 / 要做饭）。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _MEAL_REQUEST_MARKERS)
+
+
+def _is_third_party_talk(user_text: str) -> bool:
+    """本轮是否在转述别人的健康状况（而非自己/同餐家人）。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _THIRD_PARTY_MARKERS)
+
+
+def _has_specific_symptom(user_text: str) -> bool:
+    """本轮是否说了「具体哪儿不舒服」（区别于只有泛化不适）。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _SYMPTOM_MARKERS)
+
+
+def _severity_declared(user_text: str) -> bool:
+    """症状的持续时长 / 严重程度是否已说明。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _SEVERITY_MARKERS)
+
+
+def _allergen_severity_declared(user_text: str) -> bool:
+    """过敏反应的程度是否已说明。"""
+    text = (user_text or "").replace(" ", "")
+    return any(marker in text for marker in _ALLERGEN_SEVERITY_MARKERS)
+
+
+def _self_declared_allergens(user_text: str) -> set:
+    """本轮原话里出现的过敏原编码集合（复用既有确定性词表，不另建一份）。
+
+    这里是在**自由文本**上探测，未归一时底层会发 UserWarning（属预期噪声），
+    故仅在本函数内静音，不影响其它调用方的告警。
+    """
+    try:
+        import warnings
+
+        from domain.allergen_rules import normalize_allergens
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return {str(code) for code in normalize_allergens(user_text or "")}
+    except Exception:
+        return set()
+
+
+def _active_profile_allergen_codes() -> set:
+    """档案激活成员已记录的过敏原，**归一成编码**后再比较。
+
+    为什么必须归一：档案里存的是原文（「花生」「芒果」），本轮原话给的是编码，
+    直接比字符串会把「已在档」误判成「新过敏原」而重复追问。
+
+    为什么不干脆用「档案里有没有任何过敏原」一刀切：那样「档案里有花生、
+    本轮改说对虾过敏」这种真正的新信息就永远问不到。
+    """
+    try:
+        values = [
+            str(item).strip()
+            for item in (_active_profile_allergens() or [])
+            if str(item or "").strip()
+        ]
+    except Exception:
+        return set()
+    if not values:
+        return set()
+    try:
+        import warnings
+
+        from domain.allergen_rules import normalize_allergens
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return {
+                str(code) for code in normalize_allergens("、".join(sorted(set(values))))
+            }
+    except Exception:
+        return set()
+
+
+def _family_member_names() -> set:
+    """档案里已建过档的成员名**及其常见变体**（「妈妈」→「我妈」「我妈妈」）。
+
+    人群维度必须避开它们，避免对已在档成员重复索取年龄/生理状态。
+    变体是必需的：用户说「我妈」，档案里存的是「妈妈」，直接子串匹配会漏，
+    结果对已经建过档的妈妈再问一次。
+    """
+    names = set()
+    for item in _family_members():
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        names.add(name)
+        names.add("我" + name)
+        if len(name) > 1:
+            names.add("我" + name[-1])
+    return names
+
+
+def _population_detail_declared(user_text: str) -> bool:
+    """年龄 / 孕周 / 哺乳状态 / 婴幼儿阶段是否已给出。"""
+    text = (user_text or "").replace(" ", "")
+    if re.search(r"\d+\s*(岁|周岁)", text):
+        return True
+    if re.search(r"孕\s*\d+\s*周", text):
+        return True
+    return any(
+        word in text
+        for word in (
+            "哺乳", "喂奶", "母乳", "产后", "产妇", "刚出生",
+            # 说「婴儿」「辅食」本身已经定位了人群阶段，再问「多大年纪」很别扭。
+            "婴儿", "新生儿", "宝宝", "幼儿", "月龄", "辅食",
+        )
+    )
+
+
+def _needs_population_clarify(user_text: str) -> bool:
+    """是否需要就「这位家人的年龄 / 生理状态」追问一次。"""
+    text = (user_text or "").replace(" ", "")
+    if not text:
+        return False
+    names = _family_member_names()
+    for _label, markers in _POPULATION_RULES:
+        if not any(marker in text for marker in markers):
+            continue
+        if _population_detail_declared(text):
+            continue
+        if any(name and name in text for name in names):
+            continue  # 已在档成员：档案里已有其约束，不再重复索取
+        return True
+    return False
+
+
+def _has_negated_only_discomfort(user_text: str) -> bool:
+    """用户是否**明确否认**了不适（「我没有不舒服」）。
+
+    这是基线的既有误报：`_is_vague_health_input` 只做了子串命中，没做否定排除，
+    于是「我没有不舒服，就想吃点清淡的」会被当成泛化不适而追问。
+    充分性门统一生效。
+    """
+    text = (user_text or "").replace(" ", "")
+    markers = ("不舒服", "难受", "身体不适", "不太舒服", "不大舒服")
+    present = [m for m in markers if m in text]
+    if not present:
+        return False
+    return not any(_hit_without_negation(text, m) for m in present)
+
+
+def _sufficiency_extra_ask(user_text: str, asked: set):
+    """充分性门统一追问出口：返回需要补问的一项，或 None。
+
+    优先级：备孕（人群安全差异最大）> 病种控制强度 > 症状严重程度 > 过敏原强度 > 人群。
+    `asked` = 上一轮问过的键（取自 state["profile_missing"]），同键不连问第二次，
+    这就是追问去重 —— 不需要新增 state 字段，也不动图结构。
+    """
+
+    def _ask(key: str):
+        if key in asked:
+            return None
+        return {"profile_ready": False, "profile_missing": [key]}
+
+    text = user_text or ""
+    tight = text.replace(" ", "")
+
+    # 求餐守门：本轮不是在问吃什么，就不补问——避免把闲聊里的病名当成自我声明。
+    # 第三人称守门：转述同事/邻居的病名不补问——那不是这顿饭的约束。
+    if not _looks_like_meal_request(text) or _is_third_party_talk(text):
+        return None
+
+    # 备孕放最前：它走的是「人群安全」而不是「病种约束」，且原实现嵌在
+    # if not conditions 里，只要同时说了病种就永远走不到（已修）。
+    if "备孕" in tight:
+        hit = _ask(_MISSING_PREGNANCY)
+        if hit:
+            return hit
+
+    # 病种控制强度：孕期（含仅孕期一个条件）走的是人群口径，
+    # 不该去问「医生有没有要求严格控盐」这种慢病式强度。
+    text_conditions = set(detect_conditions(text))
+    if (
+        text_conditions
+        and not text_conditions <= {"孕期"}
+        and not _intensity_sufficient(text)
+    ):
+        hit = _ask(_MISSING_INTENSITY)
+        if hit:
+            return hit
+
+    if _has_specific_symptom(text) and not _severity_declared(text):
+        hit = _ask(_MISSING_SYMPTOM_SEVERITY)
+        if hit:
+            return hit
+
+    # 过敏原强度：只对「本轮新提到、档案里还没记过」的过敏原追问一次。
+    # 已在档的过敏原按既有 L3 全禁处理，再问只是打扰（安全收益为 0）。
+    if (
+        "过敏" in tight
+        and _hit_without_negation(tight, "过敏")
+        and _self_declared_allergens(text) - _active_profile_allergen_codes()
+        and not _allergen_severity_declared(text)
+    ):
+        hit = _ask(_MISSING_ALLERGEN_SEVERITY)
+        if hit:
+            return hit
+
+    if _needs_population_clarify(text):
+        hit = _ask(_MISSING_POPULATION)
+        if hit:
+            return hit
+
+    return None
 
 
 def _is_ambiguous_health_safety_question(user_text: str, messages) -> bool:
@@ -5002,6 +5580,27 @@ def _is_ambiguous_health_safety_question(user_text: str, messages) -> bool:
     return True
 
 
+_ASK_TURN_LEADS = ("想确认一下", "想先确认一下", "请补充", "请告诉我")
+
+
+def _last_ai_asked(messages) -> bool:
+    """最近一条 AI 消息是不是本系统的追问话术（用于「问过 → 答过 → 不再问」去重）。
+
+    只依赖消息内容，不依赖 `state["profile_missing"]` 跨轮传递 —— 后者在真实链路
+    里可能丢失，会让用户的自然回答（「就是少吃点咸的」）被原样再问一次。
+
+    判定 = 固定引导语开头 + 短文本（追问话术都很短）。**不能用问号结尾当必要条件**：
+    实测本系统 7 条追问话术里，孕周 / 症状 / 过敏 / 人群四条都以「。」结尾。
+    """
+    for m in reversed(messages):
+        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+            content = str(m.content or "").strip()
+            if not content:
+                continue
+            return content.startswith(_ASK_TURN_LEADS) and len(content) <= 120
+    return False
+
+
 @trace_node("profile_gate")
 def profile_gate_node(state: ChefState):
     """充分性门控节点：进入 chef_think 前，确定性判断健康画像是否足够。
@@ -5013,11 +5612,22 @@ def profile_gate_node(state: ChefState):
     messages = state["messages"]
     user_text = _latest_user_text(messages)
     conditions = _merged_conditions(user_text)
+    # 追问去重：上一轮已问过的键不再连问（state["profile_missing"] 就是上一轮的结果）。
+    asked = set(state.get("profile_missing") or [])
+    # 自然回答去重（不依赖 profile_missing 跨轮传递）：只有本轮没有独立意图时，
+    # 才把最近一条系统追问视为本轮正在回答。新的求餐/知识/菜品问题必须继续经过
+    # 下面的充分性检查，不能被「上一轮问过」无条件短路。
+    if _last_ai_asked(messages) and not _has_independent_intent_after_ask(
+        user_text, messages
+    ):
+        return {"profile_ready": True, "profile_missing": []}
     if _is_vague_health_input(user_text):
-        return {
-            "profile_ready": False,
-            "profile_missing": ["具体症状、持续时间及严重程度"],
-        }
+        # 用户明确否认不适（「我没有不舒服」）时不再追问。
+        if not _has_negated_only_discomfort(user_text):
+            return {
+                "profile_ready": False,
+                "profile_missing": ["具体症状、持续时间及严重程度"],
+            }
     if _is_ambiguous_health_safety_question(user_text, messages):
         if _recent_candidates(messages):
             missing = "具体是哪一道菜（或回复候选序号）"
@@ -5028,10 +5638,10 @@ def profile_gate_node(state: ChefState):
             "profile_missing": [missing],
         }
     if not conditions:
-        # 人群维度也要过门：备孕≠孕期（见 _self_declared_conditions 同名分支），
-        # 孕周与营养建议强相关，宁可追问一次。仅在增强档生效。
-        if SUFFICIENCY_FULL and "备孕" in (user_text or "").replace(" ", ""):
-            return {"profile_ready": False, "profile_missing": [_MISSING_PREGNANCY]}
+        # 无慢病语境时，仍可能因症状 / 过敏原 / 人群 / 备孕而追问一次。
+        extra = _sufficiency_extra_ask(user_text, asked)
+        if extra:
+            return extra
         return {"profile_ready": True, "profile_missing": []}
 
     declared = (
@@ -5043,14 +5653,11 @@ def profile_gate_node(state: ChefState):
     if missing:
         return {"profile_ready": False, "profile_missing": missing}
 
-    # 增强档：病种已声明只代表「知道有这个病」，不代表「知道要控制到什么程度」。
-    # 仅当病种来自用户本轮原话（不是只靠档案带入）时才补问；说清强度即不再问。
-    if (
-        SUFFICIENCY_FULL
-        and detect_conditions(user_text)
-        and not _intensity_sufficient(user_text)
-    ):
-        return {"profile_ready": False, "profile_missing": [_MISSING_INTENSITY]}
+    # 病种已声明只代表「知道有这个病」，不代表「说清了要控制到什么程度」；
+    # 症状严重程度 / 过敏原严重程度 / 人群同理。同键只问一次，说清即不再问。
+    extra = _sufficiency_extra_ask(user_text, asked)
+    if extra:
+        return extra
 
     return {"profile_ready": True, "profile_missing": []}
 
@@ -5075,6 +5682,9 @@ def ask_user_node(state: ChefState):
         "具体症状、持续时间及严重程度": "请补充具体症状、持续了多久，以及是否有明显或严重表现，我再给你更安全的饮食建议。",
         _MISSING_INTENSITY: "想确认一下：医生有没有给你具体的忌口要求（比如严格控盐、限嘌呤），还是平时注意一下就行？",
         _MISSING_PREGNANCY: "想确认一下：是已经怀孕了吗？如果已怀孕，现在孕几周了？我好按对应的营养要求来安排。",
+        _MISSING_SYMPTOM_SEVERITY: "想先确认一下：这个情况持续多久了、是偶尔出现还是经常？严重到什么程度？我好判断要不要先避开某些食材。",
+        _MISSING_ALLERGEN_SEVERITY: "想确认一下：这个过敏是轻微不适，还是会出现明显反应（比如起疹、喉头不适）？我会按对应严格程度处理。",
+        _MISSING_POPULATION: "想确认一下这位家人的年龄或生理状态（比如多大年纪、是否孕期或哺乳期）？不同人群的食养要求差别很大。",
     }
     if len(missing) == 1 and missing[0] in direct_questions:
         return {"messages": [AIMessage(content=direct_questions[missing[0]])]}

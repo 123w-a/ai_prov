@@ -173,6 +173,48 @@ def _has_ingredient(available: list[str], required: str) -> bool:
     return False
 
 
+def _find_recipe_matches(inventory_text: str, limit: int = 5) -> dict:
+    """根据已有食材反查可做菜谱，结果稳定且保留缺口信息。"""
+    owned = _split_inventory_text(inventory_text)
+    if not owned:
+        return {
+            "owned": [],
+            "matches": [],
+            "note": "没有识别到已有食材，无法反查菜谱",
+        }
+
+    matches = []
+    for recipe_name, required in HOME_CHEF_RECIPES.items():
+        present = [item for item in required if _has_ingredient(owned, item)]
+        if not present:
+            continue
+        missing = [item for item in required if not _has_ingredient(owned, item)]
+        matches.append(
+            {
+                "recipe_name": recipe_name,
+                "matched_ingredients": present,
+                "missing_ingredients": missing,
+                "coverage": round(len(present) / len(required), 3),
+                "ready_to_cook": not missing,
+            }
+        )
+
+    matches.sort(
+        key=lambda item: (
+            item["ready_to_cook"],
+            item["coverage"],
+            len(item["matched_ingredients"]),
+            -len(item["missing_ingredients"]),
+        ),
+        reverse=True,
+    )
+    return {
+        "owned": owned,
+        "matches": matches[: max(1, limit)],
+        "note": "按已有食材覆盖率排序；missing_ingredients 为空表示可以直接开做",
+    }
+
+
 def _build_preview(data: ServicePreviewRequest) -> dict:
     """计算文字食材缺口，同时诚实标注图片/语音/下单尚未接入。"""
     if data.mode == "voice":

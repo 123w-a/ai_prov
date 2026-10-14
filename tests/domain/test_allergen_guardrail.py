@@ -568,6 +568,136 @@ class TestVerifyGraph(unittest.TestCase):
         self.assertEqual(result["verify_status"], "retry")
         self.assertIn("花生", result["messages"][0].content)
 
+    def test_recipe_safety_reminders_mentioning_allergen_do_not_retry(self):
+        """实测翻车：无花生宫保鸡丁的好答案里，「顶替花生」「配料表无花生」
+        「少一份油炸花生」都是提醒/替代说明，旧口径把它们当成真下料，连续
+        重生成后前端只剩一句兜底。硬审计只认食材/做法本体，提醒段不再重打回。
+        """
+        text = (
+            "## 健康护栏\n"
+            "- 孩子确诊花生过敏 → 整锅绝对不能出现花生。\n"
+            "- 脆感替代：用黄瓜丁 + 胡萝卜丁顶替花生，口感一样脆。\n"
+            "## 今日主菜：宫保鸡丁（无花生·低盐家庭版）\n"
+            "**食材（2-3人份）**\n"
+            "| 主料 | 鸡胸肉 250g |\n"
+            "| 脆口替代 | 黄瓜半根、胡萝卜半根 |\n"
+            "**做法**\n"
+            "1. 鸡丁腌十分钟，滑炒至变色。\n"
+            "2. 出锅前点几滴不含花生的辣椒油。\n"
+            "## 热量-运动当量\n"
+            "无花生版比传统版少一份油炸花生，热量约低 90 千卡。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
+
+    def test_recipe_ingredient_table_allergen_still_retries_after_core_scope(self):
+        """收窄硬审计范围后，食材表里的真下料仍要拦：替代说明与真下料必须区分开。"""
+        text = (
+            "## 说明\n"
+            "- 脆感替代：用黄瓜丁顶替花生。\n"
+            "**食材**\n"
+            "| 主料 | 鸡胸肉 |\n"
+            "| 调味 | 生抽、糖、花生碎 1 小把 |\n"
+            "**做法**\n"
+            "1. 合炒出锅。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
+
+    def test_negated_allergen_notes_inside_recipe_core_do_not_retry(self):
+        """实测 E1/E2：无花生宫保鸡丁的好答案，在**食材分节里**写「（替花生）」
+        「替代花生米的脆感」「不用花生油」。它们字面含过敏原名却是「不加」，
+        旧口径把它们当真实下料，连打好回后前端只剩一道替换菜。
+        """
+        text = (
+            "## 主菜：无花生版宫保鸡丁\n"
+            "**食材（2-3人份）**\n"
+            "- 鸡胸肉 300g，切 1.5cm 丁\n"
+            "- 黄瓜半根、胡萝卜半根 → 切丁，替代花生米的脆感\n"
+            "- 藕丁 80g（替花生）、花椒 1 小勺\n"
+            "- 玉米油 2 勺 —— 不用花生油\n"
+            "**做法**\n"
+            "1. 鸡丁腌 10 分钟后滑炒，合炒出锅。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
+
+    def test_negated_note_does_not_excuse_real_ingredient_in_same_section(self):
+        """豁免只针对「紧邻否定/替代标记」的那一次提及，同分节里的真下料照旧拦。"""
+        text = (
+            "**食材（2-3人份）**\n"
+            "- 藕丁 80g（替花生）\n"
+            "- 生抽、糖、花生碎 1 小把\n"
+            "**做法**\n"
+            "1. 合炒出锅。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
+
+    def test_enumerated_negation_line_across_compounds_does_not_retry(self):
+        """实测 E2：同一行「不用花生、花生碎、花生油、花生酱」是列举式否定。
+
+        旧口径逐词删除：先吃掉「不用花生」、再吃掉「碎」前面的「花生」，剩下的
+        「花生油/花生酱」反而丢了「不用」语境，被当真下料 —— 好答案被打回、最后
+        落成一句兜底。整行判定后，这一行整体不进审计，答案应放行。
+        """
+        text = (
+            "**食材（2-3人份）**\n"
+            "- 鸡胸肉 300g、黄瓜半根、胡萝卜半根\n"
+            "- 玉米油 2 勺\n"
+            "**做法**\n"
+            "1. 滑炒鸡丁后合炒出锅。\n"
+            "关键安全点：\n"
+            "- 不用花生、花生碎、花生油、花生酱。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+        self.assertEqual(result["verify_attempts"], 1)
+        self.assertNotIn("messages", result)
+
+    def test_real_allergen_ingredient_after_negation_line_still_retries(self):
+        """整行否定只豁免那一行；同一分节里另起一行的真下料照样拦。"""
+        text = (
+            "**食材（2-3人份）**\n"
+            "- 不用花生、花生碎、花生油、花生酱。\n"
+            "- 生抽、糖、花生碎 1 小把\n"
+            "**做法**\n"
+            "1. 合炒出锅。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=["花生"]),
+            patch("agent.graph._merged_conditions", return_value=[]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("花生", result["messages"][0].content)
+
     def test_allergen_exhaustion_blocks_instead_of_degrading(self):
         with patch("agent.graph._allergens_for_audit", return_value=["虾"]):
             result = agent_graph.verify_answer_node(

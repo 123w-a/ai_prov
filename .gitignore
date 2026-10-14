@@ -178,6 +178,20 @@ benchmarks/recall.latest.json
 *.rej
 *.tmp
 
+# 本地工具缓存与探针工作目录
+.firecrawl/
+.slidep/
+.vite/
+probe-*/
+.tmp/
+.tmp-test/
+.test-tmp/
+.test-tmp-memory/
+.pytest-local-tmp/
+.runtime-test-tmp/
+.tmp-live-probe/
+.tmpdir/
+
 # --------------------------------------------------------------------------- #
 # ⚠️ 目录重构后的运行数据路径（2026-09-23 补）
 # 起因：项目做了分层重构（agent/ domain/ infrastructure/ services/ storage/ scripts/），

@@ -9,6 +9,7 @@ import unittest
 from api.routes.service_route import (
     ServicePreviewRequest,
     _build_preview,
+    _find_recipe_matches,
     _split_inventory_text,
 )
 
@@ -53,6 +54,24 @@ class HomeChefPreviewTest(unittest.TestCase):
         self.assertEqual(data["voice_recognition_route"], "/api/transcribe")
         self.assertFalse(data["voice_to_service_integrated"])
         self.assertIn("/api/transcribe 已接入", data["voice_status"])
+
+
+class ReverseRecipeLookupTest(unittest.TestCase):
+    def test_matches_recipes_from_owned_ingredients(self):
+        data = _find_recipe_matches("西红柿、蛋、青菜")
+
+        self.assertEqual(data["owned"], ["西红柿", "蛋", "青菜"])
+        tomato_egg = next(
+            item for item in data["matches"] if item["recipe_name"] == "番茄炒蛋"
+        )
+        self.assertEqual(tomato_egg["matched_ingredients"], ["番茄", "鸡蛋"])
+        self.assertIn("食用油", tomato_egg["missing_ingredients"])
+
+    def test_empty_inventory_does_not_guess(self):
+        data = _find_recipe_matches("")
+
+        self.assertEqual(data["matches"], [])
+        self.assertIn("没有识别到", data["note"])
 
 
 if __name__ == "__main__":

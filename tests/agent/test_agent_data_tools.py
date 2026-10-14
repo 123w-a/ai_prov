@@ -9,6 +9,7 @@ from unittest.mock import patch
 import agent_tools
 from api.routes import fridge_route, reports_route
 from agent_tools import (
+    find_recipes_from_inventory,
     fridge_gap,
     healthy_remix,
     nearby_food,
@@ -23,7 +24,47 @@ class AgentDataToolsTest(unittest.TestCase):
         names = {t.name for t in tools}
 
         self.assertIn("query_fridge_inventory", names)
+        self.assertIn("find_recipes_from_inventory", names)
         self.assertIn("query_weekly_report", names)
+
+    def test_find_recipes_from_inventory_reports_matches_and_gaps(self):
+        payload = json.loads(
+            find_recipes_from_inventory.func("番茄、鸡蛋、青菜")
+        )
+
+        self.assertEqual(payload["owned"], ["番茄", "鸡蛋", "青菜"])
+        names = [item["recipe_name"] for item in payload["matches"]]
+        self.assertIn("番茄炒蛋", names)
+        tomato_egg = next(
+            item for item in payload["matches"] if item["recipe_name"] == "番茄炒蛋"
+        )
+        self.assertEqual(tomato_egg["matched_ingredients"], ["番茄", "鸡蛋"])
+        self.assertIn("食用油", tomato_egg["missing_ingredients"])
+        self.assertFalse(tomato_egg["ready_to_cook"])
+
+    def test_find_recipes_from_inventory_reads_saved_fridge_when_text_empty(self):
+        path = Path(__file__).with_name(".agent-fridge-reverse-test.json")
+        path.write_text(json.dumps({"items": ["番茄", "鸡蛋"]}, ensure_ascii=False), encoding="utf-8")
+        try:
+            with patch.object(fridge_route, "_FILE", path):
+                payload = json.loads(find_recipes_from_inventory.func())
+        finally:
+            path.unlink(missing_ok=True)
+
+        self.assertEqual(payload["owned"], ["番茄", "鸡蛋"])
+        self.assertTrue(any(item["recipe_name"] == "番茄炒蛋" for item in payload["matches"]))
+
+    def test_find_recipes_from_inventory_filters_allergens(self):
+        with patch.object(agent_tools._legacy, "_tool_allergens", return_value=["花生"]):
+            payload = json.loads(
+                find_recipes_from_inventory.func("鸡胸肉、花生米、干辣椒")
+            )
+
+        self.assertTrue(payload["allergen_filter"]["applied"])
+        self.assertNotIn(
+            "宫保鸡丁",
+            [item["recipe_name"] for item in payload["matches"]],
+        )
 
     def test_fridge_tool_reports_missing_file_honestly(self):
         with patch.object(fridge_route, "_FILE", Path(__file__).with_name(".no-fridge.json")):

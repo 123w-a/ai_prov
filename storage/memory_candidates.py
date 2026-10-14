@@ -24,6 +24,20 @@ _SOFT_WORDS = ("咬不动", "咀嚼困难", "软食", "硬的")
 _ENERGY_WORDS = ("减重", "减肥", "控制体重")
 _SPICY_WORDS = ("辣", "辛辣")
 _CHRONIC_WORDS = ("高血压", "糖尿病", "高血脂", "高脂血症", "痛风", "高尿酸", "肾病", "肥胖", "孕期", "怀孕")
+# 医嘱式「控制强度」→ restrict 候选（例：医生要求严格控盐）。
+# 与 agent/graph.py 的 _INTENSITY_MARKERS 同源：那边判「说没说强度」（免重复追问），
+# 这边把「说了什么强度」落成可确认的 restrict 候选，经 confirm 写入 profile.restricts，
+# 下一轮门控读到即不再追同一问题 —— 这是充分性追问的写回闭环入口（A1）。
+_MEDICAL_ADVICE_MARKERS = ("医生", "医嘱", "遵医嘱", "大夫", "复查")
+_STRICT_CONTROL_MARKERS = ("严格控", "严格控制", "严格限", "严格忌", "必须控", "必须避免", "要忌口")
+_CONTROL_VERB_MARKERS = ("控", "限", "少", "低", "忌", "避免", "减", "严")
+_CONTROL_TARGETS = (
+    (("盐", "钠"), "严格控盐"),
+    (("嘌呤", "尿酸"), "严格限嘌呤"),
+    (("脂", "油"), "严格控脂"),
+    (("糖",), "严格控糖"),
+    (("蛋白",), "限制蛋白"),
+)
 _ALLERGEN_WORDS = (
     "花生", "坚果", "核桃", "腰果", "杏仁", "虾", "蟹", "海鲜", "鱼", "蛋",
     "鸡蛋", "牛奶", "奶制品", "乳制品", "大豆", "豆制品", "小麦", "麸质",
@@ -170,6 +184,18 @@ def extract_candidates(
             "不吃辣",
             "hard" if medical_restrict else "soft",
         ))
+
+    # 医嘱式控制强度：「医生要求严格控盐」类表达落成 restrict 候选（hard）。
+    # 触发条件三者同现：① 医嘱/严格语境 ② 控制动词 ③ 控制对象；
+    # 「医生说我有糖尿病」（纯诊断）与「平时注意一下就行」（强度=不严格）都不触发。
+    if (
+        any(marker in text for marker in _MEDICAL_ADVICE_MARKERS)
+        or any(marker in text for marker in _STRICT_CONTROL_MARKERS)
+    ) and any(verb in text for verb in _CONTROL_VERB_MARKERS):
+        for targets, label in _CONTROL_TARGETS:
+            if any(target in text for target in targets):
+                if not any(item[1] == label for item in found):
+                    found.append(("restrict", label, "hard"))
 
     for word in sorted(_ALLERGEN_WORDS, key=len, reverse=True):
         if word not in text or word == "辣":

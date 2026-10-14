@@ -264,6 +264,54 @@ def query_fridge_inventory() -> str:
 
 
 @tool
+def find_recipes_from_inventory(inventory_text: str = "") -> str:
+    """根据已有冰箱食材反查能做哪些菜。
+
+    当用户说“这些食材能做什么”“冰箱里有什么菜可以做”时调用。
+    inventory_text 传用户本轮明确说出的食材；为空时读取当前记录的冰箱库存。
+    返回候选菜名、已匹配食材和仍缺少的食材。这里只做确定性匹配，不直接生成菜谱卡片。
+    """
+    import json
+
+    from api.routes.service_route import _find_recipe_matches
+    from api.routes.fridge_route import get_fridge
+
+    source = inventory_text.strip()
+    if not source:
+        items = get_fridge().get("items", [])
+        source = "、".join(
+            item.get("name", "") if isinstance(item, dict) else str(item)
+            for item in items
+        )
+    payload = _find_recipe_matches(source)
+    allergens = _legacy._tool_allergens()
+    if allergens and payload["matches"]:
+        kept = []
+        blocked = []
+        for match in payload["matches"]:
+            required = "、".join(
+                match["matched_ingredients"] + match["missing_ingredients"]
+            )
+            hits = audit_allergens(
+                f'{match["recipe_name"]} {required}',
+                allergens,
+                use_optional=True,
+            )
+            if hits:
+                blocked.extend(hits)
+            else:
+                kept.append(match)
+        payload["matches"] = kept
+        if blocked:
+            payload["allergen_filter"] = {
+                "applied": True,
+                "removed": len(blocked),
+                "message": _legacy._allergen_filter_note(blocked),
+            }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@tool
 def query_weekly_report() -> str:
     """汇总用户本周饮食记录：吃了哪些菜、钠/糖/脂肪风险趋势、以及小膳建议。当用户问『我这周吃得怎么样』『钠/糖/脂肪趋势如何』或想回顾本周饮食时调用。无参数。"""
     import json
@@ -284,11 +332,22 @@ def query_weekly_report() -> str:
     }, ensure_ascii=False)
 
 
-tools = [web_search, get_file, nearby_food, nutrition_kb_search, healthy_remix, fridge_gap, query_fridge_inventory, query_weekly_report]
+tools = [
+    web_search,
+    get_file,
+    nearby_food,
+    nutrition_kb_search,
+    healthy_remix,
+    fridge_gap,
+    query_fridge_inventory,
+    find_recipes_from_inventory,
+    query_weekly_report,
+]
 
 __all__ = [
     "find_recipe_image",
     "fridge_gap",
+    "find_recipes_from_inventory",
     "get_file",
     "healthy_remix",
     "nearby_food",

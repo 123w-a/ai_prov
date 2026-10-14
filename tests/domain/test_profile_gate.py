@@ -70,7 +70,7 @@ class SelfDeclaredTest(unittest.TestCase):
         self.assertTrue(result["profile_ready"])
         self.assertEqual(result["profile_missing"], [])
 
-    def test_explicit_blood_sugar_variant_does_not_repeat_question(self):
+    def test_explicit_blood_sugar_variant_requires_intensity(self):
         state = {
             "messages": [HumanMessage(content="我血糖有点高，晚餐吃什么？")],
             "profile_ready": True,
@@ -78,8 +78,8 @@ class SelfDeclaredTest(unittest.TestCase):
         }
         with patch("agent.graph._active_profile_conditions", return_value=[]):
             result = profile_gate_node(state)
-        self.assertTrue(result["profile_ready"])
-        self.assertEqual(result["profile_missing"], [])
+        self.assertFalse(result["profile_ready"])
+        self.assertIn("控制强度", result["profile_missing"][0])
 
     def test_answer_after_previous_gate_question_does_not_repeat(self):
         state = {
@@ -107,12 +107,12 @@ class SelfDeclaredTest(unittest.TestCase):
         self.assertFalse(result["profile_ready"])
         self.assertIn("具体症状", result["profile_missing"][0])
 
-    def test_specific_discomfort_can_pass_existing_gate(self):
+    def test_specific_discomfort_requires_severity(self):
         result = profile_gate_node({
             "messages": [HumanMessage(content="我胃不舒服，吃啥？")],
         })
-        self.assertTrue(result["profile_ready"])
-        self.assertEqual(result["profile_missing"], [])
+        self.assertFalse(result["profile_ready"])
+        self.assertIn("持续时间", result["profile_missing"][0])
 
     def test_ambiguous_safety_question_requires_food_target(self):
         state = {

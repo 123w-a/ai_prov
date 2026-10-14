@@ -216,5 +216,73 @@ class MemoryCandidateTest(unittest.TestCase):
         self.assertEqual(memory_candidates.get_pending(), [])
 
 
+class MedicalControlIntensityTest(unittest.TestCase):
+    """A1：医嘱式控制强度 → restrict 候选（充分性追问的写回闭环入口）。
+
+    「医生要求严格控盐」这类回答要落成可确认的 restrict 候选（hard），
+    用户确认后写入 profile.restricts；纯诊断（医生说我有糖尿病）与
+    弱强度（平时注意一下就行）都不得触发。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data_dir = Path(self.tmp.name)
+        self.profile_path = self.data_dir / "profile.json"
+        self.candidates_path = self.data_dir / "memory_candidates.json"
+        self.patches = [
+            patch.object(pr, "_DATA_DIR", self.data_dir),
+            patch.object(pr, "_PROFILE_PATH", self.profile_path),
+            patch.object(memory_candidates, "_DATA_DIR", self.data_dir),
+            patch.object(memory_candidates, "_CANDIDATES_PATH", self.candidates_path),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _restricts(self, text, members=None, active_member_id=""):
+        got = memory_candidates.extract_candidates(
+            text, members or [], active_member_id=active_member_id
+        )
+        return [c for c in got if c["dimension"] == "restrict"]
+
+    def test_medical_strict_salt_is_hard_restrict(self):
+        restricts = self._restricts("医生要求严格控盐，午饭吃什么")
+        self.assertEqual(len(restricts), 1)
+        self.assertEqual(restricts[0]["value"], "严格控盐")
+        self.assertEqual(restricts[0]["severity"], "hard")
+
+    def test_follow_doctor_low_salt_variant(self):
+        restricts = self._restricts("遵医嘱低盐饮食")
+        self.assertEqual([c["value"] for c in restricts], ["严格控盐"])
+
+    def test_multi_target_creates_one_candidate_each(self):
+        restricts = self._restricts("医生说少油少盐")
+        self.assertEqual({c["value"] for c in restricts}, {"严格控盐", "严格控脂"})
+
+    def test_plain_diagnosis_does_not_create_restrict(self):
+        self.assertEqual(self._restricts("医生说我有糖尿病"), [])
+
+    def test_mild_advice_does_not_create_restrict(self):
+        self.assertEqual(self._restricts("医生让我平时注意一下就行"), [])
+
+    def test_confirmed_restrict_lands_in_profile_restricts(self):
+        family = {
+            "version": 2,
+            "active_id": "me",
+            "members": [{"id": "me", "name": "我", "profile": {}}],
+        }
+        self.profile_path.write_text(json.dumps(family, ensure_ascii=False), encoding="utf-8")
+        candidates = memory_candidates.extract_candidates(
+            "医生要求严格控盐，午饭吃什么", family["members"], active_member_id="me"
+        )
+        memory_candidates.remember_candidates(candidates)
+        restrict = next(c for c in candidates if c["dimension"] == "restrict")
+        confirmed = memory_candidates.confirm(restrict["id"])
+        self.assertEqual(confirmed["status"], "confirmed")
+        saved = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        self.assertIn("严格控盐", saved["members"][0]["profile"]["restricts"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
