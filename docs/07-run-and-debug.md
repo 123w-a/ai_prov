@@ -1,10 +1,23 @@
 # 启动与排障
 
+下面所有命令都在**仓库根目录**执行，路径为相对路径，不写死盘符。
+
+## 准备（首次）
+
+```powershell
+uv sync                                   # 按 uv.lock 装 Python 依赖（无 uv 则 python -m venv .venv; .venv\Scripts\pip install -e .）
+Copy-Item .env.example .env               # 仓库根：TAVILY_API_KEY 必填，否则后端 import 阶段就报错
+Copy-Item frontend\web\.env.example frontend\web\.env
+cd frontend\web; npm install; cd ..\..
+```
+
 ## 启动后端
 
 ```powershell
-D:\ai_prvo\.venv\Scripts\python.exe run.py
+.venv\Scripts\python.exe run.py
 ```
+
+首次冷启动要预热知识库，实测约 74 秒；`start.ps1` 的就绪窗口因此设为 180 秒。
 
 默认地址：
 
@@ -15,8 +28,7 @@ D:\ai_prvo\.venv\Scripts\python.exe run.py
 ## 启动前端
 
 ```powershell
-cd D:\ai_prvo\frontend\web
-npm install
+cd frontend\web
 npm run dev
 ```
 
@@ -25,13 +37,13 @@ npm run dev
 ## 测试和构建
 
 ```powershell
-cd D:\ai_prvo\frontend\web
+cd frontend\web
 npm run build
 ```
 
 ```powershell
-cd D:\ai_prvo
-D:\ai_prvo\.venv\Scripts\python.exe -m unittest discover tests -v
+# 回到仓库根后执行
+.venv\Scripts\python.exe -m unittest discover tests -v
 ```
 
 项目使用标准库 `unittest`，不是 pytest。
@@ -66,3 +78,6 @@ D:\ai_prvo\.venv\Scripts\python.exe -m unittest discover tests -v
 ### 首次提问很慢
 
 RAG 可能正在加载 embedding 或 reranker。先看后端 `[warmup]` 日志和健康接口，不要把冷启动误判为 SSE 截断。
+
+
+

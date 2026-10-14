@@ -32,13 +32,16 @@ frontend/web
 
 ## 快速开始
 
-1. 启动后端（仓库根目录）：`D:\ai_prvo\.venv\Scripts\python.exe run.py`，后端监听 `http://127.0.0.1:8010`。`run.py` 仅会回收确认属于本项目的旧后端进程。
-2. 首次运行配置前端环境变量：`Copy-Item .env.example .env`。`VITE_API_BASE` 留空时走 Vite 代理；使用附近餐厅地图时，再填写 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
-3. 安装前端依赖：`npm install`
-4. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
-5. 生产构建：`npm run build`
-6. 最小回归：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest tests/storage/test_fridge_shopping.py tests/api/test_fridge_http.py -v`（在仓库根目录运行）。
-   本仓库用标准库 unittest（非 pytest），请勿用 `python -m pytest`。全量跑可用：`D:\ai_prvo\.venv\Scripts\python.exe -m unittest discover tests -v`。
+以下命令若未特别说明，都在**仓库根目录**执行（相对路径，不写死盘符）。
+
+1. 在仓库根配置 `.env`（**`TAVILY_API_KEY` 必填，否则后端 import 阶段就报错**）：`Copy-Item .env.example .env`
+2. 启动后端（仓库根目录）：`.venv\Scripts\python.exe run.py`，后端监听 `http://127.0.0.1:8010`。`run.py` 仅会回收确认属于本项目的旧后端进程。首次冷启动预热知识库约 74 秒。
+3. 配置前端环境变量（本目录）：`Copy-Item .env.example .env`。`VITE_API_BASE` 留空时走 Vite 代理；使用附近餐厅地图时，再填写 `VITE_AMAP_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`。
+4. 安装前端依赖：`npm install`
+5. 启动开发服务器：`npm run dev`，固定访问 `http://localhost:5178`。Vite 已忽略编辑器生成的 `*.tmpdir` 临时目录，避免文件监听异常退出。
+6. 生产构建：`npm run build`
+7. 最小回归（在仓库根目录运行）：`.venv\Scripts\python.exe -m unittest tests/storage/test_fridge_shopping.py tests/api/test_fridge_http.py -v`。
+   本仓库用标准库 unittest（非 pytest），请勿用 `python -m pytest`。全量跑可用：`.venv\Scripts\python.exe -m unittest discover tests -v`。
 
 开发时应分别确认前端 `http://localhost:5178/` 和后端 `http://127.0.0.1:8010/docs` 均返回 `200`。
 
@@ -67,3 +70,4 @@ VITE_AMAP_SECURITY_CODE=对应的安全密钥
 
 > 后端启动时需要项目现有模型/搜索服务所要求的环境变量，例如
 > `TAVILY_API_KEY`。前端即使构建成功，缺少后端密钥时也无法完成真实 AI 对话。
+
