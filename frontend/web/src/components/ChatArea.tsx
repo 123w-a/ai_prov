@@ -4,6 +4,7 @@ import { fetchNearby, resolveLocation, sendMessageFeedback } from '../api/client
 import type { MemoryCandidate } from '../api/client'
 import type { ChatMessage, DecisionMode, NearbyResult, ResolvedLocation } from '../types'
 import { Icon } from './Icon'
+import { FridgePhotoButton } from './FridgePhotoButton'
 import html2canvas from 'html2canvas'
 import { starMessage as starMessageApi, addDislike, fetchTasteSuggestion, addTasteNote } from '../api/client'
 import type { TasteSuggestion } from '../api/client'
@@ -793,7 +794,11 @@ export function ChatArea({
                     {message.imageUrl && (
                       <img className="message-image" src={message.imageUrl} alt="本轮上传的食材图片" />
                     )}
-                    {message.text && (message.streaming || message.imagePending || !message.answer || message.error) && (
+                    {/* 候选轮（第一阶段编号清单）后端刻意不推 answer，但落库里有；
+                        恢复历史时 answer 非空，而 RecipeCard 在 recipes 为空时 return null
+                        —— 两条叠起来会让这一轮整条空白。判据与 RecipeCard 的
+                        「画不出卡片」条件保持一致：画不出卡片就仍显示正文。 */}
+                    {message.text && (message.streaming || message.imagePending || !message.answer || (message.answer.recipes ?? []).length === 0 || message.error) && (
                       <div className="message-text">{renderRichText(message.text)}</div>
                     )}
                     {message.answer && <RecipeCard answer={message.answer} />}
@@ -1162,6 +1167,18 @@ export function ChatArea({
                 <Icon name="mic" size={18} />
                 {voiceState === 'recording' ? '结束录音' : voiceState === 'transcribing' ? '识别中' : '语音'}
               </button>
+              {/* 独立的一枚：走 /api/fridge/vision 只取食材草稿，与上面走 /api/chat 的
+                  「图片」互不影响。排在末尾是为了不打乱既有按钮的位置。
+                  它只把草稿交给 setText，没有任何通往 submit() 的路径——不自动发送、
+                  更不写库存（后端契约 draft:true，见 fridge_route.py:72-81）。 */}
+              <FridgePhotoButton
+                disabled={sending}
+                onDraft={(draft) => {
+                  setText((current) => (current.trim() ? `${current.trim()} ${draft}` : draft))
+                  textareaRef.current?.focus()
+                }}
+                onNotice={setNotice}
+              />
             </div>
 
             <div className="send-zone">

@@ -1,0 +1,524 @@
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 2026-10-11 第二轮：照 fav-expect-v4.png（1536×1024，S = 1366/1536 =
+ * 0.8893229166666666）逐元素复刻。本节全部数值来自墨迹读数工具
+ * （.tmp-fav/bandprobe.cjs 局部众数背景 + 行/列投影；rowprobe.cjs；
+ * scanline.cjs 逐列前景计数 + 中位色；fav-assets.cjs zoom 逐倍放大核对），
+ * **没有一项是目测**。稿 bbox → CSS px 的换算在每条注释里给出。
+ *
+ * 后置覆盖的写法：本片前半段（2026-10-11 第一轮）的规则一律保留不动，
+ * 本轮只在这里重述需要改的那些选择器。同选择器、同特异性时后写的胜出，
+ * 所以不必去改前半段的字句——那样做只会让"哪里是当前口径"更难找。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 页头 ───────────────────────────────────────────────────────────────
+ * 稿实测：星形 bbox x304..337 / y104..136（34×33 稿px → 30.23×29.35 CSS），
+ * 左缘 270.35、顶缘 92.49，左缘与内容区左边界（稿 x263 → 233.9）差 36.5 稿px
+ * → 含星形后统一左内边距 = 36.5 × S = 32.5px。
+ * 标题「收藏」两字墨迹 x358..455 / y95..137：与星形右缘（337）间 21 稿px
+ * → 18.7 CSS；字面高 42 稿px → 37.4 CSS（取 34px，见下）。
+ *
+ * ⚠ 原来的 .fv-h::before 是一条 5px 砖红竖条（给"门牌"做标记）。用户裁定：
+ *   收藏页这枚换成稿上的大号砖红星形。竖条删除。**只删这一处**：
+ *   .pf-h::before（档案房）、.sv-h::before（服务房）与周报房同款都在别人手里，
+ *   本次一字未动。
+ * ⚠ 星形是图形 ⇒ 必须是文件或 data-URI（项目纪律）。用切好的 PNG 文件。 */
+.fv-h {
+  position: relative;
+  /* ── 2026-10-11 第七轮：星形占位 49 → 47.9，并按稿重新定义基准 ──────────
+   * 本轮起 `.fv` 自己不再给水平内距（统一层给 36.5），所以 .fv-h 的
+   * padding box 左缘 = 卡片列左缘 = 270.4。稿实测（fav-expect-v4）：
+   *   星形 x304..337 → CSS 270.4..299.7；标题墨迹 x358..455 → CSS 318.4 起。
+   * 于是星形占位 = 标题墨迹左缘 − 星形左缘 = 318.4 − 270.4 = 48.0，
+   * 扣掉首字字形左边距（约 0.1）取 47.9。改前是 49（对应旧基准 271.2），
+   * 差 1.1px 落在字形里，不改变星形与文字的视觉关系。 */
+  padding-left: 47.9px;
+  min-height: 30.5px; /* 星形 29.35 的等高，保证空态下星与字仍同一基线带 */
+  display: flex;
+  align-items: center;
+  font-family: var(--serif);
+  /* 稿实测字面高 37.4 CSS；本项目 h2 既有的字号上限（周报/服务房）是 32，
+     这里取 32 与四房一致——把 37.4 直接落下去会让收藏页的门牌比其它三间房
+     显眼一档，那是"照稿"变成"照一页稿"。差 5.4px 记在报告的逐条里。 */
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink);
+  margin: 0 0 6px;
+  -webkit-text-stroke: var(--stroke-h2);
+}
+
+/* 星形：稿 bbox x304..337 / y104..136，左缘 270.35 CSS、顶缘 92.49 CSS。
+   相对 .fv-h 的 padding box 摆放：left 0，垂直与标题字面居中。 */
+.fv-h::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 30.23px;
+  height: 29.35px;
+  margin-top: -14.68px; /* 高度的一半 */
+  background: url('../assets/hero/fv-title-star.png') no-repeat center / 100% 100%;
+}
+
+/* 副标题行：稿上「小图标 + 点一条…」。小图标 bbox x305..333 / y156..182
+   （28×26 稿px → 24.9×23.1 CSS），左缘 271.2 CSS（与星形左缘 270.35 差 0.85，
+   即同一列）；文字左缘稿 357 → 317.5 CSS，与小图标右缘（296.1）间 21.4 CSS。
+   ⚠ 这一行**是稿上的**（不是既有文案的装饰）：稿上副标题前确实压着这枚图标，
+   与原项目里"数据区没有就不占位"的纪律不冲突——它是排印不是数据。 */
+.fv-sub {
+  display: flex;
+  align-items: center;
+  gap: 21.4px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0 0 8px;
+}
+
+/* 副标题前的双碗小图标。尺寸按切图 1:1（切图 28×19 px）：这里**不写稿测的
+ * 24.9×23.1** 是因为那个数字是照「稿上两块碗的墨迹带」量的（x305..333 宽
+ * 28、y156..182 高 26，带里还含碗口高光），而实际切下来的点阵是 28×19。
+ * 按 24.9×23.1 摆会把 19 高的点阵纵向拉伸 1.2 倍，碗变成竖长的。 */
+.fv-sub-ico {
+  flex: none;
+  width: 24.9px; /* 切图 28px */
+  height: 16.9px; /* 切图 19px */
+  background: url('../assets/hero/fv-sub-icon.png') no-repeat center / 100% 100%;
+}
+
+/* ── 工具行 ─────────────────────────────────────────────────────────────
+ * 稿实测（列投影 + 逐列前景计数）：
+ *   「全部」胶囊   x304..368 / y215..255   64×41 稿px → 56.9×36.5 CSS
+ *                 （实心砖红，文字白色；底色实测 rgb(188,116,60)）
+ *   未选胶囊      「早餐」底 x397..433     36×30 稿px → 32.0×26.7 CSS
+ *                 （浅米底、无描边；底色实测 rgb(246,237,225)）
+ *   胶囊间距      28 稿px → 24.9 CSS；未选胶囊文字高 18 稿px → 16 CSS
+ *   搜索框        x889..1168 / y218..265  279×47 稿px → 248.1×41.8 CSS
+ *                 左放大镜 x908..925 / y227..244（18×18 稿px → 16×16 CSS），
+ *                 距框左 19 稿px → 16.9 CSS；圆角为满高的一半（胶囊）。
+ *   「全部」左缘 x304 → 270.4 CSS，与内容区左边界 233.9 差 36.5 稿px；
+ *   但主区文字（卡片内文字、菜名）的左缘是稿 x316 → 281.0，
+ *   即工具行比卡片文字**左出 10.6 CSS**。这是稿上的实际错位，照做。 */
+.fv-pill {
+  font: inherit;
+  font-size: 12.5px;
+  height: 36.5px; /* 稿 41 稿px */
+  padding: 0 14px; /* 「全部」56.9 - 两字(25) = 31.9 → 左右各 16；未选 32 - 两字(25) = 7 → 各 3.5 */
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid transparent; /* 稿上未选胶囊**没有描边**，只是浅底 */
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.fv-pill[data-on='true'] {
+  color: var(--surface);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.fv-pills {
+  gap: 24.9px; /* 稿 28 稿px */
+}
+
+/* 搜索框：稿 248.1×41.8，右侧与内容区右边界（稿 x1168 → 1038.7）齐。 */
+.fv-search-wrap {
+  position: relative;
+  flex: 0 1 248.1px;
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+}
+
+.fv-search-ico {
+  position: absolute;
+  left: 16.9px;
+  width: 16px;
+  height: 16px;
+  background: url('../assets/hero/fv-search-glass.png') no-repeat center / 100% 100%;
+  pointer-events: none;
+}
+
+.fv-search {
+  width: 100%;
+  max-width: none;
+  height: 41.8px; /* 稿 47 稿px */
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 16px 0 41.9px; /* 16.9 + 图标 16 + 间距 9 */
+}
+
+/* ── 卡片网格 ───────────────────────────────────────────────────────────
+ * 稿实测（逐列 R 通道跳变，卡底 rgb(253,250,243) vs 纸底 rgb(248,242,232)）：
+ *   卡1 x301..493   卡2 x515..708   卡3 x728..922   卡4 x941..1134
+ *   → 卡宽 193 稿px = 171.6 CSS；列间距 22 稿px = 19.6 CSS
+ *   卡区块 x301..1134 = 833 稿px = 740.9 CSS
+ *   卡顶 y302、卡底 y601 → 卡高 300 稿px = 266.8 CSS
+ * 行剖面另得卡内纵向（CSS）：配图底 412.6、菜名 413.5..428.7、胶囊 443.8..458.9、
+ *   发丝线 477.6、元信息 y490.9 / 510.5。 */
+.fv-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 19.6px; /* 稿 22 稿px */
+  margin: var(--s2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 卡片最小高度按稿：266.8 CSS 里含配图 119.2 + 文字块 + 动作行（稿上没有动作行，
+   那是既有功能）。给 min-height 而不是 height：动作行占位不该把配图压扁。 */
+.fv-item {
+  min-height: 266.8px;
+}
+
+/* ── 卡片：配图 ─────────────────────────────────────────────────────────
+ * 稿实测：配图 x304..491 / y315..448 → 188×134 稿px = 167.2×119.2 CSS，
+ * 比例 188/134 = 1.403 ≈ 4:3（1.333）——是接近 4:3 的横版，不是原来的 16:10。
+ * 卡内边距：左 304-301 = 3、右 493-491 = 2、上 315-302 = 13、下 448 与卡底 601
+ * 之间是文字块。（本轮改动：原来配图是**满宽出血**（width 100%、radius 0、
+ * 卡 padding 0），稿上是内嵌的圆角图；这是"没严格照稿"里最显眼的一处。） */
+.fv-item {
+  padding: 0; /* 卡自身不留白，留白由 .fv-open 的内边距给（配图 3/2、文字 12.7） */
+  overflow: hidden;
+}
+
+.fv-thumb {
+  display: block;
+  width: calc(100% - 5px); /* 稿：左 3 + 右 2 = 5 稿px → 4.4 CSS，用 calc 表达左右不对称的合计 */
+  margin: 11.6px 1.8px 0 2.7px; /* 上 13 稿px → 11.6；左右 3/2 稿px → 2.7/1.8 */
+  aspect-ratio: 188 / 134; /* 稿比例 */
+  height: auto;
+  object-fit: cover;
+  border-radius: 9px; /* 稿上配图圆角在 10 倍放大下跨约 10 稿px → 8.9 */
+}
+
+/* ── 卡片角叶 ───────────────────────────────────────────────────────────
+ * 稿上角叶压在**配图右上角**（不是卡片右上角）：7 倍放大核对，叶片主体落在
+ * 配图右缘以内、茎伸出配图右缘约 8 稿px，顶端距配图顶约 6 稿px。
+ * 切片沿用项目既有的同一母题 asset（card-leaf-2.png，同稿切、已在用）——
+ * 本轮实测过"新切这枚会连配图照片一起切进来"（窗口内超过一半是菜品像素），
+ * 所以用既有素材而不用照片快照。
+ *
+ * ⚠ 位置从"卡片右上角"改成"配图右上角"：改前 top 10.7 / right 3.6 是相对卡片，
+ *   而配图现在从 y11.6 起、右缘在内边距 1.8 处，所以角叶要跟着配图走。
+ *   让位：改前文字区统一让 56px（给压在文字上的角叶），本轮角叶整枚落在配图内
+ *   （配图底 11.6+119.2 = 130.8，角叶底 11.6+39.1 = 50.7 < 130.8），够不到文字，
+ *   故让位收敛为 0——文字区回到稿的 12.7px 内边距。 */
+.fv-item::after {
+  top: 14px; /* 配图顶 11.6 + 距配图顶 2.4（稿 6 稿px 里叶片实际起笔处） */
+  right: 5.4px; /* 配图右缘在卡片内 1.8 处，茎再内收约 3.6 */
+  width: 42.7px;
+  height: 39.1px;
+}
+
+.fv-main,
+.fv-go {
+  padding-right: 12.7px; /* 稿内边距 14 稿px → 12.45，与文字左缘 12.7 取齐 */
+  padding-left: 12.7px;
+}
+
+/* ── 卡片：文字块 ───────────────────────────────────────────────────────
+ * 稿实测：菜名墨迹 x316..458 / y465..482 → 字面高 18 稿px = 16.0 CSS。
+ * 原字号 17px 与 16.0 相去 1px，保留 17px（四房菜名字号一致更重要），
+ * 行高按稿到 16 CSS 会切字，故行高 1.25 = 21.25（稿上行距 24 稿px → 21.3，吻合）。 */
+.fv-main {
+  margin-top: 9.8px; /* 配图底 → 菜名顶：11 稿px（既有测量，保留） */
+}
+
+.fv-dish {
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.25; /* 稿上行距 24 稿px → 21.3 CSS */
+  color: var(--ink);
+}
+
+/* ── 卡片：元信息（收藏于 / 这顿 / 来自） ───────────────────────────────
+ * 稿实测：发丝线 y537..538（2 稿px → 1 CSS），x313..475（卡内左右各留 12/18 稿px）；
+ * 首行（书签 + 收藏于 + 日期）y552..567，次行（来自：X）y574..586。
+ * 书签图标 x317..329 / y552..567 → 13×16 稿px = 11.6×14.2 CSS，左缘 281.9 CSS
+ * （= 文字左缘 12.7 + 卡左 270.4，与菜名左缘同一列）。 */
+.fv-meta {
+  margin: 16.9px 12.7px 0;
+  padding-top: 10.7px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 22%, transparent);
+  gap: 3.6px;
+}
+
+/* 「收藏于 待补」一行：书签图标 + 文字。 */
+.fv-saved {
+  display: flex;
+  align-items: center;
+  gap: 8.3px; /* 稿：书签右缘 329 → 文字左缘 338 = 9 稿px → 8.0 */
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  line-height: 1.28;
+  color: var(--ink-soft); /* 稿上这行是深棕（比"来自"行深一档） */
+}
+
+.fv-bookmark {
+  flex: none;
+  width: 11.6px;
+  height: 14.2px;
+  background: url('../assets/hero/fv-bookmark.png') no-repeat center / 100% 100%;
+}
+
+/* 「来自：X」：稿上这行比上一行淡。措辞按稿是「来自：X」，
+   原实现写的是「来自「X」」——本轮按稿改。 */
+.fv-meta .fv-from {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* 「这顿 · MM-DD」是真实的一轮时间（稿上没有这一行，是后端有、稿缺的真实数据）。
+   保留但排在"收藏于"之后、"来自"之前，字号与同段一致。 */
+.fv-meta .fv-turn {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* ── 页底：细横线 + 中央花章 ─────────────────────────────────────────────
+ * 稿实测：细横线 y961..962（2 稿px → 1 CSS），从内容区左边界起贯穿到右栏右缘；
+ * 中央花章约 32×27 稿px，压在线上、取内容区中点（稿 x904 → 803.9 CSS）。
+ * 花章用项目既有语汇 --leaf-seal（tokens.css 里的四瓣花 data-URI；周报房
+ * panels.css 的 .wk::after 就是"左右细横线 + 中央花章"同一套），不新切图。
+ *
+ * ⚠ 稿的页头下方（y187..201）我也扫过：那里**只有极淡的纸纹**（前景峰 9/62），
+ *   没有任何横线或花章。所以本页只做页底这一条，不做页头那条——
+ *   上一轮报告里的"页头细横线+中央花章"是不存在的元素。 */
+.fv-footline {
+  margin-top: 26px;
+  height: 18px;
+  background:
+    linear-gradient(var(--line-strong), var(--line-strong)) no-repeat left center / calc(50% - 18px) 1px,
+    linear-gradient(var(--line-strong), var(--line-strong)) no-repeat right center / calc(50% - 18px) 1px,
+    var(--leaf-seal) no-repeat center / 18px 18px;
+}
+
+/* 与稿差异的如实说明（不是装饰，也不是数据；放在页底、字号最小）。 */
+.fv-caveat {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--ink-faint);
+}
+
+/* ── 右栏 ───────────────────────────────────────────────────────────────
+ * 稿实测：右栏卡 x1202..1512 → 276 CSS 宽；卡1 y207..519、卡2 y539..779、
+ * 卡3 y783..1024+（稿到这里截断）；卡间距 20 稿px → 17.8 CSS。
+ *   卡头图标 56×41 稿px（卡1）/ 57×25（卡2 圈叉）/ 57×27（卡3 方盒）
+ *     位 x1214..1250 → 左内边距 (1214-1202)×S = 10.7 CSS
+ *   卡头文字（按成员推荐/共同忌口/冰箱现有食材）字号按墨迹高 17.8 CSS → 13.5px
+ *   成员块：头像圆 x1214..1234 / y242..268（20×26 稿px，圆 26.7 CSS）
+ *           姓名与条件小签同排；数字行 y283.7；进度槽 y264 高 12.4
+ *   冰箱行：图标 54×25 稿px 位 x1212..1246，行距 50 稿px → 44.5 CSS */
+.fv-rail-card {
+  padding: 10.7px 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+}
+
+.fv-rail {
+  gap: 17.8px; /* 稿 20 稿px */
+}
+
+/* 卡头：图标 + 文字。图标是切好的 PNG（三枚不同）。 */
+.fv-rail-h {
+  display: flex;
+  align-items: center;
+  gap: 9.8px; /* 稿：图标右缘 1250 → 文字左缘 1261 ≈ 11 稿px */
+  margin: 0 0 10px;
+  font-family: var(--serif);
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+/* 卡头图标。尺寸 = 切图**原样 1:1**，不缩放：切图窗口就是按稿上图形的墨迹
+ * 边界取的（列段实测图形 x1192..1225 / x1192..1214 / x1196..1218，文字都在
+ * x1242 之后），所以切图尺寸本身就是它在稿上的点阵大小。写死别的数字都会
+ * 让图形变形——之前 49.8×36.4 是把「文字也切进来的 56×41 窗口」硬压成
+ * 卡头高度，圈叉和方盒被压扁成看不出形状。 */
+.fv-rail-ico {
+  flex: none;
+  background: no-repeat center / 100% 100%;
+}
+
+.fv-rail-ico[data-ico='members'] {
+  width: 30.24px; /* 切图 34px 宽 */
+  height: 30.24px; /* 34px 高，正方形 */
+  background-image: url('../assets/hero/fv-rail-icon-1.png');
+}
+
+.fv-rail-ico[data-ico='avoid'] {
+  width: 20.45px; /* 切图 23px */
+  height: 22.23px; /* 25px */
+  background-image: url('../assets/hero/fv-rail-icon-2.png');
+}
+
+.fv-rail-ico[data-ico='fridge'] {
+  width: 22.23px; /* 切图 25px */
+  height: 23.12px; /* 26px */
+  background-image: url('../assets/hero/fv-rail-icon-3.png');
+}
+
+/* ── 成员块 ─────────────────────────────────────────────────────────────
+ * 稿上「我（增肌）/ 19岁·176cm·63kg / [进度槽] / 高蛋白·助力增肌」四行。
+ * 条件（增肌/孕期）与数字（岁/身高/体重）都是 familyRows 的真实值；
+ * 进度槽见 MemberBlock 的注释——**不填值**。 */
+.fv-rail-list {
+  gap: 0;
+}
+
+.fv-mem + .fv-mem {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.fv-mem-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fv-mem-avatar {
+  flex: none;
+  width: 26.7px; /* 稿 30 稿px */
+  height: 26.7px;
+  background: url('../assets/hero/fv-mem-avatar.png') no-repeat center / 100% 100%;
+}
+
+.fv-mem-name {
+  font-family: var(--serif);
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+/* 条件小签（孕期 / 增肌）：稿上是浅米底的小胶囊，字号比正文小一档。 */
+.fv-mem-tag {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  border-radius: 4.4px;
+}
+
+.fv-mem-digits {
+  margin: 6px 0 0 34.7px; /* 与姓名左缘对齐：头像 26.7 + gap 8 */
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--ink-soft);
+}
+
+/* 进度槽：稿上是 123×12.4 的浅色空槽 + 一枚圆点（圆点在 83% 处，但那个位置
+   对应的百分比后端给不出，所以只铺槽与圆点、不表示任何进度）。
+   槽与圆点都是**图形**：槽用背景色块（无需文件），圆点用 radial 渐变画。 */
+.fv-mem-bar {
+  position: relative;
+  margin: 8px 0 0 34.7px;
+  width: 123px;
+  max-width: calc(100% - 34.7px);
+  height: 12.4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.fv-mem-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12.4px;
+  height: 12.4px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.fv-mem-note {
+  margin: 7px 0 0 34.7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--ink-faint);
+}
+
+/* ── 冰箱行 ─────────────────────────────────────────────────────────────
+ * 稿实测四行 y648..667 / y700..721 / y750..772 / y797..820 → 行距 50 稿px
+ * = 44.5 CSS；图标 x1212..1246（54×25 稿px），文字左缘与图标右缘间约 11 稿px。
+ * 四样（鸡蛋/西兰花/面条/大蒜）是**冰箱真实数据**，但每样一枚专属图标只有
+ * 这四枚切图；真实冰箱里出现这四样之外的东西时用通用点，不套错图标。 */
+.fv-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9.8px;
+  min-height: 38.9px; /* 稿行距 44.5 - 上下各 2.8，让 4 行的高度接近稿 */
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+}
+
+/* 冰箱行图标。同样按切图 1:1 落尺寸（切图窗口 = 稿上图形墨迹边界
+ * x1195..1220 / x1196..1220，文字「鸡蛋」等从 x1242 起，都没切进来）。
+ * 三枚图形宽高各自不同（24..26 稿px 宽、23..26 高），所以逐枚给尺寸，
+ * 不用统一槽宽——统一槽宽会把蛋和面条压成同一个形状。 */
+.fv-fridge-ico {
+  flex: none;
+  background: no-repeat center / 100% 100%;
+}
+
+.fv-fridge-ico[data-item='鸡蛋'] {
+  width: 22.23px; /* 切图 25px */
+  height: 23.12px; /* 26px */
+  background-image: url('../assets/hero/fv-fridge-egg.png');
+}
+
+.fv-fridge-ico[data-item='西兰花'] {
+  width: 23.12px; /* 切图 26px */
+  height: 20.45px; /* 23px */
+  background-image: url('../assets/hero/fv-fridge-broc.png');
+}
+
+.fv-fridge-ico[data-item='面条'] {
+  width: 22.23px; /* 切图 25px */
+  height: 22.23px; /* 25px */
+  background-image: url('../assets/hero/fv-fridge-nood.png');
+}
+
+/* ⚠ 真实数据的第四样「大蒜」在稿上没有对应图形——稿右栏冰箱只画了三行
+ * （行段实测 y648..667 / y700..721 / y750..772；其后 y800 是卡片下边线，
+ * 不是第四行）。**不编图形、不拿前一行的图复用**，这一格留空占位，
+ * 只保证「大蒜」二字的左缘仍与前三行对齐。 */
+.fv-fridge-ico[data-item='大蒜'] {
+  visibility: hidden; /* 占位但不可见 */
+  width: 22.23px; /* 与「面条」同槽宽，保证第四行名称左缘仍落在 x1068 那一列 */
+  height: 22.23px;
+}
+
+/* 窄屏：稿是 4 列 + 右栏的两列骨架，窄屏下先减列数、再把右栏落到下方。 */
+@media (max-width: 1180px) {
+  .fv-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .fv { grid-template-columns: minmax(0, 1fr); }
+  .fv-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .fv-list { grid-template-columns: minmax(0, 1fr); }
+  .fv-tools { flex-direction: column; align-items: stretch; }
+  .fv-pills { gap: 12px; }
+  .fv-search-wrap { flex: 1 1 auto; }
+}

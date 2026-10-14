@@ -232,5 +232,24 @@ export function resultForm(answer: ChefAnswer | null): ResultForm {
   return recipes.length > 0 ? 'structured' : 'prose'
 }
 
+/** 1–5 的数值 → 一个词（2026-10-10 从 blocks/DishHero.tsx 迁入：它是个纯格式化
+ * 函数，和 blocks 里的组件放同一文件会触发 react(only-export-components)。
+ *
+ * 2026-09-26 照设计稿改。设计稿那一行实测是
+ * `[厨师帽] 难度 中等   [叶子] 营养 高   [时钟] 用时 25 分钟`——
+ * **它写的本来就不是 3/5，是词。**
+ *
+ * 为什么这个改法站得住，而不是"为了像设计稿而丢数据"：
+ * 后端给的 difficulty / nutrition 是 1–5 的字段，它**从未说明这 5 档的含义**。
+ * 画成刻度条等于替后端声称一个它没说过的精度；写成词反而更贴近用户真正要判断的事
+ * （这顿难不难做、够不够营养）。数值没丢：映射单调，1–2 一档、3 一档、4–5 一档，
+ * 不新增档位、也不改后端给的值。 */
+export function wordOf(value: number, low: string, mid: string, high: string): string {
+  const v = Math.max(1, Math.min(5, Math.round(value)))
+  if (v <= 2) return low
+  if (v === 3) return mid
+  return high
+}
+
 
 

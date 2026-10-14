@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   fetchFavorites,
-  fetchSessions,
   forgetDish,
   sendMessageFeedback,
   starMessage,
@@ -15,9 +14,9 @@ import type { ChefAnswer, FavoriteItem } from '../../types.ts'
  *  1 只读优先：列表只来自 GET /api/favorites；写操作只碰后端已有的四个端点
  *    （star / feedback / forget-dish），不新造接口、不改后端。
  *  2 失败要说话：读失败 ≠ 空列表。error 与「空」是两个状态，页面各画各的。
- *  3 不知道就说不知道：赞/踩的初始状态收藏接口**不带**（实测 FavoriteItem
- *    无 feedback 字段），必须另拉 GET /api/sessions 建真实映射；拉失败时
- *    ratingsReady=false，页面写明「状态未加载」——**绝不把未知画成没点过**。
+ *  3 不知道就说不知道：赞/踩的初始状态**跟着收藏列表一起来**了（后端
+ *    `list_starred` 自 2026-10-14 起带 feedback 字段，见 storage/sessions.py），
+ *    不再另拉整表会话建映射；字段为 null 就是「从没评过」。
  *
  * ══ 为什么恢复详情只认 answer ═══════════════════════════════════════════
  * FavoriteItem 只有当时那轮的 answer（结构化 JSON），没有 body / elapsed /
@@ -42,12 +41,65 @@ export interface FavEntry {
   /** 用户这一轮的原话。恢复详情时它就是结果页的回声，也是无详情时的预填话头。 */
   ask: string
   imageUrl: string | null
+  /** 那一轮的时间（后端 turned_at）。**不是**收藏动作的时间。空串 = 后端没给。 */
+  turnedAt: string
+  /** 收藏动作的时间（后端 favorited_at，2026-10-11 新增）。null = 后端没有这个值
+   *  （旧收藏是在 star 还不落时间的那版收藏的）——页面必须显示「待补」，
+   *  绝不许拿 turnedAt 或文件时间顶上：那会把"什么时候收的"说成假的。 */
+  favoritedAt: string | null
   /** 当时那轮的结构化答案；null = 收藏接口没存下内容（多为纯散文轮）。 */
   detail: ChefAnswer | null
 }
 
 export function favKey(sid: string, recId: number): FavKey {
   return `${sid}:${recId}`
+}
+
+/* ── 卡片上那一行胶囊（2026-10-11 照 fav-expect-v4 稿补齐） ────────────────
+ * 稿上是「高蛋白 / 低脂 / 晚餐」三枚。这里只放**能落地的真值**，两类：
+ *   · 餐次   —— 由那一轮的真实时刻（turnedAt）推；
+ *   · 营养灯 —— detail.health_lights 的原生 label（后端产出的是「钠/糖/脂肪」
+ *               这类营养素名 + green/yellow/red 灯，见 types.ts）。
+ * **不改写成语义等价的正向词**：把「脂肪·绿」写成「低脂」是替后端下结论，
+ * SideRail.tsx 顶部有同款纪律（"绝不拿营养灯改写成成员判断"）。
+ * 稿上的「高蛋白」在后端没有任何结构化字段（只在 opening 的散文里出现过），
+ * 真实数据已够撑满这一行，所以**不补占位文案**——占位是"填不满"时才用的手段，
+ * 这里填得满，补一个就成了编造。 */
+export interface FavTag {
+  text: string
+  /** 营养灯档位。样式只认这个字段，不认文案（文案是后端的话，颜色才是语义）。 */
+  level: 'green' | 'yellow' | 'red' | null
+}
+
+/** 餐次分段（闭区间，按分钟）。界限取常见三餐作息的中点，不替用户改作息。 */
+const MEAL_BANDS: Array<[number, number, string]> = [
+  [5 * 60, 10 * 60 + 29, '早餐'],
+  [10 * 60 + 30, 14 * 60 + 59, '午餐'],
+  [15 * 60, 17 * 60 + 29, '加餐'],
+  [17 * 60 + 30, 21 * 60 + 29, '晚餐'],
+]
+
+/** 由那一轮的时刻推餐次；turnedAt 形如 `2026-08-26 13:35:50`。
+ *  取不到时刻、或格式不是这个形状，就返回 null —— 宁可不显示这枚胶囊，
+ *  也不猜一个餐次（与「不许把未知画成事实」同一条纪律）。 */
+export function mealOf(turnedAt: string): string | null {
+  const m = /^\d{4}-\d{2}-\d{2} (\d{2}):(\d{2})/.exec(turnedAt)
+  if (!m) return null
+  const min = Number(m[1]) * 60 + Number(m[2])
+  const band = MEAL_BANDS.find(([a, b]) => min >= a && min <= b)
+  return band ? band[2] : '夜宵'
+}
+
+/** 一条收藏的胶囊行。顺序照稿：餐次在前，营养灯按后端给的顺序在后。 */
+export function tagsOf(entry: FavEntry): FavTag[] {
+  const tags: FavTag[] = []
+  const meal = mealOf(entry.turnedAt)
+  if (meal) tags.push({ text: meal, level: null })
+  for (const l of entry.detail?.health_lights ?? []) {
+    const text = (l.label ?? '').trim()
+    if (text) tags.push({ text, level: l.level })
+  }
+  return tags
 }
 
 /**
@@ -88,6 +140,10 @@ function toEntry(item: FavoriteItem): FavEntry {
     from: unescapeText(item.session_title) || ask || '来源会话',
     ask,
     imageUrl: item.image_url ?? null,
+    turnedAt: item.turned_at ?? '',
+    // 收藏动作时间：后端给了字符串就用它；null / undefined 一律落 null（不兜成空串——
+    // 空串会让"后端没给"和"给了空"看起来一样，页面只能一律写「待补」）。
+    favoritedAt: item.favorited_at ?? null,
     // answer 是结构化对象（实测 favorites 接口给对象、sessions 接口给字符串，
     // 两者形态不同，以实测为准），内部字段实测是正常中文，不参与解码。
     detail: item.answer ?? null,
@@ -99,7 +155,9 @@ export interface FavoritesState {
   entries: FavEntry[] | null
   error: string | null
   ratings: Record<FavKey, FavRating>
-  /** 赞/踩初始态是否读到。false 时页面必须写明「状态未加载」。 */
+  /** 赞/踩初始态是否读到。false 时页面必须写明「状态未加载」。
+   *  2026-10-14 起它与收藏列表**同一次响应**到达，正常路径恒为 true；
+   *  字段保留是因为「有没有读到这个状态」这个区别本身仍然成立。 */
   ratingsReady: boolean
   reload: () => void
   /** 乐观移除（取消收藏时先从列表摘掉，失败再 reload 回滚）。 */
@@ -120,33 +178,23 @@ export function useFavorites(): FavoritesState {
     setEntries(null)
     setError(null)
     fetchFavorites()
-      .then(async (list) => {
+      .then((list) => {
         const own = list.map(toEntry)
         if (!alive) return
         setEntries(own)
-        if (own.length === 0) {
-          setRatings({})
-          setRatingsReady(true)
-          return
+        /* 赞/踩初始态（2026-10-14 改）：后端 list_starred 现在直接带 feedback，
+         * 所以这里不再另拉一遍 GET /api/sessions —— 那一次往返要把**所有会话的
+         * 全部消息**拉下来，只为查几个布尔值；收藏越多、会话越多越亏。
+         *
+         * ratingsReady 因此恒为 true：这份状态与收藏列表**同一次响应**到达，
+         * 不存在"列表有了、状态还没来"的中间态。原先的 false 分支只挂在
+         * 额外那次会话请求的失败上，现在没有那一次请求了。 */
+        const map: Record<FavKey, FavRating> = {}
+        for (const it of list) {
+          if (it.feedback) map[favKey(it.sid, it.rec_id)] = it.feedback
         }
-        // 赞/踩初始态：收藏接口不带，只能从会话记录里取（老前端同款做法）。
-        try {
-          const sessions = await fetchSessions()
-          if (!alive) return
-          const map: Record<FavKey, FavRating> = {}
-          for (const s of sessions) {
-            for (const m of s.messages ?? []) {
-              if (m.feedback) map[favKey(s.session_id, m.id)] = m.feedback
-            }
-          }
-          setRatings(map)
-          setRatingsReady(true)
-        } catch {
-          // 读不到就如实标未加载：拿空表冒充「没点过赞」是把未知画成事实。
-          if (!alive) return
-          setRatings({})
-          setRatingsReady(false)
-        }
+        setRatings(map)
+        setRatingsReady(true)
       })
       .catch((e: unknown) => {
         if (!alive) return

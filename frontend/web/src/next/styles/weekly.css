@@ -1,0 +1,961 @@
+/* ── 周报房：逐餐明细（2026-10-14）────────────────────────────────────────
+
+   来源：后端 /api/reports/weekly 新增的 meals_detail（api/routes/reports_route.py
+   的 `_meals_detail`）。它把「常做的菜」的聚合次数展开成「哪几顿」——那几行
+   原来只写「西兰花炒蛋 ×4」，看不出是哪几天、那几顿的灯又是什么色。
+
+   为什么单独成片：并进 panels.css 后那个文件到了 1052 行，越过 checkScale 的
+   1000 行上限（与 fav.css → fav-cards.css 是同一类拆分）。
+
+   为什么排在 panels.css **之后**：本片唯一的覆盖是 `.wk-meal-light .wk-pip`
+   把 hero 点阵的 13px 缩到 7px（hero 说的是「本周整体」，明细说的是「某一顿」），
+   被覆盖的那条定义在 panels.css 里，所以必须后写。
+
+   折叠态不占位：.wk-dishes 的行结构只多了行右端一格展开符，.wk-meals 只在
+   展开时才渲染——默认版面与稿逐像素一致。 */
+
+.wk-dish-row {
+  display: flex;
+  align-items: stretch;
+}
+
+/* 展开符在行右端占一小格。它**不能**放进 .wk-dish 里：那是 <button>，
+   里面再套 <button> 是非法结构，浏览器会把内层拆出去、点击区就乱了。 */
+.wk-dish-more {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  background: none;
+  border: 0;
+  /* 与 .wk-dish 的同款下边框续上，视觉上仍是一条整行分隔线。 */
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.wk-dish-more:hover {
+  color: var(--accent);
+}
+
+.wk-meals {
+  list-style: none;
+  margin: 0;
+  /* 缩进到与菜名同一起步线（图 50 + gap 18）：明细是这道菜的下属信息。 */
+  padding: 0 0 0 68px;
+}
+
+.wk-meal {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  border-bottom: 1px dashed var(--line);
+}
+
+.wk-meals > .wk-meal:last-child {
+  border-bottom: 0;
+}
+
+.wk-meal-ts {
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.wk-meal-lights {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+}
+
+.wk-meal-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.wk-meal-light .wk-pip {
+  width: 7px;
+  height: 7px;
+}
+
+.wk-meal-flag {
+  flex: none;
+  font-size: 12px;
+}
+
+.wk-meal-who {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* ══ 成员卡片 + 详情抽屉（2026-10-15）══════════════════════════════════════
+
+   用户裁决的 C 结构：周报 = 家庭总览 + 每位家人的入口卡片，点卡片开详情抽屉。
+
+   名字一律用 --tone-member（全站唯一的冷色相，专门标记"人"）。家庭那一份
+   （hero、两列）只用 --accent 与 --ink 系，两套色相在页面上把"整体"和"个人"
+   分开——这正是用户要的"功能色区分"，而不必再引入新颜色。
+
+   为什么写在 weekly.css 而不是 panels.css：本片唯一的既有覆盖是 .wk-meal-light
+   的 .wk-pip 缩小，被覆盖的定义在 panels.css 里，所以本片必须排在它之后；
+   卡片与抽屉属于同一族（成员视角），放一起才好一起读。 */
+
+/* ── 卡片排 ─────────────────────────────────────────────────────────────── */
+
+.wk-sec.is-crew {
+  margin-bottom: 24px;
+}
+
+/* auto-fit（**不是 auto-fill**）+ minmax：两位成员时两张卡铺满整行，成员变多自动换行，
+   不用按人数写断点。minmax 下限给 200px——再窄的话「其中 1 顿是一起吃的」
+   那行会折成两行，卡片高度就参差了。
+
+   2026-10-15 实测修正：原先写的是 auto-fill，浏览器里量到
+   `grid-template-columns: 245.125px × 4`——两位成员却预分配了四条轨道，
+   卡片只占半行、右边空出两列。auto-fill 会**保留**空轨道（它的用途是让已有格子
+   保持固定宽度、不随容器拉伸），auto-fit 才把空轨道**折叠**掉让现有卡片铺满。
+   这户人家就两个人，要的是后者。 */
+.wk-mems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.wk-mem {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 14px 16px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  /* 9px 取自周报稿实测的卡片圆角（本页各卡片同此值），不用全局 --radius-lg(12)：
+     这一页的圆角是量出来的，不是选出来的。 */
+  border-radius: 9px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.wk-mem:hover {
+  border-color: var(--tone-member);
+  background: var(--surface);
+}
+
+.wk-mem:focus-visible {
+  outline: 2px solid var(--tone-member);
+  outline-offset: 2px;
+}
+
+.wk-mem-name {
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--tone-member);
+}
+
+.wk-mem-meals {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* 餐数用等宽数字 + 稍大一号：卡片上真正要一眼读到的就是它。 */
+.wk-mem-meals b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.wk-mem-prog {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+/* 卡片上的点阵比 hero 的 13px 小一档（hero 说的是"本周整体"，卡片是"这个人"），
+   与逐餐明细的 7px 也不同——三处大小分别对应三种粒度。 */
+.wk-mem-pips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.wk-mem-pips .wk-pip {
+  width: 9px;
+  height: 9px;
+}
+
+/* 色点旁边必须有文字判据（契约 §6）：色点不单独传态。 */
+.wk-mem-stat {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.wk-mem-shared {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.wk-mem-go {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* 这一周没记到的成员：卡片**照画**，只把话说清楚，不用红字也不灰到看不见——
+   "还没记到"不是错误，是这位成员这一周的真实状态。 */
+.wk-mem.is-none .wk-mem-name {
+  color: var(--ink-soft);
+}
+
+.wk-mem-empty {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-faint);
+}
+
+/* ── 详情抽屉 ───────────────────────────────────────────────────────────── */
+
+/* 遮罩：fixed 全屏，盖住周报页但不盖住抽屉本体（抽屉 z-index 更高）。 */
+.wk-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg-sunken);
+  opacity: 0.55;
+}
+
+/* 右侧抽屉。fixed 脱离文档流——它不参与 .wk 的排版，所以周报页在背后
+   **保持可见**（这正是选抽屉而不是整页替换的理由：用户不会丢掉"这位成员
+   在家庭里的位置"这个参照）。 */
+.wk-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  width: min(520px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raise);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-lift);
+}
+
+.wk-dr-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wk-dr-name {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--tone-member);
+}
+
+.wk-dr-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.wk-dr-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.wk-dr-close:hover {
+  border-color: var(--tone-member);
+  color: var(--ink);
+}
+
+.wk-dr-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px 24px 32px;
+}
+
+.wk-dr-sec {
+  margin-bottom: 22px;
+}
+
+.wk-dr-sec:last-child {
+  margin-bottom: 0;
+}
+
+.wk-dr-prog {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.wk-dr-prog b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  color: var(--ink);
+}
+
+/* 「待补」：后端还不知道分子分母。它必须长得**不像 0%**——
+   这是"还没数据"，不是"一餐都没达标"。 */
+.wk-dr-todo {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.wk-dr-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+/* 读失败要红：它和上面的"这周还没记到"是**两件事**（故障 vs 内容空），
+   长得一样会让用户以为这周真没吃饭。 */
+.wk-dr-err {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--red);
+}
+
+.wk-dr-dishes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-dr-dishes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--ink);
+  border-bottom: 1px dashed var(--line);
+}
+
+.wk-dr-dishes > li:last-child {
+  border-bottom: 0;
+}
+
+.wk-dr-dishes b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.wk-dr-meals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 抽屉里的每一条比周报页更挤：多一列菜名（周报页是按菜分组，菜名在组头）。 */
+.wk-dr-meal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  border-bottom: 1px dashed var(--line);
+}
+
+.wk-dr-meals > .wk-dr-meal:last-child {
+  border-bottom: 0;
+}
+
+.wk-dr-meal-dish {
+  color: var(--ink);
+}
+
+/* 窄屏：抽屉占满宽度（min(520px,100vw) 已兜住），卡片落单列。 */
+@media (max-width: 560px) {
+  .wk-mems {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   C 设计稿结构（2026-10-15）：两个大区 + 6 张编号卡片 + 成员卡。
+   上面那些是重排前「hero + 两列流」留下的规则，多数仍被卡片内部复用
+   （.wk-dishes / .wk-meals / .wk-list / .wk-tags / 抽屉那一整套）。
+   本段只加新骨架，尽量不重复定义已有类。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* 右上信息条：多人同桌怎么判达标。它必须比正文更"轻"——
+   这是一句口径说明，不是告警，抢了标题的读序就错了。 */
+.wk-note-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-left: auto;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.wk-note-top-ic {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.wk-sub2 {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* 区：区内是卡片矩阵。区之间留一条明显的横向呼吸，让"家庭 / 成员"
+   两个平级对象在视觉上真的分开。 */
+.wk-zone {
+  margin-top: 26px;
+}
+
+.wk-zone.is-crew {
+  margin-top: 32px;
+}
+
+.wk-zone-t {
+  margin: 0 0 12px;
+  font-size: var(--fs-h2);
+  font-family: var(--serif);
+  font-weight: 400;
+  color: var(--ink);
+}
+
+/* 这行是中文句子，不是数码——用等宽体会让它跟左边的衬线区标题打架。
+   （原先误用了 var(--mono)，现在跟卡头 note 同族。） */
+.wk-zone-note {
+  margin-left: 8px;
+  font-size: var(--fs-note);
+  font-style: normal;
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+
+/* 三列**各自独立堆叠**，不是"两行网格"。
+   这是 C 设计稿的真实结构，也是我第一版读错的地方：稿里卡 3 是从卡 1 下方
+   接着长的，不是从卡 5 下方起。用网格（哪怕给卡 3 加 grid-row: span 2）会把
+   第一行强行对齐，于是卡 1 / 卡 2 下沿（350 / 368）与卡 5 下沿（520）之间
+   必然裂出 184px / 166px 两个大空洞，而卡 3 又被压在 231px 的最窄列里、
+   菜名只剩 59px 可用（长菜名需要 182px）。
+
+   改成三列独立流之后，"第一行参差"不再表现为空白：矮卡下面的位置立刻被
+   本列的下一张卡接上。列宽按内容体量分配，不照抄稿子的比例——稿里菜名短
+   （「黑椒牛肉粒」），我的菜名长（「西兰花炒蛋拌面（增肌少油版）」），
+   所以中列要够宽，卡 3 才放得下一行菜名。 */
+.wk-cols {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(300px, 1.12fr) minmax(340px, 1.35fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.wk-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* min-width:0 必需：grid 子项默认 min-width:auto，里面的长菜名会把整列撑开。 */
+  min-width: 0;
+}
+
+
+.wk-card {
+  padding: 16px 18px 18px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+
+/* 卡头：编号 + 标题 + 可选注。编号用等宽数字，六张卡的编号才在一条线上。 */
+.wk-card-k {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 0 0 12px;
+  font-size: var(--fs-data);
+  color: var(--ink);
+}
+
+.wk-card-n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-style: normal;
+  color: var(--accent);
+}
+
+.wk-card-t {
+  font-weight: 600;
+}
+
+.wk-card-note {
+  font-style: normal;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+/* 卡内的一些小字：副行、脚注、汇总。三档字号，别混用。 */
+.wk-card-sub {
+  margin: 6px 0 0;
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+}
+
+.wk-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 12px 0 0;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+.wk-card-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+}
+
+.wk-sum.is-g {
+  color: var(--green);
+}
+
+.wk-sum.is-y {
+  color: var(--yellow);
+}
+
+.wk-sum.is-r {
+  color: var(--red);
+}
+
+/* 卡 1 的大数字：整页最大的字，角色就是"一眼看到这周吃了几顿"。 */
+.wk-big {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+
+.wk-big b {
+  font-family: var(--serif);
+  font-size: var(--fs-count);
+  font-weight: 400;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/* 数字与量词之间要留一口气：gap 4px 时「8餐」两字几乎贴在一起，
+   读起来像一个词。字形本身自带的边距不够，得显式给。 */
+.wk-big i {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: var(--fs-body);
+  color: var(--ink-soft);
+}
+
+/* 卡 2：点阵 + 右侧图例。点阵换行铺满，图例固定窄列。 */
+.wk-card-lights {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.wk-card-lights .wk-pips {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-card-legend {
+  flex: 0 0 auto;
+}
+
+.wk-legend {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.wk-legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 0;
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+}
+
+/* 卡 5：折线给一个固定高度区，免得不同数据量把它撑成不同高，
+   三列网格的基线就会跟着抖。 */
+.wk-card-chart {
+  margin: 2px 0 10px;
+}
+
+.wk-card-sum2 {
+  margin: 0;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+}
+
+.wk-card-sum2 b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  color: var(--accent);
+}
+
+/* 卡 4：bullet 列表。用小圆点而非数字，它讲的是"要注意的事"，不是步骤。 */
+.wk-bullets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wk-bullets li {
+  position: relative;
+  padding: 5px 0 5px 14px;
+  font-size: var(--fs-data);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.wk-bullets li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.wk-bullet-tail {
+  color: var(--ink-faint);
+}
+
+/* 卡 4 里的反馈：它是"这周家里人怎么说"的补充，视觉上退一档。 */
+.wk-card-fb {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.wk-card-fb-k {
+  margin: 0 0 6px;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+.wk-foot-note {
+  margin: 22px 0 0;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+/* ═══ 圆环（ui/RingProgress.tsx）═══
+   颜色住在样式里而不是 SVG 属性里：这样配色只有一处，也让 check-layers
+   的色值字面量检查不必对 .tsx 网开一面。 */
+.ring {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.ring-track {
+  stroke: var(--line);
+}
+
+.ring-bar {
+  stroke: var(--accent);
+}
+
+.ring-dash {
+  stroke: var(--line-strong);
+}
+
+/* 「待补」：底环改虚线。它必须一眼看出"这是空的"而不是"这是 0%"——
+   0% 是"一餐都没达标"，虚线空圆是"还没有数"。 */
+.ring.is-blank .ring-track {
+  stroke-dasharray: 4 5;
+}
+
+/* ═══ 达标率折线（ui/RateChart.tsx）═══ */
+.rate-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.rate-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.rate-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rate-dot {
+  fill: var(--accent);
+}
+
+.rate-val {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--accent-ink);
+}
+
+.rate-xtick {
+  font-size: 9px;
+  fill: var(--ink-faint);
+}
+
+.rate-xtick.is-current {
+  fill: var(--ink);
+  font-weight: 600;
+}
+
+.rate-ytick {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--ink-faint);
+}
+
+/* ═══ 成员卡改版（C 设计稿）═══
+   一张卡自上而下：姓名 → 「本周达标进度」→ 大数字 + 圆环 → 「较上周」→
+   「需要注意」。下面这几条覆盖上面旧的 .wk-mem-* 形态（旧形态是"姓名 + 餐数 +
+   点阵 + 绿黄红"）；旧类保留不删是因为检查脚本不查无用 CSS，而删漏一处就会
+   让某个状态失去样式，代价比留着高。 */
+.wk-mem {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 16px 18px 14px;
+  text-align: left;
+}
+
+.wk-mem-cap {
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+.wk-mem-mid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 2px 0 0;
+}
+
+.wk-mem-num {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.wk-mem-num b {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+.wk-mem-num i {
+  font-style: normal;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.wk-mem-sep {
+  margin: 0 6px;
+  color: var(--ink-faint);
+}
+
+/* 「待补」不是数字，所以不套 .wk-mem-num b 的等宽字形，
+   给它自己的字号与色阶——大、但明显不是"成绩"。 */
+.wk-mem-blank {
+  font-style: normal;
+  font-family: var(--serif);
+  font-size: 26px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.wk-mem-prev {
+  margin-top: 2px;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+/* 反馈空态在**窄列**里的收敛。panels.css 的原规格是 46px 气泡 + 14px 文案，
+   那是按宽卡量的（稿里这张卡在宽栏）。周报页把它放进 233px 的第一列，
+   46px 的气饼配上居中排版占了 100px 高，成了整张卡里最抢眼的东西——
+   可它只是一句"还没收到反馈"。缩到 36px / 12px，层级回到"说明"该有的位置。
+   字号 14 也是全站孤例（其余是 12 / 13 / 13.5 / 15），一并归到 12。 */
+.wk-card.is-guard .wk-fb-empty {
+  font-size: 12px;
+}
+
+.wk-card.is-guard .wk-fb-empty .icon {
+  font-size: 36px;
+}
+
+/* 「需要注意」块：它是卡里唯一一段成句的话，给它一块浅底与卡片正文分开。 */
+.wk-mem-hint {
+  display: block;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.wk-mem-hint-k {
+  display: block;
+  margin-bottom: 3px;
+  font-style: normal;
+  font-size: var(--fs-note);
+  color: var(--accent-ink);
+}
+
+/* 12.5 是碎档：与 12 只差半个像素，读起来是同一级，却让全站小字分成
+   13.5 / 13 / 12.5 / 12 / 11 五档。归到 12（与卡内其他说明文字同档），
+   小字收成 13.5 / 13 / 12 / 11 四档。 */
+.wk-mem-hint-t {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.wk-mem-go {
+  margin-top: 10px;
+  font-size: var(--fs-note);
+  color: var(--accent);
+}
+
+/* ═══ 卡 3 在窄列里的收敛 ═══
+   菜行原本是给宽栏设计的：图片 50px + 菜名 + 次数 + 「再做一顿 →」，在 231px
+   的左列里会折成三行（实测每行 189–223px，五道菜把卡撑到 1052px，右下角那
+   两张卡被顶出 530px 的空白）。逐项压扁：图缩到 38、菜名截断（它本来就能点，
+   截断不影响"点一道回今天"）、把行尾的提示收掉——卡头已经写了「· 点一道回今天」，
+   同一句话在 231px 里说两遍就是浪费宽度。 */
+.wk-card.is-dishes .wk-dish {
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.wk-card.is-dishes .wk-dish-img {
+  width: 38px;
+  height: 38px;
+}
+
+/* 卡 3 现在在中列（约 362px），菜名的可用宽度从 59px 回到 ~150px。
+   仍给两行：362px 扣掉图 38、次数、展开符、「再做一顿 →」之后，一行
+   放不下 182px 的长菜名，两行才装得下全名。放不下的由 button 的 title 兜底。 */
+/* font-size 13px：原先 12.5px 的宋体中文在中文场景下发虚（衬线笔画本来就细），
+   而且 12.5 与全站 12/13.5 两档都差 0.5px——肉眼分不出的"半档"等于没有层级。
+   归到 13，与卡头的 13.5 挨着，仍保留 var(--serif) 的稿子语言（菜名用衬线）。 */
+.wk-card.is-dishes .wk-dish-name {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* 中列够宽了，「再做一顿 →」恢复显示——它是这一列的主动作，
+   窄列里被我临时收掉过。 */
+.wk-card.is-dishes .wk-dish-go {
+  display: inline;
+  font-size: 12px;
+}
+
+/* 窄屏：三列退回两列、再退一列。列容器跟着塌成单列，
+   卡片顺序变成 卡1 卡4 卡2 卡3 卡5 卡6 —— 编号会跳。
+   @media 下没法重排 DOM，接受这个顺序：编号本来就是内容标签不是位置序号，
+   C 稿自己也是 1,2,5 / 3,4,6 的乱序。 */
+@media (max-width: 1100px) {
+  .wk-cols,
+  .wk-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

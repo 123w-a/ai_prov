@@ -7,36 +7,36 @@
  * 语义色照房规：done/partial 等状态只落在圆点与文字上，绝不铺底。
  */
 .sv {
-  max-width: 1010px;
-  margin: 0 auto;
-  padding: 40px 24px 96px;
+  /* 骨架（max-width/margin/padding/纸带底色）2026-10-09 起由 sheet.css 四房
+     统一层接管：原硬编码 1010 + auto margin 塌缩成 748px 居中窄条、
+     两侧各空 160px（探针实测）。 */
   /* 两个大区（服务规划 / 附近餐厅）各自成卡片，靠 gap 分隔。 */
   display: flex;
   flex-direction: column;
   gap: var(--s2);
 }
 
-/* 门牌竖条：与周报房 .wk-h、收藏房 .fv-h 同族（2026-10-01 画风解冻）。 */
+/* ── 门牌左侧锚点（2026-10-11 第四轮 · **回滚**）─────────────────────────
+ * 与档案房（profile.css 的 .pf-h）同一处改动、同一次回滚，口径一字不差：
+ * 第三轮加的 nav-svc.png 房间图标已撤掉，理由见 profile.css 的注释（稿上标题墨迹距卡片列
+ * 左缘只有 23 稿px = 20.5 CSS，装不下图标槽；收藏稿才是 48.0 CSS）。
+ * 现状照稿：**纯文字标题，无竖条、无图标**。竖条删除这一半保留。 */
 .sv-h {
   position: relative;
-  padding-left: 18px;
+  /* ── 2026-10-11 第七轮：标题左内缩 18 → 22.2（照稿标定）────────────────
+   * 与档案房同一次改动，但取值不同——两稿的标题本身就不在同一个位置，
+   * 照抄同一个数会有一房偏离稿：
+   *   profile 稿标题墨迹 x322..359 → CSS 286.4（卡片列左缘 270.4，距 16.0）
+   *   service 稿标题墨迹 x330..370 → CSS 293.5（卡片列左缘 x305 → 271.2，距 22.2）
+   * 两稿之差 7 稿px = 6.2 CSS，是"服"与"身"首字字形起笔不同加上稿子本身
+   * 没画在同一格上，不是规则差异。这里各按各的稿落位。 */
+  padding-left: 22.2px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
   color: var(--ink);
   margin: 0 0 6px;
   -webkit-text-stroke: var(--stroke-h2);
-}
-
-.sv-h::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.18em;
-  bottom: 0.14em;
-  width: 5px;
-  border-radius: 3px;
-  background: var(--accent);
 }
 
 .sv-sub {
@@ -51,6 +51,32 @@
  * 原来是「一道细线 + 一个留白」，注释还写着"不做卡片"——那条约束
  * 随画风解冻一并撤掉。现在两个大区各自是一张家具：亮面、描边、
  * 落地光、14px 圆角，与今晚房/周报房/收藏房同一族形制。 */
+/* 标题区收成一块（2026-10-11 与档案页 / 收藏页统一）：用户口径是服务页
+   "保持现有画风"，所以不动配色与形制，只把布局收进其余房间同一套节奏。 */
+.sv-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sv-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.sv-sec-h::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
 .sv-sec {
   background: var(--surface);
   border: 1px solid var(--surface-line);

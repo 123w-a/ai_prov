@@ -626,7 +626,16 @@ def find_recent_candidates(sid, limit=8):
 
 
 def star_message(sid, record_id, starred: bool):
-    """收藏/取消收藏一条问答（'starred': True/False）。返回 (found, current)。"""
+    """收藏/取消收藏一条问答（'starred': True/False）。返回 (found, current)。
+
+    2026-10-11 新增时间落点 `starred_at`：收藏这个**动作**发生的时刻，格式与同文件
+    的 `time` 一致（`%Y-%m-%d %H:%M:%S`，见 chat_route 落库那一行），取消收藏时一并
+    清掉。它与 `time`（这一顿提问的时刻）是两件事，谁都不许拿去冒充另一个
+    （list_starred 分别透出为 favorited_at / turned_at）。
+
+    已经收藏过的记录重复点收藏**不刷新**时间戳：重复点击不是一次新的收藏动作，
+    把时间往后推等于篡改"什么时候收的"。取消后再收藏则记新的时刻。
+    """
     with _lock:
         data = _read_session(sid)
         if data is None:
@@ -636,8 +645,11 @@ def star_message(sid, record_id, starred: bool):
                 continue
             if starred:
                 m["starred"] = True
+                if not m.get("starred_at"):
+                    m["starred_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             else:
                 m.pop("starred", None)
+                m.pop("starred_at", None)
             _write_session(data)
             return True, bool(m.get("starred"))
     return False, False
@@ -664,14 +676,39 @@ def list_starred() -> list[dict]:
                 dish = str(recipes[0].get("name"))[:40] if recipes else None
             except Exception:
                 dish = None
+            # 卡片配图（2026-10-11 修）：消息级 image_url 是**用户上传的照片**，多数
+            # 为空——收藏卡长期没图就是这个原因。菜品配图存在结构化答案里
+            # （answer.image_url 或 recipes[].image_url），这里只做回落，不编造。
+            img = m.get("image_url")
+            if not img and isinstance(ans, dict):
+                img = ans.get("image_url")
+                if not img:
+                    for r in ans.get("recipes") or []:
+                        if isinstance(r, dict) and r.get("image_url"):
+                            img = r["image_url"]
+                            break
             out.append({
                 "sid": data.get("session_id"),
                 "rec_id": m.get("id"),
                 "session_title": data.get("title") or "",
                 "user_text": (m.get("user_text") or "")[:60],
                 "dish": dish or (m.get("user_text") or "")[:24],
-                "image_url": m.get("image_url"),
+                "image_url": img,
                 "answer": ans,
+                # 那一轮的时间（`time`）。**不是**收藏动作的时间——收藏时间另出
+                # favorited_at，不许拿它顶。
+                "turned_at": m.get("time") or "",
+                # 收藏动作的时间（2026-10-11 新增，取消息上的 starred_at）。
+                # 旧记录没有 starred_at（当时 star 不落时间）→ 一律 null，不猜、
+                # 不用 turned_at 或文件 mtime 之类的旁证补一个像样的时刻。
+                "favorited_at": m.get("starred_at") or None,
+                # 这条收藏的满意度（'up' | 'down' | None，2026-10-14 新增）。
+                # 此前不带这个字段，`next/data/favorites.ts` 为了标出赞/踩的初始态，
+                # 只能再拉一次 GET /api/sessions 把全部会话的消息读一遍再建映射；
+                # 收藏项本身就来自那条消息，值就在手边，没有理由让前端跑那一趟。
+                # 语义与 patch_message_feedback 的写入值严格一致：
+                # None = 从没点过（不是"点了又取消"）——前端据此渲染未选中态。
+                "feedback": m.get("feedback"),
             })
     return out
 

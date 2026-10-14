@@ -59,10 +59,13 @@ export default function ServiceView() {
 
   return (
     <section className="sv" data-room="svc">
-      <h2 className="sv-h">服务</h2>
-      <p className="sv-sub">{sub}</p>
+      <div className="sv-head">
+        <h2 className="sv-h">服务</h2>
+        <p className="sv-sub">{sub}</p>
+      </div>
 
       <div className="sv-sec">
+        <h3 className="sv-sec-h">服务规划</h3>
         {vErr ? (
           <>
             <p className="sv-err">服务规划读取失败：{vErr}</p>
@@ -78,7 +81,7 @@ export default function ServiceView() {
       </div>
 
       <div className="sv-sec">
-        <div className="sv-k">附近餐厅</div>
+        <h3 className="sv-sec-h">附近餐厅</h3>
         <NearbyList
           nb={nb}
           loading={nLoading}
@@ -90,3 +93,5 @@ export default function ServiceView() {
     </section>
   )
 }
+
+

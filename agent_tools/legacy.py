@@ -554,15 +554,23 @@ def _infer_guardrail(name: str, ptype: str, cost=None) -> str:
     return "优先蒸煮炖凉拌、少油少盐；控制份量与主食比例"
 
 
-def _amap_poi_search(city, district, query, budget, location="", page=1, radius=1500):
+def _amap_poi_search(city, district, query, budget, location="", page=1, radius=1500, diag=None):
     import re as _re
     # 坐标清洗：模型可能把「[当前位置：经度,纬度]」整串塞进 location，只提取两个浮点数，
     # 否则 amap 判定非法坐标退化为城市文本搜索，距离全是错位数字（如 128km）。
     _m = _re.search(r"(\d{1,3}\.\d{3,})[,\s，]+(\d{1,3}\.\d{3,})", str(location or ""))
     location = f"{_m.group(1)},{_m.group(2)}" if _m else ""
     """调用高德 POI 接口，返回标准化候选列表；无 key / 断网 / 接口报错返回 None（触发 mock 兜底）。
-    location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。"""
+    location 为 '经度,纬度' 时走周边搜索（带真实距离），否则走文本搜索（无距离）。
+
+    diag：可选的诊断字典。返回值只有「成/败」两种，调用方据此无法区分
+    「断网」「Key 平台不对」「配额耗尽」——2026-10-14 实测就出现过真实原因是
+    10009（USERKEY_PLAT_NOMATCH），而界面一律显示「网络异常」，用户拿着错的原因去修。
+    所以把失败细节写进 diag（`info` / `infocode` / `exception`），**不改返回值语义**，
+    不传 diag 的调用方行为完全不变。"""
     if not AMAP_KEY:
+        if diag is not None:
+            diag["info"] = "no_key"
         return None
     city_param = (city or "").strip()
     district_param = (district or "").strip()
@@ -637,9 +645,14 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
                     timeout=5,
                 )
                 data = resp.json()
-            except Exception:
+            except Exception as exc:
+                if diag is not None:
+                    diag["exception"] = f"{type(exc).__name__}: {exc}"
                 return None
             if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
+                if diag is not None:
+                    diag["info"] = data.get("info")
+                    diag["infocode"] = data.get("infocode")
                 return None
             pois = data.get("pois", []) or []
             if pois:
@@ -656,9 +669,14 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
                 timeout=5,
             )
             data = resp.json()
-        except Exception:
+        except Exception as exc:
+            if diag is not None:
+                diag["exception"] = f"{type(exc).__name__}: {exc}"
             return None
         if data.get("status") != "1":   # 高德 status=0 表示 key 无效 / 超限 / 配额耗尽
+            if diag is not None:
+                diag["info"] = data.get("info")
+                diag["infocode"] = data.get("infocode")
             return None
         pois = data.get("pois", []) or []
 

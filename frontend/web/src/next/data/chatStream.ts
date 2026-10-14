@@ -55,6 +55,16 @@ export interface SendChatParams {
   targetRecordId?: number
   targetRecipeIndex?: number
   targetDishName?: string
+  /**
+   * 本餐用餐人（2026-10-15）：首屏选的那几位，原样送到后端去记账。
+   *
+   * 传 **JSON 数组字符串**（`["小美","我"]`）而不是逗号拼接——成员名字里可能带逗号，
+   * 拼起来就没法还原了。后端 `chat_route.py::_parse_members` 对这个字段是宽容解析：
+   * 缺失、坏 JSON、不是数组，一律当"这一顿没登记用餐人"，绝不猜。
+   *
+   * 缺省不发这个字段 ⇒ 后端收到空数组 ⇒ 不写 `members` 键 ⇒ 行为与改动前完全一致。
+   */
+  members?: string[]
 }
 
 type Envelope = Record<string, unknown>
@@ -87,6 +97,12 @@ export async function* streamChat(
   if (typeof params.targetRecordId === 'number') body.append('target_record_id', String(params.targetRecordId))
   if (typeof params.targetRecipeIndex === 'number') body.append('target_recipe_index', String(params.targetRecipeIndex))
   if (params.targetDishName) body.append('target_dish_name', params.targetDishName)
+  // 本餐用餐人：**只在真选了人时才发**。空数组不发这个字段，后端就收不到、
+  // 也就不写 `members` 键——「一个都不选」因此天然走"这一顿不登记用餐人"那条路，
+  // 不需要前端另发一个"我故意没选"的信号（发了反而多一个可能与真实选择不同步的状态）。
+  if (params.members && params.members.length > 0) {
+    body.append('members', JSON.stringify(params.members))
+  }
 
   let resp: Response
   try {

@@ -683,7 +683,13 @@ def _extract_requested_dish(message: str) -> str | None:
     quoted = re.search(r"[「『\"“]([^」』\"”]{2,14})[」』\"”]", raw)
     if quoted:
         name = _LEADING_QUANTIFIER_STRIP.sub("", quoted.group(1).strip())
-        if name and not any(word in name for word in _REQUEST_SENTENCE_WORDS):
+        # 引号内的括号补注先摘掉再查需求句词表：补注里的「增肌/少油版」是菜名修饰，
+        # 不是需求句信号。实测「给「西兰花炒蛋拌面（增肌少油版）」换一张图」被词表里的
+        # 「增肌」拦下后掉进②剥词路径，抽出「给「西兰花炒蛋拌面」」残渣当菜名落库。
+        # 返回仍用 name 原文（含补注）——库里卡菜名带括号，搜图要精确匹配。
+        # 无括号的引号句走全词表，行为与修复前完全一致。
+        core = re.sub(r"[（(][^）)]{0,12}[）)]", "", name)
+        if core and not any(word in core for word in _REQUEST_SENTENCE_WORDS):
             return name[:40]
     text = re.sub(r"【[^】]+】", "", raw)
     text = re.sub(r"\[[^\]]+\]", "", text)
@@ -943,6 +949,36 @@ async def cancel_image_decision(
     }
 
 
+def _parse_members(raw: str | None) -> list[str]:
+    """解析前端带来的「本餐用餐人」（2026-10-15）。
+
+    传输形态 = **JSON 数组字符串**（`["小美","我"]`），**不用逗号分隔**——名字里
+    完全可能有逗号，那是会静默切错人的。规则：
+
+      · 空 / 非字符串 / 解析失败 / 不是数组 → `[]`
+        （**不抛异常**：用餐人是个可选增强，解析不了不该把整轮对话带崩）；
+      · 数组里只取非空字符串，去空白、去重、保序；
+      · 返回 `[]` 的语义是"这一顿没登记用餐人"，不是"没归属"——未归属由落库
+        那一层按"既没有 members 也没有 member"判定。
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    for item in parsed:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 @router.post("/chat")
 async def chat(
     session_id: str = Form(...),
@@ -956,6 +992,7 @@ async def chat(
     target_record_id: int | None = Form(None),
     target_recipe_index: int | None = Form(None),
     target_dish_name: str | None = Form(None),
+    members: str | None = Form(None),
 ):
     """统一聊天入口：仅流式分支。
     - SSE 逐事件推：正文 token -> 打字机；'structuring' -> 卡片占位动画；'answer' -> 整包 ChefAnswer JSON 渲染卡片
@@ -1208,6 +1245,25 @@ async def chat(
                 # （否则同一道菜在会话里出现两次，用户无法判断以哪个为准）。
                 # 换图不落这句：那是在显式要「另一张」，继续往下走重新生成，
                 # 新图贴回**同一张**卡片——不新增卡片，同菜两条的问题并不存在。
+                #
+                # 死锁修复（2026-10-08）：库有图 ≠ 前端已贴图——出卡轮 image_requested=False
+                # 时图只由后台补图写库、不发 image 事件，前端按钮恒显「配图」，点它又被这句
+                # 话顶回去，按钮永远点不通（独立浏览器两次复现）。带三件套的按钮点击（前端
+                # 处于图片轮）在回话前补发一条 image 事件把库图推回去：前端贴上后 sawImage=true，
+                # 按既有语义本轮实话被静默丢弃（图本身就是交代），按钮翻「换图」。贴图幂等、
+                # 不走生成、零生图成本。手动输入（不带三件套）不补发——那条路径前端不在
+                # 图片轮，事件没有挂靠的卡，维持原行为。
+                if target_record_id is not None:
+                    image_ai = bool(
+                        current_recipe.get("image_ai_generated")
+                        or (recipe_index == 0 and (target.get("answer") or {}).get("image_ai_generated"))
+                    )
+                    note = (
+                        current_recipe.get("image_note")
+                        or ((target.get("answer") or {}).get("image_note") if recipe_index == 0 else "")
+                        or ("AI 生成示意图（非真实成品照，仅供样式参考）" if image_ai else "")
+                    )
+                    yield f"data: {json.dumps({'image': {'record_id': target['record_id'], 'turn_id': turn_id, 'index': recipe_index, 'url': existing_image_url, 'ai_generated': image_ai, 'note': note}}, ensure_ascii=False)}\n\n"
                 final_answer = f"「{dish_name}」上一轮已经有配图了，就在上面那张卡片里。"
                 yield f"data: {json.dumps({'token': final_answer}, ensure_ascii=False)}\n\n"
                 return
@@ -1297,7 +1353,13 @@ async def chat(
                 try:
                     import json as _json
                     from api.routes.reports_route import record_meal
-                    record_meal(session_id, _json.loads(final_answer))
+                    # 本餐用餐人（2026-10-15）：前端首屏选了谁就带谁；没选 → []
+                    # （= 这一顿不登记用餐人，周报里对任何成员都不当分母，不摊派）。
+                    record_meal(
+                        session_id,
+                        _json.loads(final_answer),
+                        _parse_members(members),
+                    )
                 except Exception:
                     pass
             if not (answer and answer.strip()):
@@ -1675,6 +1737,8 @@ async def chat(
         else event_generator(),
         media_type="text/event-stream",
     )
+
+
 
 
 

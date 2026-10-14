@@ -8,8 +8,17 @@
    落地光、--radius-card（当前 0px，硬直角，与预期图一致）。圆角只用在按钮与
    药丸上（--radius / --radius-pill）——那是控件，不是卡片面。
 
-   单开一片而不进 base.css：base.css 已 886/1000，本片只定义 .cand-* 新类名，
-   与前面所有片的选择器不相交，放末层不挪动已有层叠。 */
+   单开一片而不进 base.css：base.css 已 886/1000，本片**前半**只定义 .cand-* 新类名，
+   与前面所有片的选择器不相交，放末层不挪动已有层叠。
+
+   ── 2026-10-14 例外（只此一处，写明以免下一个人以为写错了）──────────────
+   本片末尾那节「候选轮工作台版式」会写到 `.ask-layout.is-cand .ask-main` /
+   `.ask-side` 这两个**不属于 .cand-* 前缀**的选择器。原因：候选卡要横排三张、
+   参考信息要改到卡下横排三列，这两件事都必须同时（a）改到 .ask-main/.ask-side
+   的排布、（b）**只**作用于候选轮。`is-cand` 这个类由 views/ResultView.tsx 只在
+   候选分支加上——首屏的 .ask-layout 没有它，因此首屏那 9 项冻结几何逐像素不动。
+   放进本片而不是新开一片，是为了不新增样式表（新增一片要同时改 check-layers 的
+   STYLE_ORDER 与 main/fixture 两处 import 顺序，代价大于收益）。 */
 
 .cand {
   margin: 0 0 var(--s3);
@@ -37,11 +46,27 @@
   box-shadow: var(--shadow-paper);
 }
 
+/* 序号徽标（2026-10-14 第二轮，按设计稿改）：原来是「01 + 一条 1px 细线」，
+   稿上改成一枚实心圆里的两位数字。底色与字色沿用「选这个方案」那一对
+   （--accent 底 + --seal-ink 反白），于是序号与按钮在卡上属于同一层语义色，
+   不再各说各话；细线随之删掉（稿上卡头没有横线）。
+   align-self 必须写：.cand-card 是 flex 纵排，默认 stretch 会把圆拉成整行宽的
+   横条（这一条是改完当场看图发现的，不是推测）。
+   补零仍只发生在显示层：点卡片回给后端的仍是 data/candidates.ts 解析出的原始序号。 */
 .cand-no {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--seal-ink);
   font-family: var(--mono);
   font-size: var(--fs-note);
-  letter-spacing: 0.1em;
-  color: var(--accent);
+  letter-spacing: 0.02em;
 }
 
 /* 字重必须 400：Windows 上 SimSun 只有这一档，给 600 会触发**合成粗体**
@@ -75,9 +100,14 @@
   overflow: hidden;
 }
 
+/* 主行动按钮（2026-10-14 改「等宽同基线」）：原来是 align-self:flex-start
+   （按钮只有文字宽，99.5px），三张卡横排后按钮要撑满卡片、字居中，且三颗按钮
+   落在同一基线上。水平铺满不再靠 width:100% 写死，而是去掉那行 align-self
+   让卡片列的默认 stretch 生效——按钮宽度因此永远等于卡片内容宽，卡片一改宽
+   不用同步改一个数字。同基线由两件事共同保证：grid 行内三张卡等高 + 下面那行
+   margin-top:auto（注释见下）把按钮压到卡底。 */
 .cand-pick {
   margin-top: auto;
-  align-self: flex-start;
   padding: 7px 16px;
   font-family: var(--sans);
   font-size: var(--fs-data);
@@ -85,6 +115,7 @@
   background: var(--accent);
   border: 0;
   border-radius: var(--radius);
+  text-align: center;
   cursor: pointer;
 }
 
@@ -105,12 +136,27 @@
   color: var(--ink-faint);
 }
 
+/* 四个半句话（2026-10-14 改「单行四列」，10-14 第二轮改自适应）：
+   原来是 flex-wrap + 内容宽药丸，栏里折成 2+2、四个宽度各不相同、右缘参差。
+   现在等分列、各自撑满格子、内容居中；列数交给 auto-fit + 最小格宽，**不再靠
+   视口断点**：栏宽 745 时正好四列（与 B 稿的四枚一行一致），窄了自动降成 3/2 列
+   折行，不必再算"视口 ≥ 多少才装得下 153.5px"那种会随栏宽漂移的阈值。
+   150px 的依据：最长标签「直接告诉我吃什么」内容实测约 138px（含图标与内边距），
+   即格子 ≥150 就绝不会压到邻格；再窄就由 auto-fit 减列。
+   **为什么 flex:1 1 100% 把它推到单独一行**：标签「以上都不想吃？」留在第一行
+   （它是提问，不是选项），四列药丸整行占满。
+   white-space:nowrap：这一个字都不许折行（折行＝四个药丸高度参差）。 */
 .cand-asks {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 100%;
+  display: grid;
+  /* 稿上是**一行四枚**。右栏加宽到 400 后左栏只剩 623，最小列宽给 150 时
+     4×150 + 3×8（gap）= 624，比 623 大 1px——第四枚就被挤到第二行（真实页面
+     当场看图发现，差 1px 也要按实测改，不按"应该差不多"）。146 时 4×146+24 = 608，
+     四枚同排；最长那枚「直接告诉我吃什么」8 字约 96px + 内边距，146 装得下。 */
+  grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
   gap: 8px;
 }
 
@@ -122,7 +168,10 @@
 .cand-chip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: 100%;
+  white-space: nowrap;
   padding: 5px 12px;
   font-family: var(--sans);
   font-size: var(--fs-data);
@@ -141,4 +190,125 @@
 
 .cand-chip:hover {
   border-color: var(--accent);
+}
+
+/* ══ 候选轮「工作台」版式（2026-10-14 · 方向 B 落地 · 用满整张纸面）══════════
+   B 稿的版心是**横向铺开**的：左边一条候选卡带、右边一栏参考信息，两级并排。
+   42em（672px）的正文测度在这里不适用——候选轮的根本身就是 `result is-prose`，
+   result-v3.css 的 `.result.is-prose > *` 会把整列收到 672，于是 1055 的纸面里
+   有 617px 全空，三块参考信息也只能挤成三根 213px 的窄柱（实测最长那块高
+   1100px、另两块 770/680，「数据不足」被折成「数据不/足」）。故：
+     ① `is-cand` 由 views/ResultView.tsx 挂在候选轮的**根**上（此前只挂在
+        .ask-layout 上，管不到根那一层的宽度上限）；
+     ② 下面第一条把 is-cand 的宽度上限放开，第二条把正文按可读行长收回去；
+     ③ 三块参考信息回到右栏：.ask-layout 的网格本来就是 minmax(0,1fr) var(--rail)，
+        不再覆盖它，只把 <AskRail> 移回 .ask-main 之外即可。
+   只作用于候选轮：首屏 .ask-layout 与散文轮的 .result 都没有 is-cand。 */
+
+.result.is-cand > * {
+  max-width: none;
+}
+
+/* 右栏按设计稿加宽到 400（稿上是纸面的三分之一强），左栏因此从 747 收到 623、
+   三张卡 208 等宽——稿上的卡就是这样比现在更窄更高，右栏也才有地方把长清单
+   摊开。400 是**实测定**的，不是估的：菜名字号 13.5px，真实最长菜名
+   「西兰花炒蛋（增肌少油少盐版）」占 186.1px，加次数 7.9 与行内间隙 10 共 204px；
+   右栏 390 时右列只有 204（正好卡在临界，五个名字折成两行、断在括号中间，
+   当场看图发现），400 给到 216，留 12px 余量。
+   只改候选轮：首屏 .ask-layout 仍走 --side（276），9 项冻结几何不动。 */
+.result.is-cand .ask-layout {
+  grid-template-columns: minmax(0, 1fr) 400px;
+}
+
+/* 卡片是"面"：候选轮退掉 .ask-main 的左右内边距，三张卡正好占满左栏
+   （留着 32px 内边距，三列会比稿上窄 30px 且左右各空一条）。 */
+.result.is-cand .ask-main {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* 卡片与信息块是"面"，可以铺满；段落是"字"，必须收窄——1055px 的中文一行要
+   70 多个字，那已经不是书面。故正文单独收在 42em，并按设计稿给它一个纸面
+   内嵌块（描边 + 浅底 + 内边距）：它在这页是"下一步怎么说的说明书"，
+   不是与卡片同级的正文流。 */
+.result.is-cand .prose {
+  max-width: 42em;
+  margin-top: var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+}
+
+/* 页底三件事的排布（2026-10-14 第二轮，按设计稿）：候选轮把它们压成**一行**——
+   「查看本轮的真实过程」占左侧（flex:1），收藏/赞/踩居中，「再做一顿」推到右端。
+   真实过程一展开就让它整行独占并落到行尾（flex-basis 100% + order 9），
+   否则展开的几行会把三颗按钮挤到半宽，看起来像排版坏了。
+   只在候选轮生效：散文轮与结构化轮的页底保持原来的纵向堆叠，逐字不动。 */
+.result.is-cand .rs-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.result.is-cand .rs-foot .process {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.result.is-cand .rs-foot .process[open] {
+  flex: 1 1 100%;
+  order: 9;
+}
+
+.result.is-cand .rs-foot .process-note {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.result.is-cand .rs-foot .rs-acts {
+  margin: 0;
+}
+
+.result.is-cand .rs-foot .again {
+  margin: 0 0 0 auto;
+}
+
+/* 本周块内部分两列（2026-10-14 第二轮，按设计稿）：右栏加宽到 369 之后，
+   「本周实测 · 逐餐判定」与「常吃菜品」并排各占一列（约 175px）——加宽与分列
+   必须同时成立：只分列会把菜名折断，只加宽则长清单仍占满整栏高度。
+   列间距沿用 --s3（与卡片、右栏同一档，不新造间距值）。
+   这两个类名只出现在 blocks/WeekBlockCand.tsx（候选轮专用），不会外溢到首屏。 */
+.fs-cols {
+  display: grid;
+  /* 稿上是「窄左列 + 宽右列」：左边只有「钠 2 餐全绿」这类极短判定，
+     右边是菜名（最长「蒜香香菇红烧肉（全家可吃版）」约 156px）。
+     等分两列时右边只有 149.5，菜名会被折成两行——列宽按内容给，
+     不是按 1:1 给。左列 124 是「本周实测 · 逐餐判定」这一行标题的实测宽。 */
+  grid-template-columns: 124px minmax(0, 1fr);
+  /* 列间距用 --s2（12）而不是 --s3：右列要放下"菜名 + 次数"一整行，
+     最长那条实测 178px（「蒜香香菇红烧肉（全家可吃版）」156 + 次数 + 间隙），
+     间距给 24 时右列只剩 175，正好差 3px 被折成两行。 */
+  column-gap: var(--s2);
+  align-items: start;
+}
+
+/* 每列第一节标题不该带段前距（.fs-sub 自身有 margin-top），否则两列的
+   第一行不在同一基线上，并排一看就是歪的。 */
+.fs-col > .fs-sub:first-child {
+  margin-top: 0;
+}
+
+/* 「常吃菜品」的菜名是数据，不许被省略号吃掉：`.fs-dname` 原本 nowrap+ellipsis，
+   右栏 278px 下多数名字放得下，长的（「蒜香香菇红烧肉（全家可吃版）」）仍会被截，
+   缩窄时更糟。候选轮里允许折行，换回来一个完整的菜名。
+   首屏那份（.ask-side 不在 .is-cand 下）一个字不动。 */
+.result.is-cand .fs-dname {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }

@@ -16,8 +16,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
+        // 2026-10-13 起首页 `/` 是新前端：index.html 与 next.html 指向同一套
+        // next/main.tsx（next.html 是同内容直链别名），legacy.html 是第二版
+        // （src/main.tsx），保留可访问、也保留随时回退的能力。
         main: entry('index.html'),
         next: entry('next.html'),
+        legacy: entry('legacy.html'),
       },
     },
   },

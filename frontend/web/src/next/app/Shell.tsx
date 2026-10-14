@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { switchActiveMember, addMember, updateMember, deleteMember } from '../../api/client.ts'
 import type { MemberInput } from '../../api/client.ts'
 import { familyFacts, notifyMemberSwitched, useHousehold, type FamilyData } from '../data/household.ts'
+import { familyRows } from '../data/firstScreen.ts'
 import { ProfileView } from '../views/ProfileView.tsx'
-import { Icon, type IconName } from '../ui/Icon.tsx'
 
 /**
  * 全局导航壳（2026-09-29 户型图第 2 步）。
@@ -34,28 +34,29 @@ const ROOMS = ['tonight', 'profile', 'weekly', 'fav', 'svc'] as const
 type RoomId = (typeof ROOMS)[number]
 
 const ROOM_LABEL: Record<RoomId, string> = {
-  tonight: '今晚这一顿',
+  tonight: '今天吃什么',
   profile: '身体档案',
   weekly: '周报',
   fav: '收藏',
   svc: '服务',
 }
 
-/** 房间图标（2026-10-05 竖栏补密第二刀）。
+/** 房间图标（2026-10-11 第三刀）：改用**从设计稿切片**的位图，替换原先的手绘 <Icon>。
  *
- *  复用 ui/Icon.tsx 里已有的 13 个图标，不新画、不引依赖。Icon 是 width/height=1em
- *  且 stroke=currentColor，所以尺寸与颜色都由本片的 CSS 决定——文字调大它跟着大。
+ *  为什么换：用户点名要「设计师给的导航小图标」逐个复刻。稿上这五枚是**双色**的
+ *  （陶棕描边 + 浅陶填充），而 ui/Icon.tsx 是单色线稿（stroke=currentColor），
+ *  画不出那一档；形状也对不上——稿里五项实测分别是房子 / 人像 / 折线图 / 五角星 /
+ *  心形，原先映射的 utensils / people / calendar / star / hat 只有 star 一项撞对。
  *
- *  映射依据（不是随手配）：今晚这一顿=餐具、身体档案=人、周报=日历、收藏=星。
- *  服务这一项实测其页面是「附近餐厅 + 服务规划」（ServiceView 的 sv-k 写着"附近餐厅"），
- *  所以给厨师帽而不是对话或漏斗——配错图标比不配更糟，这一项是专门核对过的。 */
-const ROOM_ICON: Record<RoomId, IconName> = {
-  tonight: 'utensils',
-  profile: 'people',
-  weekly: 'calendar',
-  fav: 'star',
-  svc: 'hat',
-}
+ *  切片来源（.tmp-img/design-round/，1536×1024，S=1366/1536）：
+ *  四项取自 profile-expect-v5.png；**「身体档案」取自 fav-expect-v4.png**——
+ *  profile 稿里那一项正压在选中底块上、且是加深色，换一张同画风的稿才拿到
+ *  与其余四枚一致的「未选中态」颜色。逐项 bbox / 闸门见
+ *  assets/hero/manifest.json，样式见 styles/rail.css 的 .shell-tab-i-*。
+ *
+ *  取舍（诚实记）：位图把颜色也一起切死了（浅陶一档），稿里当前项图标会再加深；
+ *  这里做不到，选中态仍由 .shell-tab.is-on 的整行浅陶块承担。
+ *  类名直接用房间 id 拼（.shell-tab-i-${id}），不再需要一张常量映射表。 */
 
 /** 从 hash 认房间。认不出（空、写错、手改过）一律回今晚——
  *  宁可把用户放回主面，也不要把他放进一个不存在的房间。 */
@@ -88,7 +89,9 @@ export default function Shell({
 
   // 不再解构 activeName：竖栏补密后成员名单直接列出并标出当前那位，
   // 「当前是谁」由 family.active_id 现算，多留一个派生量只会多一处可能不同步的名字。
-  const { family, applyFamily } = useHousehold()
+  // readError 只往档案房传：那里是"读不到"最该说清原因的界面（竖栏只有一行位置，
+  // 而且它已由兜底文案「还没有读出来」如实表达）。
+  const { family, applyFamily, readError } = useHousehold()
   const facts = familyFacts(family)
 
   /**
@@ -177,32 +180,21 @@ export default function Shell({
             aria-current={room === id ? 'page' : undefined}
             onClick={() => go(id)}
           >
-            <Icon name={ROOM_ICON[id]} />
+            {/* 位图图标（2026-10-11 第三刀）：图形本体由 .shell-tab-i-<room> 的
+                background 供给，尺寸写死在 rail.css 里、取自 manifest.json 的
+                cssWidth/cssHeight，不用 contain 硬撑。它是纯装饰，房间名在旁边的
+                .shell-tab-t 里已经读得出来，所以不进无障碍树。 */}
+            <span className={`shell-tab-i shell-tab-i-${id}`} aria-hidden="true" />
             <span className="shell-tab-t">{ROOM_LABEL[id]}</span>
           </button>
         ))}
-        {/* 竖栏装饰：册页"书脊 + 三枚回纹章"（2026-10-05 第五刀换形 / 第六刀加厚）。
-            第六刀只做一件事：按用户"看着有些单薄"的反馈把笔画加粗——书脊 2.5px、
-            章 26px 配 5px 粗边。**加厚靠面积而不是靠加深颜色**：颜色一动就会去和
-            导航抢焦点，而这处装饰的定位自始至终是"纸面纹理"。
-            第四刀那版"索引脊柱"（断续竖线 + 短刻度）被换掉，原因不是不好看，
-            而是**用户没看见**：截图像素统计显示它与纸底的最大通道差只有 19、
-            超过 16 的像素仅占 2.0%，落在感知阈值以下。用户原话是问
-            "不是要在导航栏下方给我增添一些图案吗"。
-            第五刀按两家商讨的一致结论换形态：细线+刻度在语汇上是测量工具，
-            用户要的是图案。选 lave 的"书脊 + 三枚回纹章"而非连续纹样带，是因为
-            它有图案主体（章），符合"增添图案"的字面期待。
-
-            位置必须在**目录块之后、成员区之前**：它靠 flex:1 吃掉两者之间的剩余高度。
-            第一版曾插在成员区之后，实测成员区顶 y 与目录块底重合（都是 364），
-            装饰被挤到成员区下面去了——这一处的位置有实测依据，不要随意挪。
-            三个 <i> 是纯装饰容器（回纹方框，无文字）：外层已 aria-hidden，
-            读屏不会念到它们。 */}
-        <span className="shell-rail-art" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
+        {/* 竖栏装饰块改形记录（2026-10-10）：上一版"书脊 + 三枚回纹章"（连同
+            这里的三个 <i /> 与 rail.css 的对应规则）整段退役，换为首屏方向稿的
+            轨底藤蔓——用户全盘认可该稿并点名「包括底下的树叶之类的背景图案」
+            （六条之第 5 条）。艺术块本体保留（flex:1 吃竖栏剩余高度的职责不变），
+            但按新稿**移到成员区之后**：稿里成员块不贴底、叶子在它下方的留白生长。
+            旧注释"不要随意挪"是旧布局的实测约束（art 在成员前吃中间空），新位置
+            由新稿裁决，同样靠 flex:1 吸收高度差。装饰内容与样式见 rail.css。 */}
         {/* 家庭成员（2026-10-01 B 批次①，2026-10-05 竖栏补密时展开成区块）：
             它是全局上下文、不是房间，所以挂在本组件、由 React state 控制，
             hash 不承载它的状态（打开抽屉不该多一条历史、不该让后退键迷路）。
@@ -217,9 +209,13 @@ export default function Shell({
         <span className="shell-ctx">
           <span className="shell-ctx-h">家庭成员</span>
           {family && family.members.length > 0 ? (
+            /* 2026-10-10 画风对齐：行数据改走 familyRows()（右栏「按谁的档案来定」用的
+               同一个转换），于是姓名 / 条件标签 / 是否当前生效**一处定义、两处同源**——
+               左轨不再自己从 FamilyMember 上取字段（那样取不到 tags，因为真实
+               API 的脸是 { id, name, profile }，标签要由 profile.conditions + goal 推）。 */
             <ul className="shell-members">
-              {family.members.map((m) => {
-                const on = family.active_id === m.id
+              {(familyRows(family)?.members ?? []).map((m) => {
+                const on = m.isActive
                 return (
                   <li key={m.id}>
                     <button
@@ -230,7 +226,19 @@ export default function Shell({
                       title={on ? '当前生效' : `切换到 ${m.name}`}
                       onClick={() => void pick(m.id)}
                     >
+                      {/* 头像圆（2026-10-10 画风对齐）：**实底陶圆 + 白色人形剪影**
+                          （稿的画法）。图形由 .shell-member-av 的 --av-people 背景图供给，
+                          内部不再放 Icon——两形叠加会变成"圆里套圆"。
+                          红线仍是无肖像：人形剪影不是脸。 */}
+                      <span className="shell-member-av" aria-hidden="true" />
                       <span className="shell-member-name">{m.name}</span>
+                      {/* 「孕妇 / 增肌」标签（2026-10-10 按稿）：稿里成员名右侧有身份小片。
+                          数据取 familyRows() 推的 tags（真实档案字段，不是为对齐设计图补的文案）。 */}
+                      {m.tags.map((t) => (
+                        <span key={t} className="shell-member-tag">
+                          {t}
+                        </span>
+                      ))}
                       {on && <span className="shell-member-on">当前</span>}
                     </button>
                   </li>
@@ -248,6 +256,10 @@ export default function Shell({
             成员详情
           </button>
         </span>
+        {/* 轨底藤蔓（2026-10-10 换形后的新位置）：成员区之下、竖栏留白处生长——
+            与首屏方向稿一致（稿里成员块不贴底，叶子在它下方）。flex:1 吃掉
+            底部剩余高度，竖栏怎么变高都不用改数字；样式见 rail.css。 */}
+        <span className="shell-rail-art" aria-hidden="true" />
       </nav>
 
       <div className="shell-main">
@@ -269,6 +281,7 @@ export default function Shell({
             <ProfileView
               family={family}
               shared={facts?.shared ?? null}
+              readErr={readError}
               onPick={(id) => void pick(id)}
               onAdd={(input: MemberInput) => void runWrite(() => addMember(input))}
               onUpdate={(id: string, input: MemberInput) => void runWrite(() => updateMember(id, input))}

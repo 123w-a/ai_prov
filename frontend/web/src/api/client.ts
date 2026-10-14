@@ -10,6 +10,7 @@ import type {
   ServiceVision,
   FavoriteItem,
   Session,
+  MemberWeeklyReport,
   WeeklyReport,
 } from '../types'
 
@@ -75,12 +76,20 @@ export async function deleteMessage(sessionId: string, messageId: number): Promi
   )
 }
 
-export async function transcribeAudio(audio: File): Promise<string> {
+/**
+ * 语音转写。端点实测为 `/api/transcribe`（POST，字段名 `audio`）——
+ * 后端不存在 `/api/speech`（实测 404，见交付证据），方案里那个路径是笔误。
+ *
+ * `signal` 是 2026-10-12 新增的**可选**参数：新前端书写面的麦克风在组件卸载时
+ * 要真的断掉在途转写（否则用户切房/卸载后仍留一个后台请求）。老前端调用点
+ * （App.tsx 的 onTranscribe）不传，行为不变——加参数不改语义，也不改返回。
+ */
+export async function transcribeAudio(audio: File, signal?: AbortSignal): Promise<string> {
   const body = new FormData()
   body.append('audio', audio)
   const result = await jsonRequest<
     ApiEnvelope<{ text: string; provider: string; available: boolean }>
-  >('/api/transcribe', { method: 'POST', body })
+  >('/api/transcribe', { method: 'POST', body, signal })
 
   if (result.code !== 200 || !result.data.available) {
     throw new Error(result.messages || '语音识别暂不可用')
@@ -268,6 +277,10 @@ export interface MemberInput {
       weight_kg: number | null
       age: number | null
       sex: '' | 'male' | 'female' | 'other'
+      /** 孕周（2026-10-11 新增，可空）。用户录入。 */
+      gestational_weeks?: number | null
+      /** 体脂率（2026-10-11 新增，可空）。用户录入/体脂秤同步，后端不推算。 */
+      body_fat_rate?: number | null
     }
   }
 }
@@ -432,6 +445,22 @@ export async function fetchWeeklyReport(): Promise<WeeklyReport> {
   return jsonRequest<WeeklyReport>("/api/reports/weekly")
 }
 
+/**
+ * 某位成员的近 7 天周报（2026-10-15 接线，配周报页的成员卡片）。
+ *
+ * 用**名字**而不是 id：整条归属链（`meals.json` 的 `member`/`members`、后端的
+ * `by_member` 键、回填脚本的匹配）都以名字为准，另起一套 id 会多出一个可能与名字
+ * 不同步的身份系统。名字走 encodeURIComponent——中文名与可能带上的空格/斜杠都照传。
+ *
+ * 与 `fetchWeeklyReport` 一样是裸返回（`/api/reports/*` 这族不走 ApiEnvelope）。
+ * 查不到这位成员的餐时后端返回 `has_data: false`，**不是**错误码——调用方按诚实空态处理。
+ */
+export async function fetchMemberWeekly(name: string): Promise<MemberWeeklyReport> {
+  return jsonRequest<MemberWeeklyReport>(
+    `/api/reports/member-weekly?name=${encodeURIComponent(name)}`,
+  )
+}
+
 export interface WeeklySummaryResponse {
   ai_summary: string | null
   reason?: string
@@ -517,6 +546,45 @@ export async function fetchFridge(): Promise<string[]> {
   return result.items ?? []
 }
 
+/**
+ * 覆盖冰箱清单（`POST /api/fridge/set`，2026-10-14 接线）。
+ *
+ * **传进去的每一样都代表"还在冰箱里"**——后端把这次没出现的旧项记成「吃掉/用掉」
+ * （`api/routes/fridge_route.py` 的 `set_fridge`）。所以"删掉一样"就是传"剩下那几样"，
+ * 不需要单独的删除端点；后端也就顺手有了消耗流水，周报的补货建议靠它。
+ *
+ * 用换行拼接：后端切分符里包含 `\n`（`service_route.py` 的 `_split_inventory_text`），
+ * 而食材名里不可能有换行——比用顿号拼稳（名字里真带顿号就会被凭空裂成两样）。
+ */
+export async function setFridge(items: string[]): Promise<string[]> {
+  return postFridge('/api/fridge/set', items.join('\n'))
+}
+
+/**
+ * 往冰箱里补货（`POST /api/fridge/add`，追加去重，不覆盖）。
+ *
+ * `text` 是**用户原样输入**，前端不切分：后端会清掉数量单位、剥掉"家里还有"这类前缀，
+ * 再按顿号/逗号/换行/斜杠切开。切分规则只留后端一份——两处各写一遍，迟早出现
+ * "前端切出 3 样、后端切出 2 样"的分叉，而这种分叉只会在用户输入带数字时才露出来。
+ */
+export async function addFridge(text: string): Promise<string[]> {
+  return postFridge('/api/fridge/add', text)
+}
+
+/** 两个冰箱写端点同形：`items` 是 **form 字段**（后端签名是 `items: str = Form("")`），
+ *  而不是 JSON body——按 JSON 发会拿到 422，这是接这两个端点最容易踩的一步。
+ *  返回的是后端写盘后的**权威清单**，调用方拿它刷新即可，不必再 GET 一次。 */
+async function postFridge(path: string, items: string): Promise<string[]> {
+  const body = new URLSearchParams()
+  body.append('items', items)
+  const result = await jsonRequest<{ items?: string[] }>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  return result.items ?? []
+}
+
 export interface MealFeedbackPayload {
   dish: string
   rating: number
@@ -531,3 +599,5 @@ export async function submitMealFeedback(payload: MealFeedbackPayload): Promise<
     body: JSON.stringify(payload),
   })
 }
+
+

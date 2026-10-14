@@ -43,6 +43,16 @@ class BasicInfo(BaseModel):
     weight_kg: Optional[float] = Field(default=None, ge=2, le=500)
     age: Optional[int] = Field(default=None, ge=0, le=120)
     sex: str = Field(default="", pattern="^(|male|female|other)$")
+    # 2026-10-11 新增（全部可空，不改既有字段语义）。都挂在 basic 下：这两个数
+    # 与身高/体重/年龄同类，是"身体的基础数据"，档案页那一块「基础数据」读的
+    # 就是 profile.basic。
+    #   · gestational_weeks 孕周 —— 只能由用户自己录入；NULL = 没登记。
+    #     上限 45 是**防呆**（医学上孕周不会更多），不是把值往上凑。
+    #   · body_fat_rate 体脂率（%）—— 用户录入或体脂秤同步。**当前算不出来**：
+    #     后端没有可用的体脂推算模型，禁止用 BMI 之类的估算值填这个字段。
+    #     上界 70 同样只是防呆，不是正常值域。
+    gestational_weeks: Optional[int] = Field(default=None, ge=0, le=45)
+    body_fat_rate: Optional[float] = Field(default=None, ge=1, le=70)
 
 class HealthProfilePayload(BaseModel):
     basic: BasicInfo = Field(default_factory=BasicInfo)
@@ -137,6 +147,88 @@ def _find_member(family: dict, member_id: str):
     return None
 
 
+def _member_public(member: dict, meals: list[dict] | None = None) -> dict:
+    """成员档案的**只读投影**：补齐新增字段（旧档缺 → null）+ 注入算出来的营养进度。
+
+    为什么返回新对象而不就地改：`nutrition_progress` 是算出来的、**不落盘**。
+    就地改 `_read_family()` 返回的那个 dict 的话，下一次 `_write_family` 会把它
+    写进 profile.json，之后 v2 快速路径又会把它当既有字段原样读回来——等于拿一份
+    过期的进度当数据。所以投影必须是拷贝。
+
+    「旧档案缺字段 → null」也在这里兜：v2 快速路径是**原样返回**磁盘内容的
+    （见 `_read_family`），老成员的 basic 里根本没有这两个键，不补就是 undefined
+    而不是 null；而"不迁移、不猜值"是 2026-10-11 定的口径，所以只在响应里补
+    null，不写回磁盘、也不替用户填任何默认数值。
+
+    营养进度算不出来（导入失败/异常）时同样给 null——null 的语义就是"后端还不知道"，
+    前端据此显示「待补」；不能让一个附加字段把整份档案读崩。
+
+    `meals` 由 `_family_payload` 读一次传进来：8 位成员不要读 8 遍盘，更重要的是
+    同一份响应里所有成员必须**看到同一份记账快照**（否则两个人可能跨在一次写入
+    的两侧，页面上两个进度就不是同一时刻的）。
+    """
+    profile = dict(member.get("profile") or {})
+    basic = dict(profile.get("basic") or {})
+    basic.setdefault("gestational_weeks", None)
+    basic.setdefault("body_fat_rate", None)
+    profile["basic"] = basic
+    try:
+        from api.routes.reports_route import member_nutrition_progress
+
+        profile["nutrition_progress"] = member_nutrition_progress(member, meals=meals)
+    except Exception:
+        profile["nutrition_progress"] = None
+    out = dict(member)
+    out["profile"] = profile
+    return out
+
+
+def _shared_dislikes(members: list[dict]) -> list[str]:
+    """家户级忌口 = **每个人都忌**的那几样（交集），不是并集（2026-10-14 新增）。
+
+    为什么后端要出这个字段：这个判断原先在两处前端各写了一遍，而且**口径不一致**——
+    `next/data/household.ts` 算的是交集（对的），`next/data/firstScreen.ts` 算的是并集
+    （错的）。当前真实档案两人恰好都忌芹菜，所以两者结果相同、错的那个一直没露出来；
+    一旦只有一个人忌香菜，首屏就会写「共同忌口 香菜」——把个人忌口说成全家的。
+    口径只能有一个，所以判定搬回后端，前端两处都读同一个值。
+
+    **不是"家户级忌口"这个新概念**：后端没有、也不新增任何"全家必须忌"的独立配置，
+    这个值完全由各成员自己的 dislikes 推出来，改了成员就跟着变。
+
+    单人家庭返回 []（一个人的忌口是他自己的，不是全家的）；顺序跟随第一位成员，
+    不用 sorted——忌口顺序是用户自己填的，排序会让同一个值在不同次请求里换位置。
+    """
+    if len(members) < 2:
+        return []
+    sets: list[set[str]] = []
+    for m in members:
+        raw = (m.get("profile") or {}).get("dislikes") or []
+        sets.append({str(x).strip() for x in raw if str(x).strip()})
+    if not sets:
+        return []
+    first = [str(x).strip() for x in ((members[0].get("profile") or {}).get("dislikes") or [])]
+    return [d for d in dict.fromkeys(first) if d and all(d in s for s in sets)]
+
+
+def _family_payload(family: dict) -> dict:
+    """响应里的家庭档：成员逐个过 `_member_public`，其余字段（version/active_id）原样，
+    再补一个算出来的 `shared_dislikes`（不落盘，同 `nutrition_progress` 的处理）。"""
+    try:
+        from api.routes.reports_route import read_meals
+
+        meals: list[dict] | None = read_meals()
+    except Exception:
+        meals = None  # 读不动记账 → 交回 _member_public 的兜底（进度给 null）
+    members = family.get("members") or []
+    return {
+        **family,
+        "members": [_member_public(m, meals=meals) for m in members],
+        # 只加在响应里、不写回 profile.json：它是推导值，落盘就会变成过期数据
+        # （与 nutrition_progress 同一条理由，见 _member_public 的说明）。
+        "shared_dislikes": _shared_dislikes(members),
+    }
+
+
 @router.get("/preferences")
 def get_preferences():
     text = ""
@@ -152,7 +244,10 @@ def update_preferences(payload: PreferencesPayload):
 
 @router.get("/profile")
 def get_profile():
-    """读取家庭画像（v1 自动迁移）。返回 members 全量 + active_id。"""
+    """读取家庭画像（v1 自动迁移）。返回 members 全量 + active_id。
+
+    成员画像经 `_member_public` 投影：新增字段（孕周/体脂率/营养进度）齐全，
+    旧档案缺失的键一律为 null。"""
     with _family_lock():
         family = _read_family()
         if family is None:
@@ -160,9 +255,13 @@ def get_profile():
             return {
                 "code": 200,
                 "messages": "尚未建档",
-                "data": {"exists": False, "family": default},
+                "data": {"exists": False, "family": _family_payload(default)},
             }
-        return {"code": 200, "messages": "画像读取成功", "data": {"exists": True, "family": family}}
+        return {
+            "code": 200,
+            "messages": "画像读取成功",
+            "data": {"exists": True, "family": _family_payload(family)},
+        }
 
 @router.put("/profile")
 def update_profile(payload: HealthProfilePayload):
@@ -172,7 +271,7 @@ def update_profile(payload: HealthProfilePayload):
         member = _find_member(family, family["active_id"]) or family["members"][0]
         member["profile"] = payload.model_dump()
         _write_family(family)
-    return {"code": 200, "messages": "画像已保存", "data": {"exists": True, "family": family}}
+    return {"code": 200, "messages": "画像已保存", "data": {"exists": True, "family": _family_payload(family)}}
 
 @router.post("/profile/members")
 def add_member(payload: MemberPayload):
@@ -189,7 +288,7 @@ def add_member(payload: MemberPayload):
         family["members"].append(member)
         family["active_id"] = member["id"]
         _write_family(family)
-    return {"code": 200, "messages": f"成员「{member['name']}」已建档并激活", "data": {"exists": True, "family": family}}
+    return {"code": 200, "messages": f"成员「{member['name']}」已建档并激活", "data": {"exists": True, "family": _family_payload(family)}}
 
 class DislikeAddPayload(BaseModel):
     item: str = Field(min_length=1, max_length=12)
@@ -258,7 +357,7 @@ def update_member(member_id: str, payload: MemberPayload):
         member["name"] = payload.name.strip()
         member["profile"] = payload.profile.model_dump()
         _write_family(family)
-    return {"code": 200, "messages": "成员已更新", "data": {"exists": True, "family": family}}
+    return {"code": 200, "messages": "成员已更新", "data": {"exists": True, "family": _family_payload(family)}}
 
 @router.delete("/profile/members/{member_id}")
 def delete_member(member_id: str):
@@ -280,7 +379,7 @@ def delete_member(member_id: str):
         clear_member_candidates(member_id, str(member.get("name") or ""))
     except Exception:
         pass
-    return {"code": 200, "messages": f"成员「{member['name']}」已删除", "data": {"exists": True, "family": family}}
+    return {"code": 200, "messages": f"成员「{member['name']}」已删除", "data": {"exists": True, "family": _family_payload(family)}}
 
 
 @router.delete("/profile/member/{member_id}")
@@ -298,7 +397,7 @@ def switch_active(payload: ActiveMemberPayload):
             raise HTTPException(status_code=404, detail="成员不存在")
         family["active_id"] = member["id"]
         _write_family(family)
-    return {"code": 200, "messages": f"已切换到「{member['name']}」", "data": {"exists": True, "family": family}}
+    return {"code": 200, "messages": f"已切换到「{member['name']}」", "data": {"exists": True, "family": _family_payload(family)}}
 
 
 class ImportPayload(BaseModel):
@@ -356,7 +455,7 @@ def import_family(payload: ImportPayload):
     return {
         "code": 200,
         "messages": f"导入完成：新增 {added} 人，更新 {updated} 人",
-        "data": {"exists": True, "family": family},
+        "data": {"exists": True, "family": _family_payload(family)},
     }
 
 

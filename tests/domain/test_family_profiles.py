@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.routes import preferences_route as pr
+from api.routes import reports_route as rr
 from main import load_preferences
 from domain.nutrition_rules import audit, conditions_from_profile, detect_conditions
 
@@ -31,6 +32,10 @@ class FamilyProfileTest(unittest.TestCase):
         patcher_d = patch.object(pr, "_DATA_DIR", self.data_dir)
         patcher_m = patch("main._PROFILE_PATH", self.profile_path)
         patcher_t = patch("main._PREFS_PATH", str(self.prefs_path))
+        # 记账文件也指向临时目录：营养进度会被投影进 /profile，而它读的是 meals.json。
+        # 不隔离的话这个测试会读到仓库真实的 data/meals.json（回填后有真值），
+        # 断言就会随真实数据漂移——测试要钉代码，不能钉现场数据。
+        patcher_meals = patch.object(rr, "_MEALS", self.data_dir / "meals.json")
         fake_tool = type("_FakeGetFile", (), {
             "invoke": staticmethod(lambda args=None, _s=self: (
                 _s.prefs_path.read_text(encoding="utf-8")
@@ -38,7 +43,7 @@ class FamilyProfileTest(unittest.TestCase):
             )),
         })
         patcher_g = patch("main.get_file", fake_tool)
-        for p in (patcher_p, patcher_d, patcher_m, patcher_t, patcher_g):
+        for p in (patcher_p, patcher_d, patcher_m, patcher_t, patcher_meals, patcher_g):
             p.start()
             self.addCleanup(p.stop)
         self.client = _client()
@@ -166,6 +171,112 @@ class FamilyProfileTest(unittest.TestCase):
             any(v["condition"] == "孕期" for v in violations),
             "档案声明孕18周时，生鱼片+啤酒必须命中孕期硬护栏",
         )
+
+    # ── 2026-10-11 新增两个身体字段：gestational_weeks / body_fat_rate ──────
+
+    def _write_old_v2_profile(self):
+        """结构完整的老 v2 档案：basic 里没有两个新字段（模拟旧档案）。"""
+        self.profile_path.write_text(json.dumps({
+            "version": 2,
+            "active_id": "m_old",
+            "members": [{
+                "id": "m_old", "name": "小美",
+                "profile": {
+                    "basic": {"height_cm": 165.0, "weight_kg": None, "age": 30, "sex": "female"},
+                    "conditions": ["孕18周"], "allergens": [], "restricts": [],
+                    "goal": "", "diet_style": "", "dislikes": [], "taste_notes": [],
+                },
+            }],
+        }, ensure_ascii=False), encoding="utf-8")
+
+    def test_new_body_fields_are_null_for_old_profile_and_never_migrated(self):
+        """旧档案两个字段返回 null；且**不迁移**——不动磁盘上的档案。"""
+        self._write_old_v2_profile()
+        basic = self.client.get("/profile").json()["data"]["family"]["members"][0]["profile"]["basic"]
+        self.assertIn("gestational_weeks", basic)
+        self.assertIn("body_fat_rate", basic)
+        self.assertIsNone(basic["gestational_weeks"])
+        self.assertIsNone(basic["body_fat_rate"])
+        on_disk = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        disk_basic = on_disk["members"][0]["profile"]["basic"]
+        self.assertNotIn("gestational_weeks", disk_basic)
+        self.assertNotIn("body_fat_rate", disk_basic)
+
+    def test_new_body_fields_write_and_read_through_existing_endpoints(self):
+        """POST /profile/members 可写、GET /profile 可读（旧端点，未新造接口）。"""
+        created = self.client.post("/profile/members", json={
+            "name": "孕妈",
+            "profile": {
+                "conditions": ["孕18周"],
+                "basic": {
+                    "height_cm": 165.0, "weight_kg": 58.0, "age": 30, "sex": "female",
+                    "gestational_weeks": 18, "body_fat_rate": 24.5,
+                },
+            },
+        }).json()["data"]["family"]
+        new_id = created["active_id"]
+        member = next(m for m in created["members"] if m["id"] == new_id)
+        self.assertEqual(member["profile"]["basic"]["gestational_weeks"], 18)
+        self.assertEqual(member["profile"]["basic"]["body_fat_rate"], 24.5)
+
+        fam = self.client.get("/profile").json()["data"]["family"]
+        member = next(m for m in fam["members"] if m["id"] == new_id)
+        self.assertEqual(member["profile"]["basic"]["gestational_weeks"], 18)
+        self.assertEqual(member["profile"]["basic"]["body_fat_rate"], 24.5)
+
+        # 另一个成员（默认档）没有登记 → null，不是 0、也不是别人的值
+        others = [m for m in fam["members"] if m["id"] != new_id]
+        self.assertIsNone(others[0]["profile"]["basic"]["gestational_weeks"])
+
+    def test_put_still_overwrites_whole_member_profile(self):
+        """钉住既有 PUT 语义（整成员覆盖）：没带的字段被清空——不是新引入的行为。
+
+        前端因此必须把这两个字段带回 PUT（见 ProfileView 的 onSubmit 合并），
+        否则用户编辑一次就把录入的孕周/体脂率静默抹掉。
+        """
+        created = self.client.post("/profile/members", json={
+            "name": "孕妈",
+            "profile": {"basic": {"gestational_weeks": 20, "body_fat_rate": 25.0}},
+        }).json()["data"]["family"]
+        mid = created["active_id"]
+
+        updated = self.client.put(f"/profile/members/{mid}", json={
+            "name": "孕妈",
+            "profile": {"basic": {"body_fat_rate": 26.0}},
+        }).json()["data"]["family"]
+        member = next(m for m in updated["members"] if m["id"] == mid)
+        self.assertEqual(member["profile"]["basic"]["body_fat_rate"], 26.0)
+        self.assertIsNone(member["profile"]["basic"]["gestational_weeks"])
+
+    def test_out_of_range_body_fields_rejected(self):
+        resp = self.client.post("/profile/members", json={
+            "name": "越界",
+            "profile": {"basic": {"gestational_weeks": 99, "body_fat_rate": 200}},
+        })
+        self.assertEqual(resp.status_code, 422)
+
+    def test_nutrition_progress_shape_and_null_value(self):
+        """营养进度：{value,numerator,denominator,period}；本 fixture 一条餐次都没归属到成员。
+
+        分母 0 → value null（不是 0%：那会被读成"一餐都没达标"）。判据（三盏灯全绿）
+        与归属过滤的边界在 tests/api/test_nutrition_progress.py。
+        period 是真实窗口（与周报同源，见 tests/api/test_reports_route.py 的一致性用例）；
+        并且它**不落盘**——算出来的东西写进 profile.json 就会被当成档案里的既有字段。
+        """
+        fam = self.client.get("/profile").json()["data"]["family"]
+        np = fam["members"][0]["profile"]["nutrition_progress"]
+        self.assertEqual(set(np), {"value", "numerator", "denominator", "period"})
+        self.assertIsNone(np["value"])
+        self.assertEqual(np["numerator"], 0)
+        self.assertEqual(np["denominator"], 0)
+        self.assertRegex(np["period"]["start"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(np["period"]["end"], r"^\d{4}-\d{2}-\d{2}$")
+
+        self.client.post("/profile/members", json={"name": "妈妈", "profile": {}})
+        on_disk = self.profile_path.read_text(encoding="utf-8")
+        self.assertNotIn("nutrition_progress", on_disk)
+        # 也没顺手把两个新字段"迁移"进旧档案以外的任何地方：这里只查进度不进档
+        self.assertIn("gestational_weeks", on_disk)  # 写入路径自然带上的空值，语义可空
 
 
 if __name__ == "__main__":

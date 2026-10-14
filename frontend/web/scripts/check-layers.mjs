@@ -50,6 +50,10 @@ const STYLE_ORDER = [
   './styles/primitives.css',
   // 收藏房（第 4 步）：只定义 .fv-* 新类名，登记为末层，与前面选择器不相交。
   './styles/fav.css',
+  // 收藏房卡片片（2026-10-11 第二轮）：从 fav.css 拆出（那一轮加到 1011 行越上限）。
+  // 它是"照 fav-expect-v4 稿重建的那一层"，与 fav.css 大量同选择器重叠、靠后写覆盖，
+  // 所以**必须**紧跟 fav.css —— 中间插任何片子都会让覆盖失效。
+  './styles/fav-cards.css',
   // 服务房（第 5 步）：只定义 .sv-* 新类名，同理登记为末层。
   './styles/service.css',
   // 浮层面板（2026-10-01 B 批次①③）：家庭成员抽屉 .sd-* + 历史侧栏 .rail-*，
@@ -61,6 +65,19 @@ const STYLE_ORDER = [
   // 身体档案房（2026-10-05 第一刀）：只定义 .pf-* 新类名，与前面选择器不相交，
   // 登记末层。顺序必须与 main.tsx 里的导入一致，否则 f_样式顺序 判违规。
   './styles/profile.css',
+  // 冰箱拍照入口（2026-10-14）：从 profile.css 拆出（那一轮加到 981 行，
+  // 再加就越 1000 行上限）。只定义 .pf-fridge-shot* 新类名，不覆盖既有选择器，
+  // 所以紧跟 profile.css；顺序必须与 main.tsx 的导入一致。
+  './styles/profile-fridge.css',
+  // 周报房逐餐明细（2026-10-14）：从 panels.css 拆出（那一轮加到 1052 行越上限）。
+  // 新前缀不与前面选择器相交，唯一的覆盖是 `.wk-meal-light .wk-pip` 缩点阵，
+  // 被覆盖项在 panels.css 里，所以登记在 panels.css 之后；atmosphere 仍是末层。
+  './styles/weekly.css',
+  // 页面空气层（2026-10-10 首屏方向稿）：纸纹 + 房间色晕 + 页级叶饰，只定义
+  // .air-*/.atm-* 与新伪元素，不改前面任何选择器的既有声明，登记为最末层。
+  // 它一直没进本表（0-10-10 之前是 main.tsx 里的"未登记导入"），f_样式顺序因此
+  // 长期报一条违规——不是放水：本表的语义是"顺序基准"，基准漏项就该补上。
+  './styles/atmosphere.css',
 ]
 
 /** 方案第三节：依赖方向只允许 app → views → blocks → ui。 */

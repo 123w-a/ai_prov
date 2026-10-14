@@ -53,20 +53,29 @@
   padding: 32px 28px 27px;
 }
 
+/* 2026-10-10 设计稿重对版：「膳」字红实底方章 → **碗 + 叶图形标**
+ * （设计稿的品牌就是这个图形；红实底块在新稿里没有，且红色实底撞
+ * "语义色只做状态"的房规）。
+ * 同日画风对齐第二刀：图形 34→52px、内容 30→50px，因为稿的品牌图形实测
+ * 约 53px（放大图 design-B 品牌格），比原来大近一倍；留位随之从 42 到 62px。
+ * 图形本身现在是**实底填充**（浅陶碗身 + 实色叶），见 tokens 的 --brand-mark。 */
 .shell-brand::before {
+  content: '';
+  position: absolute;
   left: 0;
-  margin-top: -17px;
-  width: 34px;
-  height: 34px;
-  font-size: 19px;
-  color: var(--seal-ink);
+  margin-top: -26px;
+  width: 52px;
+  height: 52px;
+  background: var(--brand-mark) no-repeat center / 50px 50px;
+  font-size: inherit;
+  color: inherit;
   border: 0;
-  border-radius: 2px;
-  background: var(--seal);
+  border-radius: 0;
 }
 
 .shell-brand {
-  padding-left: 42px; /* 印章 24 → 34，留位同增，否则字压在章上 */
+  /* 2026-10-10：图形 34→52，留位同增，否则字压在图形上。 */
+  padding-left: 62px;
 }
 
 .tn-head {

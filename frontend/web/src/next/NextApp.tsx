@@ -288,7 +288,7 @@ export default function NextApp() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
-          aria-label="今晚想吃什么"
+          aria-label="今天想吃什么"
         />
         <div className="nx-actions">
           <label className="nx-check">

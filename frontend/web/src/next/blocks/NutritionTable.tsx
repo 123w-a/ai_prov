@@ -1,23 +1,41 @@
 import { isShown, type ResultVM } from '../data/viewModel.ts'
 
 /**
- * 这顿的营养数值（第 5 项）。
+ * 这顿的营养数值表（2026-10-08 照预期图 result-expect.png 改成三列表格）。
  *
- * 形态照用户裁定的预期图：一行六列，数值大、单位小，列间一根发丝竖线，
- * 左上「营养参考」+ 右侧一句口径说明。
+ * 形态：项目 ｜ 含量 ｜ 每日参考值。第三列是 **NRV%（营养素参考值）**——
+ * 基准取 GB 28050 固定值（能量 2000 kcal、蛋白质 60 g、脂肪 60 g、碳水 300 g、
+ * 膳食纤维 25 g、钠 2000 mg），换算是标准行为不是补造数据；没有基准的键写「—」。
+ * 百分比只回答「这一顿占一日参考值几成」，原始数值一个不改。
  *
- * 与预期图**故意不同的一处**：标题旁边不写「（每份）」，写「按菜谱用量」。
- * 后端算的是菜谱给出的整份食材用量，标「每份」会暗示还有几份没算进去。
+ * 位置：图 ｜ 简介+本表 的右列（经 DishHero 的 children 落位），不再通栏铺开。
  *
- * 三档状态各自的样子：
- *   complete    六列数值
- *   partial     六列数值 + 口径改成「已覆盖食材小计」+ 一行缺口（未收录谁、谁缺克数）
- *   unavailable 不排六列（没有数值可排），只给一句「算不出营养数值：<原因>」
+ * 三档状态各自的样子（口径交代一句都不能省，否则半样的数字会被当成整顿的热量）：
+ *   complete    六行表格
+ *   partial     六行表格 + 口径「已覆盖食材小计」+ 一行缺口（未收录谁、谁缺克数）
+ *   unavailable 不排表，只给一句「算不出营养数值：<原因>」——藏掉会把
+ *               「有食材但正文没写用量」变成「这页没有营养信息」，后者不是用户能改的。
  *
- * 为什么 unavailable 也要渲染、而不是整块藏掉：藏掉之后用户看到的是「这页没有营养信息」，
- * 而事实是「有食材、但正文没写用量」——后者是他能改的，前者不是。
- * 让这块安静消失，等于把这个区别一起藏了。
+ * 状态用 [data-status] 承载：三档的差别是"这张表算什么口径"，是数据属性不是样式变体。
  */
+const NRV: Record<string, number> = {
+  energy_kcal: 2000,
+  protein_g: 60,
+  fat_g: 60,
+  carb_g: 300,
+  fiber_g: 25,
+  sodium_mg: 2000,
+}
+
+/** value 已是 viewModel 格式化好的纯数字串（fmtNutrient），Number 直接可用。 */
+function nrvPct(key: string, value: string | null): string {
+  if (value === null) return '—'
+  const base = NRV[key]
+  const num = Number(value)
+  if (!base || !Number.isFinite(num)) return '—'
+  return `${Math.round((num / base) * 100)}%`
+}
+
 export function NutritionTable({ vm }: { vm: ResultVM }) {
   if (!isShown(vm.nutritionFacts)) return null
   const n = vm.nutritionFacts.data
@@ -27,24 +45,49 @@ export function NutritionTable({ vm }: { vm: ResultVM }) {
     <section className="nutri" data-status={n.status}>
       <div className="nutri-head">
         <h2 className="nutri-title">营养参考</h2>
-        {n.basis && <span className="nutri-basis">{n.basis}</span>}
       </div>
 
       {n.rows.length > 0 ? (
-        <ul className="nutri-grid">
-          {n.rows.map((row) => (
-            <li key={row.key} className="nutri-cell" data-unknown={row.value === null ? 'true' : undefined}>
-              <span className="nutri-label">{row.label}</span>
-              {/* 没查到就是「未收录」，绝不写 0：0 克膳食纤维是一句结论，「未收录」是一句实话。 */}
-              <span className="nutri-value">{row.value ?? '未收录'}</span>
-              <span className="nutri-unit">{row.value === null ? '' : row.unit}</span>
-            </li>
-          ))}
-        </ul>
+        <table className="nutri-table">
+          <thead>
+            <tr>
+              <th scope="col">项目</th>
+              <th scope="col">含量</th>
+              <th scope="col">每日参考值</th>
+            </tr>
+          </thead>
+          <tbody>
+            {n.rows.map((row) => (
+              <tr
+                key={row.key}
+                className="nutri-row"
+                data-unknown={row.value === null ? 'true' : undefined}
+              >
+                <th scope="row" className="nutri-label">
+                  {row.label}
+                </th>
+                {/* 没查到就是「未收录」，绝不写 0：0 克膳食纤维是一句结论，「未收录」是一句实话。 */}
+                <td className="nutri-value">
+                  {row.value ?? '未收录'}
+                  {row.value !== null && <span className="nutri-unit"> {row.unit}</span>}
+                </td>
+                <td className="nutri-pct">{nrvPct(row.key, row.value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       ) : (
         <p className="nutri-empty">{n.empty}</p>
       )}
 
+      {/* 口径与 NRV 出处压在最弱一级：它们是这张表的读数条件，不与数值抢注意力。 */}
+      {n.rows.length > 0 && (
+        <p className="nutri-basis">
+          {n.basis}
+          {n.basis ? ' · ' : ''}
+          % 为营养素参考值（NRV，GB 28050）
+        </p>
+      )}
       {n.gaps && n.rows.length > 0 && <p className="nutri-gaps">{n.gaps}</p>}
     </section>
   )

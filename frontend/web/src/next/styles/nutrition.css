@@ -1,21 +1,23 @@
-/* ── 营养数值表（第 5 项）─────────────────────────────────────────────────
+/* ── 营养数值表（2026-10-08 照预期图 result-expect.png 改三列表格）────────
 
-   形态照用户裁定的预期图：一行六列、数值大单位小、列间一根发丝竖线。
-   不画格子、不填底色——六列数字本身就是一张表，再套一层框就变成卡片里嵌表格。
+   形态：项目 ｜ 含量 ｜ 每日参考值（NRV%）。表头弱化、行间一根发丝线、
+   含量与百分比右对齐、数字用衬线——不画满格线、不填底色（原纪律保留：
+   数字本身就是表，格子会把它变成"卡片里嵌表格"）。
 
-   单独成片而不追加进 result-v3.css：那个文件实测 943 行，追加会越过 checkScale
-   的 1000 行上限。本片只定义 .nutri-* 新类名，与前面所有片的选择器不相交，
-   插在 result-v3 之后不会挪动已有层叠。
+   NRV% 的基准是 GB 28050 固定值（见 NutritionTable.tsx 顶部），换算由组件
+   算好传入，本片只管排版。
 
-   位置：首屏两栏（图 | 文）**之下**、通栏。它讲的是「这顿」，
-   不属于左图或右文任何一栏——这是它唯一可能的家。
+   位置：图 ｜ 简介+本表 的右列（DishHero children），不再通栏——
+   所以列宽以内边距为主、字号比旧版六列横排小一档（300px 级右列）。
 
-   状态用 [data-status] 承载，不靠额外类名：三档的差别是"这张表算什么口径"，
-   那是数据属性，不是样式变体。 */
+   单独成片：与 result-v3 的选择器不相交，插在其后不挪动层叠（沿用原注释的
+   checkScale 1000 行约束安排）。
+
+   状态仍用 [data-status] 承载：三档的差别是"这张表算什么口径"，是数据属性。 */
 
 .nutri {
-  margin: 6px 0 30px;
-  padding-top: 16px;
+  margin: 6px 0 4px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
@@ -23,7 +25,7 @@
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 13px;
+  margin-bottom: 8px;
 }
 
 .nutri-title {
@@ -37,76 +39,114 @@
   letter-spacing: 0.02em;
 }
 
-/* 口径说明压到最弱：它是这张表的「读数条件」，不该和标题抢同一级注意力。
-   但它在 partial 时会变成一句要紧的话（「已覆盖食材小计」），所以只压颜色、不藏。 */
-.nutri-basis {
+/* ── 表格本体 ─────────────────────────────────────────────────────── */
+
+/* 无图态（is-single 单列）时中区 672 全宽，表格跟着拉满会稀成一片
+   （列间大片空白）。限宽 560：三列仍舒展，左缘对齐、不再摊平。
+   有图态右列本身只有 ~350，限宽不起作用，两态共用一条规则。 */
+.dish-cols.is-single .nutri-table,
+.dish-cols.is-single .nutri-head {
+  max-width: 560px;
+}
+
+.nutri-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.nutri-table thead th {
+  padding: 5px 8px 6px;
   font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: var(--ink-faint);
+  border-bottom: 1px solid var(--line-strong);
+  text-align: right;
 }
 
-.nutri-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* 列间只有一根发丝竖线，第一项不画。比画满格线安静，列却仍然分得开。 */
-.nutri-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 1px 0 1px 18px;
-  border-left: 1px solid var(--line);
-}
-
-.nutri-cell:first-child {
+.nutri-table thead th:first-child {
   padding-left: 0;
-  border-left: 0;
+  text-align: left;
+}
+
+.nutri-table thead th:last-child {
+  padding-right: 0;
+}
+
+.nutri-row th,
+.nutri-row td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 400;
+}
+
+.nutri-row:last-child th,
+.nutri-row:last-child td {
+  border-bottom: none;
 }
 
 .nutri-label {
-  font-size: 12px;
+  padding-left: 0;
+  text-align: left;
+  font-size: 13px;
   color: var(--ink-soft);
 }
 
-/* 数值是这一块的主角：衬线大字 + 等宽数字。
-   tabular-nums 不是装饰——六列并排时，只有等宽数字才会让小数点对齐成一条线。 */
+/* 含量是行主角：衬线 + 弱描边（与旧版大数值同一家族，只是降一档适配右列）。 */
 .nutri-value {
+  text-align: right;
   font-family: var(--serif);
-  font-size: 25px;
-  font-weight: 400;
+  font-size: 15.5px;
   font-synthesis: none;
-  -webkit-text-stroke: 0.4px currentColor;
+  -webkit-text-stroke: 0.3px currentColor;
   color: var(--accent-ink);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.16;
-}
-
-/* 没查到的那一项：字号落回正文级、颜色退到最弱。
-   特意**不用红色**——缺数据不是错误，是这一项没收录，红色会把"没查到"说成"出问题了"。 */
-.nutri-cell[data-unknown='true'] .nutri-value {
-  font-size: 15px;
-  -webkit-text-stroke: 0;
-  color: var(--ink-faint);
+  white-space: nowrap;
 }
 
 .nutri-unit {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--ink-faint);
-  min-height: 14px; /* 未收录那一列没有单位，留出等高才知道六列是同级的 */
+  -webkit-text-stroke: 0;
 }
 
-/* 缺口一行（partial 才出现）：未收录谁、谁缺克数。
-   排得像脚注，压得很轻——但它必须在，否则上面那排数字会被当成整顿的热量。 */
+.nutri-pct {
+  padding-right: 0;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* 没查到的那一行：含量落回正文级、退到最弱色，百分比照写「—」。
+   特意不用红色——缺数据不是错误，红色会把"没收录"说成"出问题了"。 */
+.nutri-row[data-unknown='true'] .nutri-value {
+  font-size: 13px;
+  -webkit-text-stroke: 0;
+  color: var(--ink-faint);
+  white-space: normal;
+}
+
+/* ── 口径与缺口：脚注级 ─────────────────────────────────────────────── */
+
+/* 口径说明（partial 时是「已覆盖食材小计」这句要紧话）压到最弱但不藏：
+   它是这张表的读数条件。NRV 出处跟在同一行，责任一次说清。 */
+.nutri-basis {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--ink-faint);
+}
+
+/* 缺口一行（partial 才出现）：未收录谁、谁缺克数。排得像脚注——
+   没有它，上面那排数字会被当成整顿的热量。 */
 .nutri-gaps {
-  margin: 13px 0 0;
+  margin: 6px 0 0;
   font-size: 11.5px;
   color: var(--ink-faint);
 }
 
-/* 算不出时的那一句。不排六列：没有数值就没有列可排，
+/* 算不出时的那一句。不排表：没有数值就没有行可排，
    排一整行「未收录」反而像"数据全坏了"，而实际可能只是正文没写用量。 */
 .nutri-empty {
   margin: 0;
@@ -115,24 +155,16 @@
   line-height: 1.7;
 }
 
-/* 窄屏：六列并排会把「碳水化合物」挤到换行，改两行三列。
-   竖线跟着换列的节奏走——每行第一列不画线，所以用 3n+1 而不是 first-child。 */
+/* 窄屏：右列落单列后表格全宽，收紧左右内边距即可；三列语义不减列。 */
 @media (max-width: 720px) {
-  .nutri-grid {
-    grid-template-columns: repeat(3, 1fr);
-    row-gap: 14px;
-  }
-
-  .nutri-cell {
-    padding-left: 14px;
-  }
-
-  .nutri-cell:nth-child(3n + 1) {
-    padding-left: 0;
-    border-left: 0;
+  .nutri-table thead th,
+  .nutri-row th,
+  .nutri-row td {
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .nutri-value {
-    font-size: 21px;
+    font-size: 14.5px;
   }
 }

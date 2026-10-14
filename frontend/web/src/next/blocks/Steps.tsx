@@ -14,16 +14,17 @@ function gram(g: number): string {
  * 大号陶土编号是这一页唯一的"重"装饰，它承载的是动作顺序，不是奖励。
  * 实测 steps 是 3~8 条，截成固定 3 步就是丢真实内容。
  *
- * ── 2026-10-07 下午：用料横排在上、步骤回到全宽 ──────────────────────
- * 上午照用户裁定的预期图 B 排成「左用料 260px / 右步骤」。用户看过真实页后判
- * 「结果页有问题，不好看」：实测真实步骤 6 条、每条 50~70 字，压到 386px 后约
- * 18~20 字/行，整块高约 790px，比左栏用料卡（约 450px）高一截——左短右长，
- * 而且步骤窄得难读。lave 第二意见同判：B 稿这个取舍的代价大于收益。
+ * ── 2026-10-08 照预期图 result-expect.png：步骤改编号圆圈卡 ──────────────
+ * 预期图画的是"每步一张卡、编号圆圈、卡并排"。结构照它，几何不照抄：
+ * 稿子里每步正文只有十几个字，真实数据 50~70 字/步——一行排 6 张（每卡约 100px）
+ * 会重蹈 10-07 上午 B 稿窄卡的覆辙（386px 已被用户判过「窄得难读」）。
+ * 卡列用 auto-fill minmax(300px, 1fr)：672px 主栏自然落两列，窄屏自动单列，
+ * 每卡 300px 起（≈20 字/行，与被否前的全宽行相比可读性不降级）。
+ * 步骤文本形如「小标题：正文」时拆出标题行（≤16 字才拆，无冒号原样整句）。
  *
- * 改法只动排布、不动信息：食材 / 调味料 各自成卡横排在步骤上方（窄屏自动落回
- * 竖排），步骤占满整栏。用料仍然独立成面——B 稿要解决的「克数没地方放」没被退回。
- * 没采纳 lave 的另一条建议（把用料搬进 278px 右栏）：右栏是 sticky 的，塞进十来行
- * 会让它总高超过一屏，滚起来反而看不见。
+ * ── 用料横排在上（2026-10-07 下午裁定保留）──────────────────────────────
+ * 食材 / 调味料 各自成卡横排在步骤上方（窄屏自动落回竖排）。
+ * 独立成面不退回：克数与整句话用量（`约3小颗单晶冰糖, 只用于炒色`）有真实落点。
  *
  * ── 降级归属 ────────────────────────────────────────────────
  * 「整块是否出现」由调用方判并 narrow（`isShown(vm.steps)`），块只收已展开的
@@ -31,6 +32,13 @@ function gram(g: number): string {
  * 块内只留一处判断：两个 Display 都 hide 时**整行撤掉**，步骤直接顶到标题下，
  * 不留下一条空白的窄栏（后端只给步骤的情形实测存在）。
  */
+
+/** 「小标题：正文」拆分。标题过长（>16 字）多半是正文本体，不拆——
+ *  把半句话当标题会把步骤读成碎片。无冒号/含句号的整句原样给正文。 */
+function splitStep(s: string): { head?: string; text: string } {
+  const m = /^([^：:\n。]{1,16})[：:]\s*([\s\S]+)$/.exec(s.trim())
+  return m ? { head: m[1], text: m[2] } : { text: s }
+}
 export function Steps({
   steps,
   seasonings,
@@ -80,14 +88,20 @@ export function Steps({
         </div>
       )}
       <ol className="steps">
-          {steps.map((s, i) => (
-            <li key={i}>
-              <span className="step-no" aria-hidden="true">
-                {i + 1}
-              </span>
-              <span className="step-text">{renderRichText(s)}</span>
-            </li>
-          ))}
+          {steps.map((s, i) => {
+            const { head, text } = splitStep(s)
+            return (
+              <li key={i}>
+                <span className="step-no" aria-hidden="true">
+                  {i + 1}
+                </span>
+                <span className="step-body">
+                  {head && <b className="step-head">{head}</b>}
+                  <span className="step-text">{renderRichText(text)}</span>
+                </span>
+              </li>
+            )
+          })}
       </ol>
     </section>
   )

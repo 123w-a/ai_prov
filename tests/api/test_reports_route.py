@@ -1,9 +1,24 @@
 """Weekly report trend aggregation regression tests."""
 
+import json
+import tempfile
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
 
-from api.routes.reports_route import _light_trends, _pantry_restock_tips, _weekly_recommendations
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from api.routes import preferences_route as pr
+from api.routes import reports_route as rr
+from api.routes.reports_route import (
+    _light_trends,
+    _pantry_restock_tips,
+    _weekly_recommendations,
+    member_nutrition_progress,
+    week_window,
+)
 
 
 def meal(ts, lights):
@@ -86,6 +101,59 @@ class PantryRestockTest(unittest.TestCase):
         self.assertEqual(len(tips), 2)
         self.assertIn("豆浆", tips[0])
         self.assertIn("香蕉", tips[1])
+
+
+class WeekWindowTest(unittest.TestCase):
+    """成员营养进度的周期必须与周报的 range 同源——"这一周"只能有一个口径。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data_dir = Path(self.tmp.name)
+        self.meals_path = self.data_dir / "meals.json"
+        self.meals_path.write_text(json.dumps([
+            {"ts": datetime.now().isoformat(timespec="seconds"),
+             "session": "s1", "dish": "番茄炒蛋",
+             "lights": ["钠:green", "糖:green", "脂肪:green"], "guardrails": 0},
+        ], ensure_ascii=False), encoding="utf-8")
+        for p in (
+            patch.object(rr, "_MEALS", self.meals_path),
+            patch.object(rr, "get_fridge", lambda: {"items": []}),
+            patch.object(rr, "_read_pantry_log", lambda: []),
+            patch.object(rr, "_read_feedback_log", lambda: []),
+            patch.object(pr, "_PROFILE_PATH", self.data_dir / "profile.json"),
+            patch.object(pr, "_DATA_DIR", self.data_dir),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        app = FastAPI()
+        app.include_router(rr.router)
+        app.include_router(pr.router)
+        self.client = TestClient(app)
+
+    def test_member_progress_period_matches_weekly_range(self):
+        weekly = self.client.get("/reports/weekly").json()
+        self.assertTrue(weekly["has_data"])
+        fam = self.client.get("/profile").json()["data"]["family"]
+        period = fam["members"][0]["profile"]["nutrition_progress"]["period"]
+        self.assertEqual([period["start"], period["end"]], weekly["range"])
+
+    def test_window_is_seven_days_ending_today(self):
+        start, now = week_window(datetime(2026, 10, 11, 20, 0, 0))
+        self.assertEqual(start, datetime(2026, 10, 4, 20, 0, 0))
+        self.assertEqual(now, datetime(2026, 10, 11, 20, 0, 0))
+
+    def test_progress_zero_denominator_is_null_and_shape_is_fixed(self):
+        """口径已定（三盏灯全绿）；这份 fixture 的餐次**未归属到任何人**。
+
+        所以任一成员的分母都是 0 → value null（不是 0%），且字段形状固定为四个键。
+        判据本身的边界在 tests/api/test_nutrition_progress.py。
+        """
+        progress = member_nutrition_progress({"name": "小美"})
+        self.assertEqual(set(progress), {"value", "numerator", "denominator", "period"})
+        self.assertIsNone(progress["value"])
+        self.assertEqual(progress["numerator"], 0)
+        self.assertEqual(progress["denominator"], 0)
 
 
 if __name__ == "__main__":

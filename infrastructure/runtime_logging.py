@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
 
-from infrastructure.paths import LOG_DIR
+from infrastructure.paths import DATA_DIR, LOG_DIR
 
 
 _CONFIG_LOCK = Lock()
@@ -16,6 +16,41 @@ _CONFIGURED = False
 LOG_PATH = LOG_DIR / "app.log"
 MAX_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 5
+
+
+def _build_file_handler(formatter: logging.Formatter) -> RotatingFileHandler | None:
+    """建文件 handler；首选位置写不进去就往项目内退一级，都不行就当没有。
+
+    2026-10-14：只落盘、不留兜底，会让"写日志"把主链路带崩——本模块自己的约定
+    是**日志失败一律静默**（见 ``paths.LOG_DIR`` 的文档）。``paths`` 那边现在会
+    真写一次来判可写，但目录可写 ≠ 目标文件可写（``app.log`` 本身可能被别的
+    进程占着、或被安全软件锁死），所以这里还要再兜一层。
+    """
+    for path in (LOG_PATH, DATA_DIR / "app.log"):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handler = RotatingFileHandler(
+                path,
+                maxBytes=MAX_BYTES,
+                backupCount=BACKUP_COUNT,
+                encoding="utf-8",
+            )
+        except Exception:
+            continue
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.INFO)
+        return handler
+    return None
+
+
+def _has_file_handler(root: logging.Logger, handler: RotatingFileHandler) -> bool:
+    """根日志上是否已经有指向同一文件的 handler（避免重复导入叠加）。"""
+    target = Path(getattr(handler, "baseFilename", ""))
+    return any(
+        isinstance(existing, RotatingFileHandler)
+        and Path(getattr(existing, "baseFilename", "")) == target
+        for existing in root.handlers
+    )
 
 
 def configure_logging() -> None:
@@ -27,25 +62,12 @@ def configure_logging() -> None:
         if _CONFIGURED:
             return
 
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         formatter = logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s %(message)s"
         )
-        file_handler = RotatingFileHandler(
-            LOG_PATH,
-            maxBytes=MAX_BYTES,
-            backupCount=BACKUP_COUNT,
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(logging.INFO)
-
         root = logging.getLogger()
         root.setLevel(logging.INFO)
-        if not any(
-            isinstance(handler, RotatingFileHandler)
-            and Path(getattr(handler, "baseFilename", "")) == LOG_PATH
-            for handler in root.handlers
-        ):
+        file_handler = _build_file_handler(formatter)
+        if file_handler is not None and not _has_file_handler(root, file_handler):
             root.addHandler(file_handler)
         _CONFIGURED = True
