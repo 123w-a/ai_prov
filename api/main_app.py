@@ -68,6 +68,64 @@ def _start_knowledge_base_warmup() -> None:
 @app.on_event("startup")
 def _startup_tasks() -> None:
     _start_knowledge_base_warmup()
+    _start_checkpoint_prune()
+
+
+# —— 断点库孤儿清理：删会话只删 sessions/*.json，checkpoint.db 里的 thread 得单独收 ——
+# 关掉：CHEF_CHECKPOINT_PRUNE=0。清理对象只有「磁盘上已经没有对应会话文件」的线程，
+# 启动期没有任何在跑的轮次，不会误删活跃会话。延迟 20s 让预热线程先跑完。
+_CHECKPOINT_PRUNE_DELAY_S = 20
+
+
+def _prune_orphan_checkpoints() -> None:
+    import time
+    import sys
+    from pathlib import Path
+
+    time.sleep(_CHECKPOINT_PRUNE_DELAY_S)
+    # 关停竞态：本线程是 daemon，若在解释器 finalize 时才醒来去写 stdout，
+    # 会和主线程抢 stdout 缓冲锁，直接 Fatal Python error（实测 pytest 收尾崩）。
+    # 日志走 logging（落盘 handler），且收尾阶段直接放弃这轮清理——下次启动会重跑。
+    if sys.is_finalizing():
+        return
+    logger = logging.getLogger("checkpoint")
+    try:
+        from storage import checkpoints
+        from storage.sessions import SESSIONS_DIR
+
+        sessions_dir = Path(SESSIONS_DIR)
+        if not sessions_dir.exists():
+            # 目录都读不到时不做任何删除，避免把「路径配置错了」当成「会话都没了」。
+            return
+        active = {p.stem for p in sessions_dir.glob("*.json")}
+        stats = checkpoints.purge_orphans(active)
+        if stats["deleted"]:
+            checkpoints.vacuum()
+            logger.info(
+                "清理孤儿断点线程 %d/%d 条，保留活跃会话 %d 个",
+                stats["deleted"],
+                stats["threads"],
+                len(active),
+            )
+        else:
+            logger.info("断点库无孤儿线程（共 %d 条）", stats["threads"])
+    except Exception as exc:  # 清理失败绝不能影响服务启动
+        logger.warning("孤儿断点清理跳过：%s", exc)
+
+
+def _start_checkpoint_prune() -> None:
+    if (os.getenv("CHEF_CHECKPOINT_PRUNE", "1") or "").strip().lower() in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        return
+    threading.Thread(
+        target=_prune_orphan_checkpoints,
+        name="checkpoint-prune",
+        daemon=True,
+    ).start()
 
 
 # —— 失败图自动补图队列：网络抖动期没能出图的菜，后台每 10 分钟扫一轮补上 ——

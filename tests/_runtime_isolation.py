@@ -34,6 +34,8 @@ def _build_targets() -> dict[str, dict[str, object]]:
         # 会话历史（前端侧栏的数据源）
         "storage.sessions": {"SESSIONS_DIR": sessions},
         "services.image_retry_queue": {"SESSIONS_DIR": sessions},
+        # Agent 断点库（storage.checkpoints 惰性读 DB_PATH，patch 后自动重连）
+        "storage.checkpoints": {"DB_PATH": data / "checkpoint.db"},
         # 跨会话菜品资产库（卡片配图的数据源）
         "storage.dish_assets": {"ASSETS_PATH": data / "dish_assets.json"},
         # 画像/口味/反馈等运行时状态

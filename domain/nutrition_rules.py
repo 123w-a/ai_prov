@@ -111,13 +111,15 @@ _CONDITION_NEGATION_RE = re.compile(
 _SALT_QUALIFIERS = (
     "不加", "不放", "不用", "不要", "不超", "少放", "少用", "少吃",
     "少", "低", "减", "无", "避免", "远离", "忌", "限制", "控制", "限量",
+    "淡", "微量", "一点点", "不靠",
 )
 # 关键词**之后**出现这些词，同样说明这一句在讲「限量/警示」：
 # 「盐可以几乎不放」「生抽减半」「钠极高」。
 _SALT_TRAIL_QUALIFIERS = (
     "不放", "不加", "不用", "不要多", "别多放", "少放", "少用", "少加",
     "少吃", "少些", "少许", "少",
-    "控制", "限制", "限量", "不超", "不超过", "低于", "以下", "降至", "≤",
+    "控制", "限制", "限量", "不超", "不超过", "低于", "以下", "降至",
+    "≤", "＜", "<",
     "减半", "减量", "减少", "减",
     "钠极高", "钠很高", "钠超标", "钠高", "高钠", "含钠高",
 )
@@ -126,6 +128,7 @@ _SALT_TRAIL_QUALIFIERS = (
 # 限定词与关键词之间隔着一整个并列枚举，按紧邻前缀看必然漏判。
 _SALT_CLAUSE_QUALIFIERS = (
     "限量", "控制", "限制", "避免", "远离", "减少", "减", "少", "低", "无", "忌", "免",
+    "取消", "省去", "省略",
 )
 # 否定 + 短间隔 + 下料动作：覆盖「不额外加盐」「不要用盐腌黄瓜出水」。
 # 中间允许 0-6 个字符（如「额外」），但不能跨标点，否则会把上一句的否定读进来。
@@ -144,7 +147,145 @@ _SALT_REVERSAL_MARKERS = ("但", "不过", "却", "实际", "其实", "改用", 
 _SALT_CLAUSE_DELIMITERS = "。！？；\n\r，,：:"
 _SALT_LOOKBACK_CHARS = 40
 _SALT_LOOKAHEAD_CHARS = 12
-_FORBIDDEN_QUALIFIERS = ("不吃", "不喝", "不放", "不加", "不含", "不要", "避免", "禁用", "拒绝")
+# ---- 钠盐的「证据式」硬审计 ----
+# 旧口径：盐/生抽/酱油/蚝油等调味词只要出现（且没有「少盐」这类限定语）就判违规。
+# 实测（checkpoint 全库 100 条被打回的答案）这条口径把三类**正常写法**当成下料：
+#   「沿锅边淋半汤匙生抽」（厨房计量不认，直接命中）、
+#   「盐、生抽、香醋、蒜泥拌匀」（清单式裸提名）、
+#   「盐＜5g / 控盐要求 / 本菜盐 1g、生抽 5ml 已经不多」（依据段复述）。
+# 好答案因此被反复打回，前端连着闪好几次「正在形成膳食建议」。
+# 新口径：调味品只有在**写出用量、折算成食盐当量后确实超量**时才算硬违规——
+# 由下面的账单（`_salt_total_g`）统一判定；措辞层面的「翻案/超量」用法另行拦
+# （`_salt_mention_is_risky`）。裸提名和限量说明不再触发重生成。
+# 钠黄灯提示（`sodium_light_reason`）保持独立的保守口径，不受这里影响。
+#
+# 单位折算：全部换成「食盐当量克数」。厨房计量按常见容量估算，
+# 调味品按大致含钠水平打折——15ml 生抽≈2.5g 盐、10g 蚝油≈1g 盐。
+# 这是最佳努力的保守估算，只为判断「是否明显超量」，不做营养计算。
+_SALT_MEASURE_AMOUNT = {
+    "g": 1.0, "克": 1.0, "ml": 1.0, "毫升": 1.0,
+    "汤匙": 15.0, "大勺": 15.0, "勺": 15.0,
+    "茶匙": 5.0, "小勺": 5.0,
+    "小撮": 0.5, "撮": 0.5,
+    "少许": 0.3, "微量": 0.2, "一点点": 0.3, "些许": 0.3, "滴": 0.05,
+}
+# 每 g/ml（或折算后的计量）对应的食盐当量。
+_SALT_G_PER_UNIT = {
+    "盐": 1.0,
+    "酱油": 0.17, "生抽": 0.17, "老抽": 0.17,
+    "蚝油": 0.10,
+    "鸡精": 0.50, "味精": 0.12,
+    "豆瓣酱": 0.15, "辣椒酱": 0.12, "豆腐乳": 0.15, "腐乳": 0.15,
+}
+# 关键词与用量之间允许出现的填充词（「盐 整锅共 1g」「生抽（约 5ml）」）；
+# 用量前还允许一个比较符（「盐＜5g」「盐 < 5g」按「至多 5g」理解）。
+_SALT_AMOUNT_FILLER = r"(?:约|大约|共|合计|总共|整锅|全锅|整份|需|只|仅|各|的)*"
+_SALT_AMOUNT_LEAD = r"[＜<≤]?"
+_SALT_AMOUNT_UNITS = "汤匙|大勺|小勺|茶匙|小撮|撮|少许|微量|一点点|些许|滴|毫升|克|g|ml|勺"
+_SALT_AMOUNT_RE_TMPL = (
+    rf"(?:(?P<num>\d+(?:\.\d+)?)(?P<unit>{_SALT_AMOUNT_UNITS})"
+    r"|(?P<cnum>半|小半|一|两|二|三|几)(?P<cunit>汤匙|大勺|小勺|茶匙|小撮|撮|滴|勺)"
+    r"|(?P<plain>少许|微量|一点点|些许))"
+)
+# 用量可能写在关键词**之后**（盐 1g、生抽 2 汤匙），也可能写在**之前**
+# （1 小撮盐、半勺蚝油）——两种语序都要认得出来。
+_SALT_DOSE_TAIL_RE = re.compile(
+    _SALT_AMOUNT_LEAD + _SALT_AMOUNT_FILLER + _SALT_AMOUNT_RE_TMPL
+)
+_SALT_DOSE_HEAD_RE = re.compile(
+    _SALT_AMOUNT_LEAD + _SALT_AMOUNT_RE_TMPL + _SALT_AMOUNT_FILLER + r"$"
+)
+_SALT_CN_NUMBER = {"半": 0.5, "小半": 0.5, "一": 1.0, "两": 2.0, "二": 2.0, "三": 3.0, "几": 2.0}
+# 咸菜/榨菜/泡菜/酱菜是「高钠食物」而不是可计量的调味品，写不出用量：
+# 正向出现即算下料（「加榨菜炒肉丝」要拦），否定/限量语境照旧放行（「不吃咸菜」）。
+_SALT_PRESERVED = {"榨菜", "泡菜", "咸菜", "酱菜"}
+# 裸提名里出现这些措辞，是在承认「盐用多了」，即使没写数字也要拦。
+_SALT_EXCESS_MARKERS = (
+    "不少", "太多", "过多", "偏多", "很多", "大量", "大把", "多放",
+    "重口", "重盐", "太咸", "很咸", "过咸",
+)
+# 「减盐动作」动词：紧跟在这些词后面的「不少」是在说省下来的量，
+# 不是在承认自己下盐下重了（「同样咸度能省掉不少盐」「少放了不少盐」）。
+_SALT_REDUCTION_VERBS = (
+    "省掉", "省去", "省下", "节省", "减少", "减去", "减掉", "去掉", "去除",
+    "降低", "砍掉", "少放", "少加", "少用", "少下",
+)
+_SALT_CUT_DOWN_TAIL_RE = re.compile(
+    r"(?:" + "|".join(_SALT_REDUCTION_VERBS) + r")[了掉的]*$"
+)
+# 「减盐动作 + 不」紧邻收尾（「省掉不」「少放了不」）：这里的「不」属于
+# 「不少」这个整体，不是在推翻前面的限量词。
+_SALT_CUT_DOWN_BEFORE_REVERSAL_RE = re.compile(
+    r"(?:" + "|".join(_SALT_REDUCTION_VERBS) + r")[了掉的]*不$"
+)
+_FORBIDDEN_QUALIFIERS = (
+    "不吃", "不喝", "不放", "不加", "不含", "不要", "不用", "不必",
+    "不推荐", "不建议", "别", "勿", "莫", "免", "忌", "远离", "避开",
+    "回避", "少吃", "少喝", "避免", "禁用", "禁止", "杜绝", "拒绝",
+    # 替代式写法：「清水代替高汤」「用无醇啤酒替代啤酒」——被替代的那一样
+    # 并没有下锅，和「换成/换掉」同类。
+    "代替", "替代", "顶替",
+)
+# 否定词与关键词之间常隔着一两个字（「别用浓肉汤」「也别加小鱼小虾类干货」
+# 「不吃猪肝、腰子」），只看紧贴前缀会把这类合规写法漏判成真实下料，好答案
+# 被反复打回。
+# 窗口与过敏原侧的 _SAFE_NEGATION_WINDOW 对齐，且只在同一小句内生效。
+_FORBIDDEN_NEGATION_WINDOW = 6
+# 并列清单里的每个条目单独限长：指南引用常写成「限制动物内脏、浓肉汤、部分海鲜」，
+# 整段长度远超上面的窗口，按单条目判定才不会把真下料一起放行。
+_FORBIDDEN_NEGATION_ITEMS = 3
+# 否定/劝阻词表：长词在前，保证「不推荐虾皮」不会被裸「不」先切掉。
+# 后半段是「限量动词」——限制/控制/减少/少食这类写法语义上等价于劝阻，
+# 痛风与高血压指南原文就是这么写的（「少食生冷」「限制动物内脏、浓肉汤」）。
+_FORBIDDEN_NEGATION_HEAD_RE = (
+    r"切勿|切莫|绝不|并不|严禁|禁止|禁用|不推荐|不建议|不能|不应|不得|不可|"
+    r"不要|不用|不吃|不喝|不加|不放|不含|拒绝|杜绝|避免|避开|回避|远离|"
+    r"限制|控制|减少|限量|限食|少食|少喝|少吃|少用|不宜|没有|"
+    r"别|勿|莫|忌|没|无|不"
+)
+# 否定词后紧跟的「下料动作/程度词」属于否定本身的一部分：「也别加…」「不再放…」。
+_FORBIDDEN_NEGATION_ACTION = (
+    r"(?:也|还|再|就|都|要|只|仅|多|额外|继续|各种|这类|此类|用|吃|喝|加|放|下|"
+    r"撒|淋|兑|拌|碰|沾|粘|选|含|靠){0,3}"
+)
+# 否定词到关键词之间的填充字符：不能跨标点，也不能出现「里/中/后/前/了/是/
+# 不/没/无/但/却」这类另起对象或翻案的连接；下料动作同样排除，因此
+# 「不加盐、放虾皮」里的「放」、「不加盐的汤里放肉汤」里的「里…放」
+# 都不会被上一个小句的「不加」开脱。「的」保留（「别用久煮的肉汤」是合规劝阻）。
+_FORBIDDEN_ITEM_GAP = (
+    r"[^。；;！？!?\n\r，,：:了吗呢吧但却里中后前是不没无更反而"
+    r"加放撒淋兑倒添拌入]"
+)
+_FORBIDDEN_LIST_SEP = r"[、/和与及跟]"
+_FORBIDDEN_NEGATION_RE = re.compile(
+    rf"(?:{_FORBIDDEN_NEGATION_HEAD_RE})"
+    rf"{_FORBIDDEN_NEGATION_ACTION}"
+    rf"(?:{_FORBIDDEN_ITEM_GAP}{{0,{_FORBIDDEN_NEGATION_WINDOW}}}"
+    rf"(?:{_FORBIDDEN_LIST_SEP}{_FORBIDDEN_ITEM_GAP}"
+    rf"{{0,{_FORBIDDEN_NEGATION_WINDOW}}})"
+    rf"{{0,{_FORBIDDEN_NEGATION_ITEMS}}})$"
+)
+# 关键词**之后**紧跟的字样同样说明这句不是在教下料：
+# 「把老火汤换成冬瓜薏米汤」「老火汤换掉」「老火汤别喝了」。
+_FORBIDDEN_TRAIL_QUALIFIERS = (
+    "换成", "换掉", "替换", "替代", "改成", "改为",
+    "不吃", "不喝", "不放", "不加", "不用", "限量", "低于", "≤", "别", "勿", "忌",
+)
+_FORBIDDEN_TRAIL_LOOKAHEAD = 6
+# 同形异义词的定点排除：带这些前后缀时它已经不是被点名的那种忌口食材。
+#   料酒——烹饪用酒，非饮酒（肥胖规则早已声明「不用裸『酒』匹配」同一口径）；
+#   啤酒——「约一啤酒瓶盖」是厨房计量参照物，不是在往锅里倒啤酒；
+#   瘦肉汤——清汤，不是指南点名要限的「浓肉汤」；
+#   收浓汤汁——收汁动作，不是「浓汤」。
+_FORBIDDEN_EXEMPT_PREFIX = {
+    "酒": ("料", "啤"),
+    "肉汤": ("瘦",),
+    "浓汤": ("收",),
+}
+_FORBIDDEN_EXEMPT_SUFFIX = {
+    "啤酒": ("瓶盖",),
+    "浓汤": ("汁",),
+}
 _REVERSED_QUALIFIERS = (
     "不", "不能", "不要", "不做", "不采用", "不接受", "拒绝",
     "没有", "没", "不是", "并非", "未",
@@ -183,7 +324,11 @@ def _ends_with_reversed(text: str) -> bool:
     return any(text.endswith(item) for item in _REVERSED_QUALIFIERS)
 
 
-def _salt_is_limited(compact: str, start: int, end: int) -> bool:
+def _salt_is_limited(
+    compact: str,
+    start: int,
+    end: int,
+) -> bool:
     """判断这一处盐/高钠调味料是在讲「少放/别放/减量」，还是真在下料。
 
     四种证据，任一成立即视为限量表述（不算违规）：
@@ -191,7 +336,11 @@ def _salt_is_limited(compact: str, start: int, end: int) -> bool:
       2. 同句内的否定 + 下料动作——覆盖「不额外加盐」「不要用盐腌黄瓜出水」；
       3. 同句内更远的限量词、且中间没有真下料动作——
          覆盖指南引用「减少食盐及含钠调味品（酱油、蚝油…）」；
-      4. 关键词后紧跟的限量/警示词——覆盖「盐可以几乎不放」「生抽减半」「钠极高」。
+      4. 关键词后紧跟的限量/警示词——覆盖「盐可以几乎不放」「生抽减半」
+         「钠极高」「盐＜5g」。
+
+    写法里「已经写明用多少」这一支不在这里判：硬审计按「折算后的食盐当量
+    是否超上限」走 `_salt_dose_near`，总当量另有数值账单（`_salt_total_g`）兜底。
     """
     clause = _clause_before(compact, start)
     cursor = len(clause)  # 关键词在 clause 内的位置（clause 恰好结束于关键词）
@@ -227,16 +376,160 @@ def _salt_is_limited(compact: str, start: int, end: int) -> bool:
     return False
 
 
-def _has_unqualified_occurrence(text: str, keyword: str, mode: str) -> bool:
-    """Return True when at least one keyword occurrence expresses actual use/state."""
+def _amount_grams(match) -> float:
+    """把一次「用量」匹配折算成毫升/克（厨房计量按常见容量估算）。"""
+    if match.group("num") is not None:
+        return float(match.group("num")) * _SALT_MEASURE_AMOUNT[match.group("unit")]
+    if match.group("cnum") is not None:
+        return (
+            _SALT_CN_NUMBER[match.group("cnum")]
+            * _SALT_MEASURE_AMOUNT[match.group("cunit")]
+        )
+    return _SALT_MEASURE_AMOUNT[match.group("plain")]
+
+
+def _salt_dose_near(compact: str, start: int, end: int, keyword: str):
+    """关键词紧邻处写明的用量，折算成**食盐当量**克数；没写用量则返回 None。"""
+    factor = _SALT_G_PER_UNIT.get(keyword)
+    if factor is None:
+        return None
+    tail = _SALT_DOSE_TAIL_RE.match(compact, end)
+    if tail and tail.end() > end:
+        return _amount_grams(tail) * factor
+    head = _SALT_DOSE_HEAD_RE.search(compact[:start])
+    if head:
+        return _amount_grams(head) * factor
+    return None
+
+
+def _salt_excess_wording(compact: str, start: int, end: int) -> bool:
+    """裸提名里是否出现「承认用多了」的措辞（不少/太多/重口…）。
+
+    只在关键词前后一小段里找，三种情况不算：
+      - 前面紧贴否定词（「不加太多盐」）；
+      - 这一处本身在讲减盐动作（「同样咸度能省掉不少盐」「少放了不少盐」）——
+        这里「不少」修饰的是省下来的量，不是在承认下料重口；
+      - 中间隔了标点（窗口天然不跨句）。
+    """
+    for window in (compact[max(0, start - 6):start], compact[end:end + 6]):
+        for marker in _SALT_EXCESS_MARKERS:
+            index = window.find(marker)
+            if index < 0:
+                continue
+            if _ends_with_reversed(window[:index]):
+                continue
+            if _SALT_CUT_DOWN_TAIL_RE.search(window[:index]):
+                continue  # 「省掉不少盐」：减的是用量，不是承认重口
+            return True
+    return False
+
+
+def _salt_limiter_is_reversed(compact: str, start: int) -> bool:
+    """限定词本身被否定，说明这句是在承认真下料（「不做低盐版本」）。
+
+    `_salt_is_limited` 遇到这类写法会放行（“限定词前面紧贴否定”＝翻案），
+    硬审计要把它们当回真下料的证据：关键词后没有用量、也没有超量措辞时，
+    由这一支兜住。
+
+    例外：「省掉不少盐 / 减少了不少盐」里的「不少」是省下来的量，
+    去掉否定词后紧邻的是减盐动作，不是翻案。
+    """
+    clause = _clause_before(compact, start)
+    for qualifier in sorted(_SALT_QUALIFIERS, key=len, reverse=True):
+        if not clause.endswith(qualifier):
+            continue
+        preceding = clause[:-len(qualifier)]
+        if not any(preceding.endswith(item) for item in _REVERSED_QUALIFIERS):
+            continue
+        if _SALT_CUT_DOWN_BEFORE_REVERSAL_RE.search(preceding):
+            continue  # 「省掉不少盐」：减的是用量，不是翻案
+        return True
+    return False
+
+
+def _forbidden_is_exempt_word(compact: str, keyword: str, start: int, end: int) -> bool:
+    """同形异义词：带特定前后缀时这个关键词指的不是被点名的忌口食材。
+
+    只认定点前后缀（料酒/啤酒瓶盖/瘦肉汤/收浓汤汁），不做宽泛匹配——
+    「加料酒」放行，不等于「老火汤炖猪肝」也能过。
+    """
+    if start > 0:
+        previous = compact[start - 1]
+        if previous in _FORBIDDEN_EXEMPT_PREFIX.get(keyword, ()):
+            return True
+    tail = compact[end:end + len("瓶盖")]
+    if any(tail.startswith(suffix) for suffix in _FORBIDDEN_EXEMPT_SUFFIX.get(keyword, ())):
+        return True
+    return False
+
+
+def _forbidden_has_trail_qualifier(compact: str, end: int) -> bool:
+    """关键词后面紧跟「换成/换掉/别…」时，这一句是在讲替代或劝阻。"""
+    tail = compact[end:end + _FORBIDDEN_TRAIL_LOOKAHEAD]
+    for qualifier in sorted(_FORBIDDEN_TRAIL_QUALIFIERS, key=len, reverse=True):
+        index = tail.find(qualifier)
+        if index < 0:
+            continue
+        if _ends_with_reversed(tail[:index]):
+            continue
+        return True
+    return False
+
+
+def _forbidden_is_negated(compact: str, keyword: str, start: int, end: int) -> bool:
+    """判断 forbidden 关键词是否处在「别用/不加/远离/限制」这类否定、劝阻语境里。
+
+    真下料的写法（「放虾皮」「老火汤炖猪肝」）前面没有否定语境，照旧命中。
+    """
+    if _forbidden_is_exempt_word(compact, keyword, start, end):
+        return True
+    clause = _clause_before(compact, start)
+    if _qualified_by_suffix(clause, _FORBIDDEN_QUALIFIERS):
+        return True
+    if _FORBIDDEN_NEGATION_RE.search(clause):
+        return True
+    return _forbidden_has_trail_qualifier(compact, end)
+
+
+def _has_unqualified_occurrence(
+    text: str,
+    keyword: str,
+    mode: str,
+    *,
+    salt_cap: float = None,
+) -> bool:
+    """Return True when at least one keyword occurrence expresses actual use/state.
+
+    `mode == "salt"` 有两种口径，靠 `salt_cap` 区分：
+      - `salt_cap is None`（补钠灯等提示层）：出现即算线索，保持保守；
+      - 给了上限（硬审计）：只认证据——咸菜/榨菜类正向出现、写明用量且折算后
+        超上限、或裸提名却带「不少/太多/重口」这类超量措辞。裸提名（「盐、生抽
+        拌匀」）不再单独触发重生成，改由数值账单 `_salt_total_g` 兜底。
+    """
     compact = re.sub(r"\s+", "", text or "")
     for match in re.finditer(re.escape(keyword), compact):
-        before = compact[max(0, match.start() - 12):match.start()]
+        start, end = match.start(), match.end()
+        before = compact[max(0, start - 12):start]
         if mode == "condition" and _CONDITION_NEGATION_RE.search(before):
             continue
-        if mode == "salt" and _salt_is_limited(compact, match.start(), match.end()):
+        if mode == "forbidden" and _forbidden_is_negated(compact, keyword, start, end):
             continue
-        if mode == "forbidden" and _qualified_by_suffix(before, _FORBIDDEN_QUALIFIERS):
+        if mode == "salt":
+            if _salt_is_limited(compact, start, end):
+                continue
+            if salt_cap is None:
+                return True
+            if _salt_limiter_is_reversed(compact, start):
+                return True
+            if keyword in _SALT_PRESERVED:
+                return True
+            dose = _salt_dose_near(compact, start, end, keyword)
+            if dose is not None:
+                if dose <= salt_cap:
+                    continue
+                return True
+            if _salt_excess_wording(compact, start, end):
+                return True
             continue
         return True
     return False
@@ -343,8 +636,37 @@ def _total_g(text: str, keywords, units: str = r"g|克|ml|毫升") -> float:
 
 
 def _salt_total_g(text: str) -> float:
-    """尽力从菜谱文本里估算食盐/高钠调料的克数（最佳努力，非精确）。"""
-    return _total_g(text, ["盐", "酱油", "生抽", "老抽", "蚝油"])
+    """把菜谱里写明的盐/高钠调料折算成「食盐当量」克数（最佳努力，非精确）。
+
+    与 `_total_g` 的差别：认厨房计量（汤匙/小勺/小撮/少许…）与调味品折盐
+    （15ml 生抽≈2.5g 盐、10g 蚝油≈1g 盐），并逐条去重——同一份「盐 1g」
+    写在原料区又在步骤区复述时只算一次，不重复求和。
+    """
+    compact = re.sub(r"\s+", "", text or "")
+    hits = []
+    for keyword, factor in _SALT_G_PER_UNIT.items():
+        for match in re.finditer(re.escape(keyword), compact):
+            start, end = match.start(), match.end()
+            tail = _SALT_DOSE_TAIL_RE.match(compact, end)
+            if tail and tail.end() > end:
+                amount = compact[end:tail.end()]
+                hits.append((start, tail.end(), _amount_grams(tail) * factor, f"{keyword}|{amount}"))
+                continue
+            head = _SALT_DOSE_HEAD_RE.search(compact[:start])
+            if not head:
+                continue
+            amount = compact[head.start():start]
+            hits.append((head.start(), end, _amount_grams(head) * factor, f"{keyword}|{amount}"))
+    total, taken, counted = 0.0, [], set()
+    for start, end, grams, key in sorted(hits):
+        if key in counted:
+            continue
+        if any(start < prev_end and end > prev_start for prev_start, prev_end in taken):
+            continue
+        counted.add(key)
+        taken.append((start, end))
+        total += grams
+    return total
 
 
 def audit(text: str, conditions: List[str]) -> List[Dict]:
@@ -360,7 +682,11 @@ def audit(text: str, conditions: List[str]) -> List[Dict]:
             continue
         for kw in rule.get("forbidden", []):
             mode = "salt" if kw in _SALT_QUALIFIABLE else "forbidden"
-            if _has_unqualified_occurrence(text, kw, mode) and (cond, kw) not in seen:
+            # 硬审计传上限，走「证据式」口径；`sodium_light_reason` 不传上限，
+            # 补钠灯的保守口径保持不变，不被这里的放宽顺手改掉。
+            if _has_unqualified_occurrence(
+                text, kw, mode, salt_cap=rule.get("salt_cap_g")
+            ) and (cond, kw) not in seen:
                 seen.add((cond, kw))
                 violations.append({
                     "condition": cond,

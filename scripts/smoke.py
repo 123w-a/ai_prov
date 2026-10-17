@@ -118,6 +118,8 @@ def build_scenarios() -> list[Scenario]:
     s.expect('「第二个」→ 2', parse_candidate_index("第二个"), 2)
     s.expect('「第2道」→ 2', parse_candidate_index("第2道"), 2)
     s.expect('「选2吧，少盐点」→ 2', parse_candidate_index("选2吧，少盐点"), 2)
+    s.expect('「那就3吧」→ 3', parse_candidate_index("那就3吧"), 3)
+    s.expect("带量词的「那就2个菜」→ None", parse_candidate_index("那就2个菜"), None)
     s.expect("无序号的「随便」→ None", parse_candidate_index("随便吧"), None)
     s.expect(
         "有候选历史 + 序号 → confirm_one",

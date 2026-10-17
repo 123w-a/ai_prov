@@ -1,6 +1,11 @@
 """Agent 节点轨迹观测：每次图节点执行追加一行 JSONL，供后续成本/质量优化定标。
 
 设计约束与项目一致：写入失败一律静默，绝不阻塞对话主链路。
+
+按轮归因：每次记录都带上 ``session_id`` 与 ``turn_seq``（轮序号，由
+``condense_history`` 每轮 +1 并随 checkpoint 持久化）。没有这两个字段时，
+只能靠「相邻记录间隔 > 90s」猜轮次边界，离线批跑与连续快速的多轮会被并进同一段，
+统计出来的「每轮调用几次」就是错的 —— 实测同一段里能被并进 61 次 structure_answer。
 """
 
 from __future__ import annotations
@@ -27,6 +32,51 @@ def _messages_of(state) -> list:
     """兼容 dict 与 MessagesState 对象两种状态形态。"""
     messages = state.get("messages") if isinstance(state, dict) else getattr(state, "messages", None)
     return messages or []
+
+
+# 节点返回值里值得落盘做归因的标量字段（白名单）。
+# 只记这几个确定的流程字段，不落模型正文，避免把用户内容写进观测文件。
+_DIAG_KEYS = (
+    "verify_status",
+    "verify_attempts",
+    "tool_calls_in_turn",
+    "tool_rounds",
+    "tool_budget_exhausted",
+    "pick_turn_slot_granted",
+    "retry_slot_granted",
+)
+# 违规病种清单只留标签（形如「过敏原:花生及其制品」），够定位「谁把这一轮打回的」
+_MAX_VIOLATION_ITEMS = 8
+
+
+def _state_field(state, key):
+    """兼容 dict 与 MessagesState 对象两种状态形态取单个字段。"""
+    try:
+        if isinstance(state, dict):
+            return state.get(key)
+        return getattr(state, key, None)
+    except Exception:
+        return None
+
+
+def _diag_of(result) -> dict:
+    """从节点返回值里抽少量标量字段，回答「为什么这轮慢 / 为什么被打回」。
+
+    只做白名单提取，拿不到就什么都不记；任何异常都不影响主链路。
+    """
+    if not isinstance(result, dict):
+        return {}
+    diag = {}
+    for key in _DIAG_KEYS:
+        value = result.get(key)
+        if isinstance(value, (bool, int, float, str)):
+            diag[key] = value
+    violated = result.get("verify_violated")
+    if isinstance(violated, (list, tuple)) and violated:
+        diag["verify_violated"] = [
+            str(item)[:60] for item in list(violated)[:_MAX_VIOLATION_ITEMS]
+        ]
+    return diag
 
 
 def _chars_of(messages) -> int:
@@ -79,13 +129,28 @@ def trace_node(name: str):
             result = fn(state, *args, **kwargs)
             try:
                 messages = _messages_of(state)
-                _append({
+                # 轮序号优先看节点自己产出的值：入口节点 condense_history 正是在本次
+                # 执行里把 turn_seq 自增的，只看输入 state 会把它的记录落到上一轮。
+                seq = _state_field(state, "turn_seq")
+                if isinstance(result, dict) and result.get("turn_seq") is not None:
+                    seq = result.get("turn_seq")
+                try:
+                    turn_seq = int(seq or 0)
+                except (TypeError, ValueError):
+                    turn_seq = 0
+                record = {
                     "ts": datetime.now().isoformat(timespec="seconds"),
                     "node": name,
+                    "session_id": str(_state_field(state, "session_id") or ""),
+                    "turn_seq": turn_seq,
                     "ms": int((time.perf_counter() - start) * 1000),
                     "msgs": len(messages),
                     "chars": _chars_of(messages),
-                })
+                }
+                diag = _diag_of(result)
+                if diag:
+                    record["diag"] = diag
+                _append(record)
             except Exception:
                 pass
             return result
@@ -168,8 +233,17 @@ def add_turn_usage(bucket: dict, message) -> dict:
     return item
 
 
-def record_turn_usage(bucket: dict, session_id: str = "", node: str = "") -> None:
-    """把一轮的累计用量落一行 JSONL；桶为空或没有任何 LLM 调用时不写。"""
+def record_turn_usage(
+    bucket: dict,
+    session_id: str = "",
+    node: str = "",
+    turn_seq: int | None = None,
+) -> None:
+    """把一轮的累计用量落一行 JSONL；桶为空或没有任何 LLM 调用时不写。
+
+    ``turn_seq`` 与 ``agent_trace.jsonl`` 同源，用于把「这一轮花了多少 token」
+    和「这一轮每个节点花了多少 ms」按轮对上。
+    """
     try:
         if not bucket or not bucket.get("calls"):
             return
@@ -179,6 +253,11 @@ def record_turn_usage(bucket: dict, session_id: str = "", node: str = "") -> Non
             "node": str(node or ""),
             "calls": int(bucket.get("calls") or 0),
         }
+        if turn_seq is not None:
+            try:
+                record["turn_seq"] = int(turn_seq)
+            except (TypeError, ValueError):
+                pass
         for key in ("in_prompt", "in_cached", "in_cache_create", "out", "total"):
             record[key] = int(bucket.get(key) or 0)
         with _USAGE_LOCK:

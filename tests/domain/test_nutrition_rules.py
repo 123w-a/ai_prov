@@ -247,7 +247,9 @@ class TestSaltWordingContext(unittest.TestCase):
     def test_real_seasoning_is_still_a_violation(self):
         for text in (
             "盐 5g、生抽 2 大勺",
-            "用半勺蚝油提鲜",
+            # 「半勺蚝油」折算约 0.75g 食盐当量，属于写明用量且不超上限，
+            # 已按新口径放行（见 TestExplicitDoseWithinCap）；真超量照旧要拦。
+            "加 4 汤匙生抽",
             "放盐10克",
             "加榨菜炒肉丝",
         ):
@@ -263,6 +265,90 @@ class TestSaltWordingContext(unittest.TestCase):
         # 「盐不少」是关键词后面的翻案，不能被尾随限定词放过
         vs = audit("这道菜盐不少", ["高血压"])
         self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+    def test_salt_saving_wording_is_not_a_violation(self):
+        # 「省掉不少盐」里的「不少」修饰的是省下来的量，不是承认下盐重口
+        for text in (
+            "同样咸度能省掉不少盐",
+            "少放了不少盐",
+            "把盐减少了不少",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["高血压"]), [], text)
+
+
+class TestForbiddenNegationContext(unittest.TestCase):
+    """实测回归：安全说明/劝阻句不是下料（user_c5d8dcc6b7）。
+
+    根因——忌口词的否定语境只看紧贴前缀：「别用浓肉汤」「也别加小鱼小虾类干货」
+    里否定词与关键词隔着「用浓」「加小鱼小」一两个字，被漏判成真实下料，
+    合规答案被反复打回、前端连着闪好几次「正在形成膳食建议」。
+    """
+
+    def test_negated_forbidden_advice_is_not_a_violation(self):
+        for text in (
+            "别用浓肉汤、鱼汤打底，也别加小鱼小虾类干货",
+            "不吃猪肝、腰子",
+            "建议避开动物内脏和浓肉汤",
+            "别喝啤酒，也别吃生冷",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["痛风"]), [], text)
+
+    def test_negation_does_not_cover_a_following_real_addition(self):
+        # 否定只管自己那一小句：后面的「放虾皮」是真实下料，不能被上一个小句开脱
+        for text in ("不加盐、放虾皮", "本来不加虾皮，但实际放虾皮"):
+            with self.subTest(text=text):
+                self.assertTrue(audit(text, ["痛风"]), text)
+
+    def test_negation_window_does_not_cross_punctuation(self):
+        # 「但」这类翻案词与标点都不算否定语境，真下料照旧命中
+        for text in (
+            "香菇或虾皮提鲜",
+            "老火汤、猪肝汤都可以",
+            "老火汤炖猪肝",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(audit(text, ["痛风"]), text)
+
+
+class TestExplicitDoseWithinCap(unittest.TestCase):
+    """实测回归：写明了具体用量的调味品，单品不超上限就不算超量（盐 整锅共 1g）。
+
+    上限口径与 RULES 的 salt_cap_g 对齐，且只作用于硬审计；多品叠加的总当量
+    仍由数值账单兜底，真超量一条都不能放过。
+    """
+
+    def test_small_explicit_dose_is_not_flagged(self):
+        for text in (
+            "盐 整锅共 1g",
+            "关火后加盐 1g",
+            "放淡盐水里泡 2 分钟",
+            # 厨房计量（小撮/汤匙）与「用量写在关键词前面」的语序同样要认出来
+            "加 1 小撮盐",
+            "一撮盐",
+            "生抽 1 汤匙",
+            "用半勺蚝油提鲜",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["高血压"]), [], text)
+
+    def test_dose_over_cap_still_flagged(self):
+        vs = audit("放盐10克", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+    def test_summed_doses_still_flagged(self):
+        # 单品都在上限内（盐 3g、生抽 15ml≈2.6g 盐），合计 5.6g > 5g：由数值账单兜住
+        vs = audit("盐 3g + 生抽 15ml", ["高血压"])
+        self.assertTrue(any("食盐" in v["keyword"] for v in vs))
+        vs = audit("盐1.5g + 生抽20g + 盐0.5g + 盐1g", ["高血压"])
+        self.assertTrue(any("食盐" in v["keyword"] for v in vs))
+
+    def test_repeated_dose_is_counted_once(self):
+        # 同一份「盐 1g」在原料区和步骤区各写一次，是复述不是两份用量：
+        # 去重后 1g，不应被重复求和判成超量
+        vs = audit("食材：盐 1g；做法：撒盐 1g 翻匀", ["高血压"])
+        self.assertEqual(vs, [])
 
 
 if __name__ == "__main__":

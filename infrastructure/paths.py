@@ -25,6 +25,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 SESSIONS_DIR = PROJECT_ROOT / "sessions"
+# Agent 断点库（LangGraph SqliteSaver）。放在 resources/ 下，与业务数据分开；
+# 由 storage/checkpoints.py 统一做删除与孤儿清理。
+RESOURCES_DIR = PROJECT_ROOT / "resources"
+CHECKPOINT_DB = RESOURCES_DIR / "checkpoint.db"
 
 APP_SLUG = "XiaoShanGuanJia"
 

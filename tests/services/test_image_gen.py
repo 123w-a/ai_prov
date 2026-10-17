@@ -70,6 +70,19 @@ class DishImagePromptTest(unittest.TestCase):
         self.assertNotIn("肉类要按菜名呈现正确形态", king_oyster_mushroom)
         self.assertIn("菌菇应呈现真实菌盖", king_oyster_mushroom)
 
+    def test_variant_suffix_stays_in_prompt_but_not_in_cache_key(self):
+        dish = "剁椒蒸金针菇（少辣版）"
+
+        prompt = image_gen.build_image_prompt(dish)
+
+        # 提示词仍按完整菜名生成，只有缓存键做归一化，避免口味信息丢失。
+        self.assertIn(dish, prompt)
+        self.assertEqual(image_gen._cache_key(dish), "v4:剁椒蒸金针菇")
+        self.assertEqual(
+            image_gen._cache_key("番茄豆腐蛋花汤 美食 成品图"),
+            "v4:番茄豆腐蛋花汤",
+        )
+
 
 class DishImageGenerationTest(unittest.TestCase):
     def setUp(self):
@@ -102,6 +115,66 @@ class DishImageGenerationTest(unittest.TestCase):
                 image_gen.cached_dish_image("金针菇"),
                 "https://oss/legacy.png",
             )
+
+    def test_variant_dish_reuses_plain_dish_cache_without_regenerating(self):
+        Path(self.cache_path).write_text(
+            json.dumps({"v4:金针菇": "https://oss/plain.png"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch.object(image_gen, "CACHE_PATH", self.cache_path), \
+             patch.object(image_gen, "DASHSCOPE_API_KEY", "test-key"), \
+             patch.object(image_gen, "_request_wanx_image") as request:
+            url = image_gen.generate_dish_image("金针菇（少盐版）")
+
+        self.assertEqual(url, "https://oss/plain.png")
+        request.assert_not_called()
+
+    def test_cache_lookup_falls_back_to_historical_variant_key(self):
+        Path(self.cache_path).write_text(
+            json.dumps(
+                {"v4:剁椒蒸金针菇（少辣版）": "https://oss/variant.png"},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.object(image_gen, "CACHE_PATH", self.cache_path):
+            self.assertEqual(
+                image_gen.cached_dish_image("剁椒蒸金针菇"),
+                "https://oss/variant.png",
+            )
+
+    def test_strict_retry_skipped_when_budget_insufficient(self):
+        bad = {
+            "dish_name_match": True,
+            "ingredient_shape_match": False,
+            "appeal_score": 2.0,
+            "problems": ["像鱿鱼圈"],
+        }
+
+        with patch.object(image_gen, "CACHE_PATH", self.cache_path), \
+             patch.object(image_gen, "DASHSCOPE_API_KEY", "test-key"), \
+             patch.object(image_gen, "IMAGE_GENERATION_BUDGET_S", 5), \
+             patch.object(
+                 image_gen,
+                 "_request_wanx_image",
+                 return_value="https://wanx/first.png",
+             ) as request, \
+             patch.object(
+                 image_gen,
+                 "_download_generated_image",
+                 return_value=(b"bad-image", "image/jpeg"),
+             ), \
+             patch.object(image_gen, "_audit_generated_dish_image", return_value=bad), \
+             patch.object(image_gen, "upload_to_oss", return_value="https://oss/first.png"):
+            url = image_gen.generate_dish_image("金针菇")
+
+        # 预算不够再跑一轮纠错时，直接用首图，不再同步等第二次生图。
+        self.assertEqual(url, "https://oss/first.png")
+        request.assert_called_once()
+        cached = json.loads(Path(self.cache_path).read_text(encoding="utf-8"))
+        self.assertEqual(cached["v4:金针菇"], "https://oss/first.png")
 
     def test_good_first_image_is_uploaded_without_retry(self):
         assessment = {

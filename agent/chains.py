@@ -80,6 +80,34 @@ structure_llm = None
 chef_answer_chain = None
 _structure_lock = threading.Lock()
 
+# 结构化整理节点的输出预算。thinking 关闭后实测真实需要多少（同一提示词、真端点）：
+#   单菜 936~1022 / 四人家庭单菜 1200 / 三菜对比 1337 /
+#   三菜家宴+四人约束+依据块 1770~1940 / 四菜家宴+四人约束+依据块 2589~2734。
+# 旧的 2048 在「四菜家宴」这一档直接截断：finish_reason=length、JSON 不闭合，
+# 撞 MAX_STRUCTURE_RETRIES 全量重跑。4096 是按最重观测值留约 50% 余量。
+# 这个上限只在真正需要更长的交付时才用到：正常轮次模型 finish_reason=stop 就停，
+# 不会因为上限变大而变慢、变贵。
+STRUCTURE_MAX_TOKENS = 4096
+
+
+def _structure_extra_body(provider: str) -> dict | None:
+    """结构化整理节点的端点参数：默认关掉 DeepSeek 的思考。
+
+    实测该端点把 reasoning token 计进 completion_tokens，也就是计进 ``max_tokens``：
+    2048 预算下思考会吃光整份预算、``content`` 变空（``finish_reason=length``），
+    ChefAnswer 解析失败后撞上 ``MAX_STRUCTURE_RETRIES`` 全量重跑。生产日志同一
+    形态可见（``attempt0 parse-fail ... Invalid json output:`` 与截断 JSON）。
+
+    本节点是格式整理员不是推理员（提示词 11 条全是格式约束），安全决策在下游 L3
+    确定性审计，因此关思考不牺牲判定质量。``STRUCTURE_THINKING=on`` 可还原。
+    只有实际 provider 是 deepseek 时才带：其它 provider（中转站等）不接受该参数。
+    """
+    if provider != "deepseek":
+        return None
+    if os.getenv("STRUCTURE_THINKING", "off").strip().lower() in {"on", "1", "true", "enabled"}:
+        return None
+    return {"thinking": {"type": "disabled"}}
+
 
 def _get_structure_llm():
     """首次结构化调用时创建模型；后续复用同一实例。"""
@@ -88,13 +116,18 @@ def _get_structure_llm():
         return structure_llm
     with _structure_lock:
         if structure_llm is None:
-            from infrastructure.model_name import get_langchain_llm
+            from infrastructure.model_name import get_langchain_llm, resolve_provider
 
+            # 先解析出真实 provider（含 .env 回退），据此决定要不要带端点专用参数。
+            # 默认仍钉在 deepseek（原语义）：不写 STRUCTURE_PROVIDER 时结构化链不走
+            # CHEF_PROVIDER 的切换，只在这里多拿一次「实际是谁」用于参数判定。
+            provider = resolve_provider(os.getenv("STRUCTURE_PROVIDER") or "deepseek")
             structure_llm = get_langchain_llm(
-                os.getenv("STRUCTURE_PROVIDER") or "deepseek",
+                provider,
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=STRUCTURE_MAX_TOKENS,
                 model_name=os.getenv("STRUCTURE_MODEL_NAME") or None,
+                extra_body=_structure_extra_body(provider),
             )
     return structure_llm
 

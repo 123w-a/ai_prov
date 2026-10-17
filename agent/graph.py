@@ -10,7 +10,7 @@ import openai#捕获上游 LLM 偶发 5xx/超时异常做重试
 import threading#failover 并发锁
 import time#重试间隔用
 import sqlite3#持久化短期记忆（断点续跑、循环状态保存）
-from infrastructure.paths import DATA_DIR
+from infrastructure.paths import CHECKPOINT_DB, DATA_DIR
 from infrastructure.model_name import (
     extract_message_text,
     get_langchain_llm,
@@ -248,20 +248,81 @@ def _family_members() -> list[dict]:
 
 
 def _apply_family_differentiation(answer, members=None):
-    """用确定性规则覆盖模型自填矩阵，并生成稳定的一人一句调整。"""
+    """确定性规则优先；规则说不出差异时，保留模型已给出的分餐判断。
+
+    背景：盐/酱油改成「证据式」判定后（写明用量且不超上限就不算违规），
+    家常菜很难拿到硬命中，确定性矩阵于是整片「可吃 / 空理由」，
+    再被这里覆盖回去就把模型算对的分餐结论（如「爸爸·高血压：少盐版」）
+    一并抹平成「可按共同做法正常食用」。规则有结论时永远规则赢，
+    这里只补规则沉默的格子。
+    """
     family_members = _family_members() if members is None else members
     try:
         rows = build_matrix(
             [recipe.model_dump() for recipe in answer.recipes],
             family_members or [],
         )
-        answer.dish_matrix = [DishMatrixItem(**row) for row in rows]
-        answer.member_adjustments = build_member_adjustments(rows)
+        merged = _merge_family_rows(rows, answer.dish_matrix)
+        answer.dish_matrix = merged
+        # 一人一句按成员逐条合并：规则说不出话的那位，保留模型自己写的
+        # 「少盐、切碎、减份量」，不把三条都退化成同一句「正常食用」。
+        answer.member_adjustments = _merge_member_adjustments(
+            build_member_adjustments([row.model_dump() for row in merged]),
+            answer.member_adjustments,
+        )
     except Exception:
         # 矩阵只是差异化展示层，任何异常都不能影响已经通过审计的主卡片。
         answer.dish_matrix = []
         answer.member_adjustments = []
     return answer
+
+
+def _matrix_verdict(row) -> str:
+    """兼容 DishMatrixItem 与 dict 两种形态取 verdict。"""
+    if isinstance(row, dict):
+        return str(row.get("verdict") or "").strip()
+    return str(getattr(row, "verdict", "") or "").strip()
+
+
+def _merge_family_rows(deterministic_rows, model_rows):
+    """规则命中以确定性结论为准；规则沉默的格子沿用模型自填的判断。"""
+    fallback: dict = {}
+    for row in model_rows or []:
+        verdict = _matrix_verdict(row)
+        member = str(getattr(row, "member", "") or "").strip()
+        dish = str(getattr(row, "dish", "") or "").strip()
+        if member and dish and verdict not in ("", "可吃"):
+            fallback[(dish, member)] = row
+    merged = []
+    for row in deterministic_rows or []:
+        key = (
+            str(row.get("dish") or "").strip(),
+            str(row.get("member") or "").strip(),
+        )
+        keep = fallback.get(key)
+        if keep is not None and str(row.get("verdict") or "") == "可吃":
+            merged.append(keep)
+        else:
+            merged.append(DishMatrixItem(**row))
+    return merged
+
+
+def _merge_member_adjustments(deterministic_lines, model_lines):
+    """规则结论优先；只有退化成「可按共同做法正常食用」的成员才用模型原话。"""
+    saved: dict = {}
+    for line in model_lines or []:
+        text = str(line or "").strip()
+        member, sep, rest = text.partition("：")
+        if sep and member and rest.strip():
+            saved[member.strip()] = text
+    merged = []
+    for line in deterministic_lines or []:
+        member = str(line or "").split("：", 1)[0].strip()
+        if "可按共同做法正常食用" in str(line or "") and member in saved:
+            merged.append(saved[member])
+        else:
+            merged.append(line)
+    return merged
 
 
 def _merged_conditions(user_text: str) -> list:
@@ -394,7 +455,13 @@ def _candidate_list_rule(messages, *, ingredient_ready: bool = False) -> str:
 # 没配 / 配了但没 key → 自动用 configs 第一个可用的（已将 gpt 放第一，不写即默认 gpt）。
 # 本文件不硬编码任何模型名，切换模型只改 .env，无需动代码。
 provider = None
-MAIN_AGENT_MAX_TOKENS = 4096  # DeepSeek 的推理 token 与正文共用上限，1024 会把长回答截成半句
+# DeepSeek 的推理 token 与正文共用上限，1024 会把长回答截成半句。
+# 4096 仍不够：重推理轮（实测 user_d2cc49f12c 第 4 轮「要严格控制」→
+# 「减盐减油版红烧肉」）推理把预算吃光，流式正文在分餐矩阵第一行就被斩断
+# （opening 停在「…不喝汤、不」），卡片文字与矩阵表全部缺失。
+# 正常轮模型 finish_reason=stop 就停，放大上限不会让普通回答变长或变慢，
+# 只在「本来就会被截断」的轮把未写完的正文补齐。
+MAIN_AGENT_MAX_TOKENS = 8192
 llm = None
 llm_with_tools = None
 retrieval_llm = None
@@ -463,7 +530,9 @@ set_query_transform_llm(_query_transform_adapter, mode="multi")
 #  2. 断点持久化（SQLite checkpointer，thread_id 对应 checkpoint.db 里的单条任务断点）
 # --------------------------------------------------------------------------- #
 connection = sqlite3.connect(
-    database="resources/checkpoint.db",
+    # 路径统一来自 infrastructure.paths，避免 CWD 不同导致断点库分裂成两份
+    # （storage/checkpoints.py 的清理入口读的是同一个常量）。
+    database=str(CHECKPOINT_DB),
     check_same_thread=False
 )
 
@@ -494,7 +563,14 @@ MAX_TOOL_ROUNDS = 3
 @trace_node("condense_history")
 def maybe_condense(state: MessagesState):#压缩历史对话
     msgs = state["messages"]
+    # 轮序号：每经过一次入口（= 每一条新的用户消息）自增并随 checkpoint 持久化。
+    # 观测层靠它把 trace / usage 按轮对上，不再用「间隔 > 90s」猜轮次边界。
+    try:
+        turn_seq = int(state.get("turn_seq") or 0) + 1
+    except (TypeError, ValueError):
+        turn_seq = 1
     reset_turn_state = {
+        "turn_seq": turn_seq,
         "verify_attempts": 0,
         "verify_warning": "",
         "verify_status": "ok",
@@ -503,6 +579,7 @@ def maybe_condense(state: MessagesState):#压缩历史对话
         "tool_rounds": 0,
         "tool_budget_exhausted": False,
         "pick_turn_slot_granted": False,
+        "retry_slot_granted": False,
         "tool_budget": _turn_tool_budget(msgs),
         "ingredient_gate_ready": False,
         "ingredient_gate_action": "",
@@ -978,9 +1055,20 @@ _GENERIC_DISH_PHRASES = (
     # 「帮我做膳食决策」是需求句，不是菜名；否则会被单菜分支直接出卡配图。
     "膳食决策", "饮食决策", "用餐决策",
 )
+# 口味/约束词本身不是一道菜名。`_DISH_REQUEST_PATTERN`（触发词「想吃…/来个…」）
+# 会把「晚上想吃点清淡的，两个人吃就行」里的「清淡的」截成“菜名”，
+# 「少盐少油的」「就行」同理。若不在这里挡掉，整句会被判成“点名了某道菜”，
+# 跳过候选清单直接出卡片配图（实测稳定性电池 B 组第 1 轮，
+# 同一句话两次都稳定出卡：清蒸鲈鱼 / 番茄西葫芦炒鸡蛋）。
 _TASTE_ONLY_PATTERN = re.compile(
-    r"^(?:更|稍微|偏|太|非常)?(?:辣|咸|甜|酸|苦|麻|重口|少盐|少油|低盐|低油)"
-    r"(?:一点|一些|点|些|的)?$"
+    r"^(?:更|稍微|偏|太|非常|比较|有点|略微|再)?"
+    r"(?:(?:清淡|少盐|少油|低盐|低油|低脂|低糖|无糖|减盐|减油|减脂|减糖|"
+    r"健康|营养|爽口|开胃|下饭|简单|快手|方便|省事|辣|咸|甜|酸|苦|麻|重口)"
+    r"(?:一点|一些|点|些|的)?)+$"
+)
+# 纯应答/语气碎片（「…吃就行」截出来的「就行」、「都可以」等）同样不是菜名。
+_NON_DISH_REPLY_PATTERN = re.compile(
+    r"^(?:就|都|也|还|再|可|以|行|好|是|要|不|得|能|会|来|点|些|一|的|了|吧|呀|呢|啊|哈|嗯|随便|无所谓)+$"
 )
 _NEGATED_EATING_PATTERN = re.compile(
     r"(?:吃不了|吃不下|吃不完|吃不惯|不能吃|不爱吃|不想吃|不吃|吃过了|吃着|吃腻)"
@@ -1073,6 +1161,7 @@ def _is_generic_dish_name(name: str) -> bool:
         name in _GENERIC_DISH_NAMES
         or any(word in name for word in _GENERIC_DISH_PHRASES)
         or bool(_TASTE_ONLY_PATTERN.fullmatch(name))
+        or bool(_NON_DISH_REPLY_PATTERN.fullmatch(name))
     )
 
 
@@ -1791,6 +1880,23 @@ def _has_delivered_card(messages) -> bool:
     return False
 
 
+# 「再要一道菜」的信号：已交付卡片后，用户主动索取别的菜才算新一轮；
+# 否则「别的呢」这类也会被当普通追问静默掉（那一轮应当继续出菜）。
+# 词表偏宽（宁可漏挡保持旧行为，也不误挡该出的卡片）。
+_NEW_DISH_REQUEST_MARKERS = (
+    "别的", "其他菜", "其它的菜", "另外", "再来", "还有", "换一道", "换个菜",
+    "换菜", "推荐",
+)
+
+
+def _wants_another_dish(text) -> bool:
+    """本轮是否在索取新的菜品（区别于围绕当前卡片的追问）。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return any(marker in raw for marker in _NEW_DISH_REQUEST_MARKERS)
+
+
 def _latest_delivered_card_recipe_names(messages, limit=8):
     """返回最近一张已交付卡片里的菜名，供卡片后的追问锁定对象。"""
 
@@ -2063,6 +2169,22 @@ def parse_candidate_index(text):
     # 这里只做形态识别，真正的锚点校验在调用方——_classify_turn_intent 要求 has_prior_candidates、
     # _resolve_picked_candidate 要求会话里真有候选清单，所以「第9个」这种越界序号不会被认下。
     match = re.match(r"^\s*([0-9]{1,2})\s*(?:吧|啊|呀|呢|哦|，|,|。|！|!)", raw)
+    if match:
+        number = _candidate_number(match.group(1))
+        if number and number > 0:
+            return number
+    # 「那就3吧 / 那就要3吧 / 那就选3吧 / 就3」这类带承接前缀的口语选定：用户在
+    # 候选清单后常用「那就…吧」或直接「就3」承接，前缀会吃掉上面所有形态的匹配
+    # （实测 user_c5d8dcc6b7 第 2 轮「那就3吧」、user_1ed7243c4a 第 2 轮「就3」
+    # 既没开配图门、也没注入已选定菜名，卡片有图槽却没有图）。
+    # 约束与裸序号口径保持一致：序号后必须紧跟语气词/标点或直接收尾，因此
+    # 「那就2个菜」「那就3个人」「就3个人」不会被误判成选第 2/3 道。
+    match = re.match(
+        r"^\s*(?:那就选|那就要|那就|那选|那要|那|就)\s*"
+        r"([0-9]{1,2}|[一二两三四五六七八九十]+)\s*"
+        r"(?:吧|啊|呀|呢|哦|嘛|，|,|。|！|!|\s*$)",
+        raw,
+    )
     if match:
         number = _candidate_number(match.group(1))
         if number and number > 0:
@@ -2727,15 +2849,25 @@ def _retry_tool_slot_patch(state: "ChefState") -> dict:
     边界（只补「一次」，不是放开采纳）：
       · 并发宽度每次重试只回退 1 格 → 重试后余额恰好为 1；
       · 圈数上限最多回退到 `MAX_TOOL_ROUNDS - 1` → 只再给一圈，不会回到无限循环；
-      · 外层还有 `MAX_VERIFY` 次重试封顶，补额次数与重试次数同阶。
+      · **每轮只补一次**（`retry_slot_granted`）→ 同一轮的第 2、3 次重试不再各开
+        一圈新工具：否则 `MAX_VERIFY=3` 会在并发宽度之外再叠最多 3 圈工具 + 3 次
+        chef_think（实测慢轮每轮 8~10 次生成、平均 5.73 次调用）。
+        这跟 `_pick_turn_slot_patch` 的「每轮只补一次」是同一口径，两处不再一个放一个收。
+      · 外层还有 `MAX_VERIFY` 次重试封顶，补额次数不再随重试次数放大。
     仅在「余额已空」或「圈数已封顶」时打补丁，余额还有剩余时维持原状。
+
+    补额机会只在「真的补到了」时才消耗：余额还有剩的重试原样放过，不占这次机会。
     """
+    if state.get("retry_slot_granted"):
+        return {}
     patch = {}
     if _remaining_tool_slots(state) <= 0:
         used = int(state.get("tool_calls_in_turn", 0) or 0)
         patch["tool_calls_in_turn"] = max(0, used - 1)
     if int(state.get("tool_rounds", 0) or 0) >= MAX_TOOL_ROUNDS:
         patch["tool_rounds"] = MAX_TOOL_ROUNDS - 1
+    if patch:
+        patch["retry_slot_granted"] = True
     return patch
 
 
@@ -3704,6 +3836,38 @@ _SELECTED_OPENING_CONFLICT_MARKERS = (
     "没有第3道",
 )
 
+# 「自称认不出序号/候选」的措辞族（2026-10-15 实测）：选定轮的卡片和图片都认对了
+# 目标，讲解正文却写「我这边没有看到你前面列的“第3个”……」，并把整道菜换成候选
+# 清单里根本没有的另一道（卡片「番茄蒸水蛋」/ 讲解「番茄豆腐菌菇汤」）。旧 marker 表
+# 只认「看不到前文 / 无法确认」的固定说法，这一族措辞直接漏判，错位讲解原样发给用户。
+#
+# 措辞本身不能单独定案：「看不到图片」「没有找到火候说明」都是正常句子。所以再要求
+# 正文同时谈到序号/候选/清单，才算「自称候选上下文缺失」——正常讲解不会同时出现
+# 这两个特征，误伤面收得很窄。
+_SELECTED_OPENING_DENIAL_TOKENS = (
+    "看不到", "没有看到", "没看到", "未看到", "没有看见", "看不见",
+    "无法确认", "不能确认", "无法确定", "不能确定", "无法判断", "无法识别",
+    "不确定你指", "不知道你指", "不清楚你指",
+    "没有找到", "找不到", "检索不到", "没有出现", "没有列出",
+    "对应哪一条",
+)
+_SELECTED_OPENING_ANCHOR_RE = re.compile(
+    r"第\s*[0-9一二两三四五六七八九十]+\s*[个道款样号份]|序号|候选|清单"
+)
+
+
+def _opening_denies_candidate_context(opening) -> bool:
+    """正文是否在宣称「认不出用户选的序号/候选」。
+
+    只在「措辞族 + 序号/候选锚点」同时出现时才成立；单独一句「看不到图片」不算。
+    """
+    body = str(opening or "")
+    if not body:
+        return False
+    if not any(token in body for token in _SELECTED_OPENING_DENIAL_TOKENS):
+        return False
+    return bool(_SELECTED_OPENING_ANCHOR_RE.search(body))
+
 
 def _opening_names_other_candidate(opening, target, messages) -> bool:
     """正文是否认成了清单里的另一道候选菜（且完全没提本轮已选目标）。
@@ -3746,6 +3910,8 @@ def _selected_target_opening_is_consistent(opening, messages, answer) -> bool:
     if not text:
         return True
     if any(marker in text for marker in _SELECTED_OPENING_CONFLICT_MARKERS):
+        return False
+    if _opening_denies_candidate_context(text):
         return False
     return not _opening_names_other_candidate(text, target, messages)
 
@@ -3937,6 +4103,28 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
         and not _is_dish_pick_turn(messages)
         and not _is_recipe_detail_followup(messages, latest_text)
         and not taste_followup_target
+    ):
+        return {"messages": []}
+    # 已交付卡片后的普通追问 / 参数补充：只回文字，不重出卡片、不补图。
+    # 基线要求「普通追问不能误触发结构化出卡」（技能验收场景 5）。
+    # 实测 user_d2cc49f12c：下面三轮都被判成 followup/other 后直落结构化，
+    # 重出一张几乎相同的卡片，且 image_requested=False —— 用户既丢了图，
+    # 也分不清是上一道菜的补充还是新一轮：
+    #   · 「这道菜大概要炖多久？」（intent=other）
+    #   · 「我妈妈在控糖，我爸爸没有，今晚做两个人的饭」（intent=followup）
+    #   · 「你好，你能做什么」（intent=other，闲聊）
+    # 只放行真正需要重出卡的信号（选定/点名新菜/换菜/显式完整做法/口味调整/
+    # 追加要菜/点名被复核的菜）；判定全部走确定性函数，宁可漏挡也不误挡。
+    if (
+        _has_delivered_card(messages)
+        and turn_intent in ("followup", "other")
+        and not _is_dish_pick_turn(messages)
+        and not _is_recipe_detail_followup(messages, latest_text)
+        and not taste_followup_target
+        and not _is_specific_dish_request(latest_text)
+        and not _is_recipe_change_request(latest_text)
+        and not _requested_dish_name(latest_text)
+        and not _wants_another_dish(latest_text)
     ):
         return {"messages": []}
     # 两阶段点菜第一阶段标记：泛推荐轮只出候选清单，不出卡片、不配图。
@@ -4327,6 +4515,16 @@ _ADVISORY_LINE_MARKERS = (
 _ANSWER_RECIPE_STRUCTURE_MARKERS = (
     "食材", "用料", "主料", "配料", "调料", "步骤", "备料",
 )
+# 「讲解型正文」的专用词汇：出处、依据、结论、膳食指南口径、每日限量、换算……
+# 只在这些词出现、且正文里又认不出任何菜谱分节时，才判定这一轮交付的是
+# 讲解/问答而不是菜谱本体（见 `_is_explanation_prose`）。
+# 刻意不含「建议/注意/不能/避免」这类通用词：它们同样出现在菜谱提示句里，
+# 用来放行会把「番茄牛肉面：面条煮熟，加生抽2大勺、盐5g调味」这类口语菜谱
+# 一起放掉（实测 2026-10-09 选定轮的真实链路）。
+_EXPLANATION_PROSE_MARKERS = (
+    "指南", "食养", "依据", "出处", "来源", "结论", "原则", "标准", "白皮书",
+    "摄入", "限量", "换算", "附录", "每日", "不替代", "参考", "提醒",
+)
 # 正文明确表达拒绝/回避，才说明它在讲安全，而不是在教怎么下料。
 _ANSWER_REFUSAL_MARKERS = (
     "不能放", "不要放", "不宜放", "不能加", "不要加", "不宜加",
@@ -4376,6 +4574,68 @@ def _recipe_content_for_audit(answer_text: str, *, advisory_only: bool = False) 
     return "\n".join(kept)
 
 
+_JSON_RECIPE_FIELDS = ("name", "serving", "servings", "dishes", "ingredients", "steps")
+
+
+def _json_recipe_leaves(recipe) -> list[str]:
+    """把一份 recipe 结构里「算下料/做法」的文本叶子摊平。"""
+    if not isinstance(recipe, dict):
+        return [str(recipe)] if isinstance(recipe, (str, int, float)) else []
+    parts: list[str] = []
+    for field in _JSON_RECIPE_FIELDS:
+        value = recipe.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    # 食材常写成 {"name": "盐", "amount": "1g"}
+                    parts.extend(str(v) for v in item.values() if isinstance(v, str))
+    return parts
+
+
+def _json_recipe_audit_text(answer_text: str) -> tuple[bool, str]:
+    """JSON 结构化交付：返回 ``(是否结构化交付, 只含菜谱本体的审计文本)``。
+
+    JSON payload 里的 ``health_lights``、``guardrails``、``sources``、``reasons``、
+    ``member_adjustments`` 这些字段本身就在复述「本菜撞了哪条红线」或引用指南
+    原文（实测 user_e604de5674 的 ``sources[].snippet`` 抄了「鱼、虾、蟹」，
+    perf-1791806412 的 ``health_lights`` 写「高嘌呤（动物内脏）」）。把它们当违规
+    证据，会让一份合规交付反复打回、前端连闪「正在形成膳食建议」。
+
+    因此这一支只认菜谱本体：``recipes`` 的菜名/份量/食材/步骤，加上 ``opening``
+    markdown 正文里的食材/做法分节（部分交付把菜谱写进 opening）。
+    结构化交付一律不再退回整篇——payload 的其余字段是解释与引用，不是下料。
+    """
+    text = str(answer_text or "").strip()
+    if not text:
+        return False, ""
+    payload = None
+    try:
+        payload = json.loads(text)
+    except Exception:  # noqa: BLE001
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            try:
+                payload = json.loads(text[start:end + 1])
+            except Exception:  # noqa: BLE001
+                payload = None
+    if not isinstance(payload, dict):
+        return False, ""
+    parts: list[str] = []
+    recipes = payload.get("recipes")
+    if isinstance(recipes, dict):
+        recipes = [recipes]
+    for recipe in recipes or []:
+        parts.extend(_json_recipe_leaves(recipe))
+    opening = payload.get("opening")
+    if isinstance(opening, str) and opening.strip():
+        parts.append(_allergen_core_audit_text(opening, broad_headings=True))
+    return True, "\n".join(part for part in parts if str(part).strip())
+
+
 # 过敏原硬审计的范围边界：只有「菜谱本体」能触发重生成。
 # 提醒、分餐、依据、热量、小建议这些段落里出现过敏原名，属于安全说明或替代
 # 说明（实测：「脆感替代：用黄瓜丁+胡萝卜丁顶替花生」「确认酱料配料表无花生」
@@ -4415,18 +4675,24 @@ def _is_section_header_line(line: str) -> bool:
     return False
 
 
-def _starts_with_section_marker(text: str) -> bool:
+def _starts_with_section_marker(text: str, *, broad_headings: bool = False) -> bool:
     """这一行是不是「食材 / 做法」这类分节标题的开头。
 
     只认标题形态：``食材``、``食材（2-3人份）``、``食材：…``、``步骤1：…``。
     ``操作要点：…``、``材料不新鲜``、``配料表没写`` 这类只是借了同名前缀的
     安全说明或普通句子，不算分节起点——否则提醒段会被当成菜谱本体重新卷进
     硬审计，又回到「好答案被反复打回」的老问题。
+
+    ``broad_headings=True``（慢病审计用）额外认 ``**【用料】**（约3–4人份）``、
+    ``【做法】`` 这种「书名号 + 加粗」混写的分节标题：模型很爱这么写，认不出来
+    时整篇建议/依据会被当成菜谱本体卷进硬审计。过敏原侧保持默认口径不变。
     """
     for marker in _SECTION_MARKERS:
         if not text.startswith(marker):
             continue
         rest = text[len(marker):].lstrip("*＊ \t")
+        if broad_headings:
+            rest = rest.lstrip("*＊】 \t")
         if not rest:
             return True
         if rest[0] in "：:（(【":
@@ -4440,11 +4706,14 @@ def _starts_with_section_marker(text: str) -> bool:
     return False
 
 
-def _allergen_core_audit_text(answer_text: str) -> str:
-    """抽取能触发过敏原硬拦的「菜谱本体」文本。
+def _allergen_core_audit_text(answer_text: str, *, broad_headings: bool = False) -> str:
+    """抽取能触发硬拦的「菜谱本体」文本。
 
     食材/调料分节与做法/步骤分节里的过敏原名是真实下料风险，进硬审计；
     提醒、分餐、依据、热量、小建议等段落里的名字只是被提及，交给提示层。
+
+    ``broad_headings`` 只给慢病审计开（认 ``**【用料】**（约3–4人份）`` 这类
+    混写标题）；过敏原硬审计沿用默认口径，不在这里顺手放宽/收紧。
     """
     kept: list[str] = []
     active = False
@@ -4452,7 +4721,9 @@ def _allergen_core_audit_text(answer_text: str) -> str:
         stripped = _strip_line_markup(line)
         if not stripped:
             continue
-        if _starts_with_section_marker(stripped):
+        if broad_headings:
+            stripped = stripped.lstrip("【 \t")
+        if _starts_with_section_marker(stripped, broad_headings=broad_headings):
             active = True
             kept.append(line)
             continue
@@ -4581,6 +4852,22 @@ def _is_plain_safety_refusal_turn(
     return any(marker in compact for marker in _ANSWER_REFUSAL_MARKERS)
 
 
+def _is_explanation_prose(answer_text: str) -> bool:
+    """认不出菜谱分节时，判断正文是不是「讲解/问答」而不是口语菜谱。
+
+    实测 perf-1791807060 / user_357fdc3df8：「成人高血压每天盐吃多少」「我妈痛风
+    晚上能不能喝排骨汤」这类问答，正文必然写着「浓肉汤/老火汤/火腿肠/咸菜/猪肝」
+    来解释忌口——那是这轮回答的主题词，不是下料。旧口径认不出分节就退回整篇，
+    同一段讲解每轮都被判违规、重生成到 MAX_VERIFY 才收口，前端连着闪
+    「正在形成膳食建议」。
+
+    判据只用「引用/结论」专用词（`_EXPLANATION_PROSE_MARKERS`），不碰
+    「建议/注意」这类通用词：口语菜谱（「番茄牛肉面：…加生抽2大勺、盐5g调味」）
+    里没有这些词，仍按原来的「剥掉安全说明句」口径进硬审计。
+    """
+    return any(marker in str(answer_text or "") for marker in _EXPLANATION_PROSE_MARKERS)
+
+
 def _audit_texts_for_answer(
     answer_text: str,
     *,
@@ -4592,13 +4879,22 @@ def _audit_texts_for_answer(
 
     - 候选轮：只审计用户看到的候选菜名，提醒句不进审计；
     - 纯口头安全问答：正文必然反复提到过敏原本身，先剥掉提醒句再审计；
-    - 其余轮次：过敏原硬审计只看「菜谱本体」（食材/调料分节 + 做法/步骤分节），
-      慢病审计看整篇。
+    - 其余轮次：慢病与过敏原硬审计都只看「菜谱本体」（食材/调料分节 +
+      做法/步骤分节）。
 
-    只有菜谱本体能触发过敏原重生成：提醒、分餐、依据、热量、小建议段落里出现
-    过敏原名是安全说明/替代说明，把它们当违规会把一段好答案反复打回、最后一
-    句话兜底（实测宫保鸡丁无花生版）。正文没有可识别分节时（模型偶发用纯口语
-    段落交付菜谱），退回既有的「剥掉安全说明句」口径，避免硬审计被整体放空。
+    只有菜谱本体能触发重生成：提醒、分餐、依据、热量、小建议段落里出现过敏原
+    名或病种忌口词，是安全说明/替代说明（「脆感替代：用黄瓜丁顶替花生」
+    「别用浓肉汤、鱼汤打底，也别加小鱼小虾类干货」），把它们当违规会把一段好
+    答案反复打回、最后一句话兜底（实测宫保鸡丁无花生版、番茄豆腐蛋花汤）。
+    正文里认不出任何菜谱分节时，慢病审计不再退回整篇建议：饮食问答/讲解里
+    必然写着忌口词（「长时间熬的排骨浓汤属于要严格限制的一类」「隐形盐：火腿肠、
+    咸菜」「动物内脏、浓肉汤、部分海鲜」），那是这类答案的**主题**而非下料，
+    整篇审计等于让每一次讲解都重生成直到兜底（实测全库 100 条打回样本里 11 条
+    属于此类）。过敏原侧口径不变，仍保留「剥掉安全说明句」的整篇回退。
+
+    结构化交付（JSON payload）走单独一支：只看 ``recipes`` 与 ``opening`` 正文
+    里的菜谱分节，不再回退到整篇/剥说明句——payload 里的依据、健康灯、
+    分餐矩阵、引用来源是解释，不是下料，见 `_json_recipe_audit_text`。
     """
     if candidate_names:
         names = "\n".join(candidate_names)
@@ -4609,11 +4905,35 @@ def _audit_texts_for_answer(
         # 这一支的过敏原风险交给 `_allergen_permission_violations` 的定点下料检测。
         return stripped, ""
     core = _allergen_core_audit_text(answer_text)
-    if not core.strip():
-        core = _recipe_content_for_audit(answer_text)
+    # 过敏原审计的正文沿用原口径：认不出分节时退回「剥掉安全说明句」的整篇，
+    # 不让过敏原硬审计被整体放空。
+    allergen_text = core if core.strip() else _recipe_content_for_audit(answer_text)
+    # 慢病审计多认一层混写分节标题（**【用料】**（约3–4人份））：认不出来时
+    # 整篇「为什么这样吃/依据/小膳建议」都会被当成菜谱本体，好答案被反复打回。
+    chronic_core = core or _allergen_core_audit_text(
+        answer_text, broad_headings=True
+    )
+    # 慢病审计同样只认菜谱本体：小建议段里的「别用虾皮/避开浓肉汤」是安全说明，
+    # 按整篇审计会被当成真实忌口命中，好答案被反复打回。取本体按四级回退：
+    #   1. JSON 交付只取 recipes 的菜名/份量/食材/步骤（+ opening 里的菜谱分节）；
+    #   2. 其余正文只认食材/做法分节（含 `**【用料】**（约3–4人份）` 混写标题）；
+    #   3. 认不出分节但正文是「讲解/问答」（带指南/依据/结论/摄入限量这类词）：
+    #      本轮交付的是解释而不是菜谱，慢病审计文本为空——没有下料动作就没有慢病
+    #      违规，不能拿建议正文当证据（否则「浓汤/老火汤/火腿肠/隐形盐」这些
+    #      **主题词**会让同一段讲解被无限打回，前端连闪「正在形成膳食建议」）；
+    #   4. 其余（口语菜谱等）沿用既有的「剥掉安全说明句」口径，避免硬审计被放空。
+    structured, structured_text = _json_recipe_audit_text(answer_text)
+    if structured:
+        chronic_text = structured_text
+    else:
+        chronic_text = chronic_core
+        if not chronic_text.strip() and not _is_explanation_prose(answer_text):
+            chronic_text = _recipe_content_for_audit(answer_text, advisory_only=True)
+            if not chronic_text.strip():
+                chronic_text = answer_text
     # 菜谱本体里「（替花生）」「不用花生油」这类否定/替代括注字面含过敏原名，
     # 但不是下料（实测 E1/E2 宫保鸡丁），审计前先清掉这一层。
-    return answer_text, _strip_negated_allergen_mentions(core, allergens)
+    return chronic_text, _strip_negated_allergen_mentions(allergen_text, allergens)
 
 
 def _allergen_permission_violations(
@@ -4686,6 +5006,7 @@ def _clause_adds_allergen(clause: str, words) -> bool:
 # 自定义状态：在 MessagesState 基础上扩展护栏所需的计数字段
 class ChefState(MessagesState):
     session_id: str = ""
+    turn_seq: int = 0  # 轮序号：入口每轮 +1，供 trace / usage 按轮归因
     verify_attempts: int      # 已打回重生成次数
     verify_warning: str       # 超限仍不通过时带给前端的安全警示
     verify_status: str        # ok / retry / degraded / blocked，供条件边路由
@@ -4697,6 +5018,7 @@ class ChefState(MessagesState):
     tool_budget_exhausted: bool = False  # 本轮工具预算是否耗尽，供日志/降级识别
     tool_budget: int = 0  # 本轮工具「并发宽度」上限（选定轮收紧为 2，见 _turn_tool_budget）
     pick_turn_slot_granted: bool = False  # 选定轮第二圈是否已补过一格取证额度（每轮只补一次）
+    retry_slot_granted: bool = False  # 本轮重试是否已补过一次取证额度（每轮只补一次，见 _retry_tool_slot_patch）
     ingredient_gate_active: bool = False  # 图片食材确认门是否仍在追问用户
     ingredient_gate_action: str = ""  # ask / corrected / confirmed / skip
     ingredient_draft: list = []  # 视觉识别出的待确认食材草稿

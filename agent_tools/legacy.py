@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool  # 创键工具
 from services.oss import upload_to_oss  # 把成品图上传到OSS并返回公网URL
 from domain.allergen_rules import audit_allergens
+from rag.page_labels import printed_page  # 物理页 -> 文档印刷页码
 
 load_dotenv()
 
@@ -473,14 +474,19 @@ def _resolve_section(source: str, anchor: str) -> str:
     """把索引锚点转成可验证的来源说明。
 
     PDF anchor 中的 `_pN` 现在只在 N 是解析层带回的真实页码时生成；
-    无可靠页码来源时使用 `_cN`，不会显示成页码。其他 anchor（如 Markdown
-    标题）原样返回。
+    N 是物理页序号，这里再换算成文档自身印的页码（见 rag.page_labels）。
+    无可靠页码来源时使用 `_cN`，不会显示成页码；换算不到印刷页码时保留
+    物理页码，不臆造。其他 anchor（如 Markdown 标题）原样返回。
     """
     text = str(anchor or "").strip()
     m = re.search(r"_p(\d+)\s*$", text)
     if not m:
         return text
-    return text
+    physical = int(m.group(1))
+    printed = printed_page(source, physical)
+    if printed is None or printed == physical:
+        return text
+    return f"{text[: m.start()]}_p{printed}"
 
 
 @tool

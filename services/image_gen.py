@@ -17,8 +17,10 @@
 # ---------------------------------------------------------------------------
 
 import base64      # 把生成图交给视觉模型做质量验收
+import logging     # 失败原因落 app.log，便于事后定位「这轮为什么没图」
 import os          # 读环境变量
 import json        # 本地菜品图缓存读写
+import re          # 归一化「（少盐版）」这类口味/版本后缀
 import time        # 缓存文件名时间戳
 import uuid        # 缓存文件名防重
 import queue       # 外部调用超时后不等待后台线程
@@ -33,6 +35,8 @@ load_dotenv()      # 加载 .env（DASHSCOPE_API_KEY 等）
 
 from .oss import upload_to_oss  # 把图片字节上传到自家 OSS，返回持久公网 URL
 
+logger = logging.getLogger(__name__)
+
 # ============================ 1. 配置（全部来自 .env） ============================ #
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")   # 通义万相 / 阿里云百炼 API Key（留空则功能降级）
 WANX_MODEL = os.getenv("WANX_MODEL", "wanx2.1-t2i-turbo")  # 默认 turbo：稳定、快速；需要更精致再显式切 plus
@@ -43,6 +47,9 @@ IMAGE_QUALITY_ENABLED = os.getenv("IMAGE_QUALITY_ENABLED", "1").strip().lower() 
 }
 IMAGE_QUALITY_TIMEOUT_S = int(os.getenv("IMAGE_QUALITY_TIMEOUT_S", "8"))
 IMAGE_GENERATION_BUDGET_S = int(os.getenv("IMAGE_GENERATION_BUDGET_S", "45"))
+# 纠错重生成至少要留出一次完整尝试的时间窗；不足时直接采用首图，
+# 避免同步再等一轮生图把整轮补图预算顶穿（实测一次完整纠错约再多花 20s）。
+IMAGE_STRICT_RETRY_MIN_S = int(os.getenv("IMAGE_STRICT_RETRY_MIN_S", "12"))
 # 缓存文件路径：菜名 -> 自家 OSS URL，命中即秒出、零成本
 CACHE_PATH = os.path.join("resources", "dish_image_cache.json")
 CACHE_VERSION = "v4"
@@ -321,19 +328,59 @@ def _normalize(dish: str) -> str:
     return d
 
 
+# 尾部「（少盐版）」这类口味/版本标注：整道菜的形态和摆盘基本一致，
+# 没必要各生成一张、各占一份缓存。只剥离括号内容以「版」结尾的标注，
+# 「（2人份）」「（微辣）」等非版本标注不动，避免把不同做法并成一张图。
+_VARIANT_SUFFIX_RE = re.compile(r"[（(]\s*[^（）()]{1,12}版\s*[）)]\s*$")
+
+
+def _strip_variant_suffix(dish: str) -> str:
+    """剥掉尾部的口味/版本后缀，如「剁椒蒸金针菇（少辣版）」→「剁椒蒸金针菇」。"""
+    d = dish
+    while True:
+        stripped = _VARIANT_SUFFIX_RE.sub("", d).strip()
+        if stripped == d or not stripped:
+            return d
+        d = stripped
+
+
+def _base_name(dish: str) -> str:
+    """缓存用的菜名：先去搜索追加词，再去口味/版本后缀。"""
+    return _strip_variant_suffix(_normalize(dish))
+
+
 def _cache_key(dish: str) -> str:
     """给缓存键加版本号。
 
     提示词和生图模型升级后，旧键里的图片可能已经不符合当前质量标准；版本化后
     会自然绕过旧图重新生成，同时保留旧数据，避免误删历史资源。
     """
-    return f"{CACHE_VERSION}:{_normalize(dish)}"
+    return f"{CACHE_VERSION}:{_base_name(dish)}"
 
 
 def _find_cached_url(cache: dict, dish: str):
-    """先读当前版本，再兼容旧版缓存，避免升级键名后已有图片集体失效。"""
+    """按「当前版本新键 → 当前版本历史键 → 旧版裸名」顺序查，兼容历史缓存。
+
+    历史缓存里既有带口味后缀的 v4 键，也有未加版本号的裸菜名键；
+    逐级回退保证归一化后旧图仍然命中，不因改键名集体失效。
+    """
     normalized = _normalize(dish)
-    return cache.get(_cache_key(dish)) or cache.get(normalized)
+    base = _base_name(dish)
+    for key in (f"{CACHE_VERSION}:{base}", f"{CACHE_VERSION}:{normalized}", base, normalized):
+        url = cache.get(key)
+        if url:
+            return url
+    # 同一道菜的历史「（少盐版）」键：只有去掉版本后缀后菜名完全一致才算命中，
+    # 否则「剁椒蒸金针菇」会误吃「剁椒蒸金针菇炒肉」的图。
+    for prefix in (f"{CACHE_VERSION}:{base}", base):
+        if not prefix:
+            continue
+        for key, url in cache.items():
+            if not url or not key.startswith(prefix):
+                continue
+            if _strip_variant_suffix(_normalize(key.split(":", 1)[-1])) == base:
+                return url
+    return None
 
 
 def _load_cache() -> dict:
@@ -361,7 +408,7 @@ def _save_cache(cache: dict) -> None:
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[image_gen] 缓存写入失败（不影响出图）：{e}")
+        logger.warning("[image_gen] 缓存写入失败（不影响出图）：%s", e)
 
 
 # ============================ 4. 字节校验（防通义万相返回非图片） ============================ #
@@ -416,7 +463,7 @@ def _request_wanx_image(prompt: str, negative_prompt: str, timeout_s=None):
         from dashscope import ImageSynthesis
         from http import HTTPStatus
     except ImportError:
-        print("[image_gen] 未安装 dashscope，跳过 AI 生图（pip install dashscope 即可启用）")
+        logger.warning("[image_gen] 未安装 dashscope，跳过 AI 生图（pip install dashscope 即可启用）")
         return None
 
     dashscope.api_key = DASHSCOPE_API_KEY
@@ -432,22 +479,23 @@ def _request_wanx_image(prompt: str, negative_prompt: str, timeout_s=None):
             size=WANX_SIZE,
         )
     except TimeoutError:
-        print(f"[image_gen] 通义万相生成超时（>{timeout_s}s），放弃本次生成")
+        logger.warning("[image_gen] 通义万相生成超时（>%ss），放弃本次生成", timeout_s)
         return None
     except Exception as e:
-        print(f"[image_gen] 通义万相调用异常：{e}")
+        logger.warning("[image_gen] 通义万相调用异常：%s", e)
         return None
 
     if getattr(result, "status_code", None) != HTTPStatus.OK:
-        print(
-            f"[image_gen] 通义万相返回非成功状态：{getattr(result, 'status_code', '?')} "
-            f"{getattr(result, 'message', '')}"
+        logger.warning(
+            "[image_gen] 通义万相返回非成功状态：%s %s",
+            getattr(result, "status_code", "?"),
+            getattr(result, "message", ""),
         )
         return None
     output = getattr(result, "output", None)
     results = output.get("results") if isinstance(output, dict) else getattr(output, "results", None)
     if not results:
-        print("[image_gen] 通义万相未返回图片结果")
+        logger.warning("[image_gen] 通义万相未返回图片结果")
         return None
     first = results[0]
     return first.get("url") if isinstance(first, dict) else getattr(first, "url", None)
@@ -458,11 +506,11 @@ def _download_generated_image(gen_url: str):
     try:
         resp = requests.get(gen_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         if resp.status_code != 200 or not _looks_like_image(resp.content):
-            print("[image_gen] 下载生成图失败或内容非图片，放弃")
+            logger.warning("[image_gen] 下载生成图失败或内容非图片，放弃")
             return None
         return resp.content, resp.headers.get("Content-Type", "image/jpeg")
     except Exception as e:
-        print(f"[image_gen] 下载生成图异常：{e}")
+        logger.warning("[image_gen] 下载生成图异常：%s", e)
         return None
 
 
@@ -552,12 +600,12 @@ def _audit_generated_dish_image(dish_name: str, image_bytes: bytes, content_type
             )
         else:
             preview = " ".join(str(raw_text or "").split())[:300]
-            print(f"[image_gen] 视觉验收返回无法解析，按首图兜底，不重生成：{preview!r}")
+            logger.warning("[image_gen] 视觉验收返回无法解析，按首图兜底，不重生成：%r", preview)
             return None
         return assessment
     except Exception as exc:
         # 验收是提质增强而不是新的单点故障：模型不可用时仍然返回首张图，保持原有可出图能力。
-        print(f"[image_gen] 视觉验收不可用，放行首张生成图：{exc}")
+        logger.warning("[image_gen] 视觉验收不可用，放行首张生成图：%s", exc)
         return None
 
 
@@ -624,7 +672,7 @@ def generate_dish_image(dish_name: str):
 
     # --- 1. 无密钥直接降级（不打断主流程） ---
     if not DASHSCOPE_API_KEY:
-        print("[image_gen] 未配置 DASHSCOPE_API_KEY，跳过 AI 生图，回退到「无图」")
+        logger.warning("[image_gen] 未配置 DASHSCOPE_API_KEY，跳过 AI 生图，回退到「无图」")
         return None
 
     # --- 2. 生成首图；仅有明确质量问题时，在总预算内最多纠错重生成一次 ---
@@ -635,8 +683,14 @@ def generate_dish_image(dish_name: str):
         attempt_timeout = WANX_TIMEOUT_S
         if attempt_no > 1:
             remaining = IMAGE_GENERATION_BUDGET_S - (time.monotonic() - generation_started)
-            if remaining <= 0:
-                print("[image_gen] 纠错重生成预算已耗尽，使用当前已生成图片")
+            needed = max(1, min(IMAGE_STRICT_RETRY_MIN_S, WANX_TIMEOUT_S))
+            if remaining < needed:
+                logger.warning(
+                    "[image_gen] 剩余预算 %.1fs 不足以完成一次纠错重生成（需 ≥%ss），改用首图：%s",
+                    max(0.0, remaining),
+                    needed,
+                    cache_key,
+                )
                 break
             attempt_timeout = min(WANX_TIMEOUT_S, max(1, int(remaining)))
         prompt = build_image_prompt(
@@ -676,7 +730,7 @@ def generate_dish_image(dish_name: str):
 
     chosen = _select_generated_attempt(attempts)
     if not chosen:
-        print(f"[image_gen] 未取得可下载的生成图：{cache_key}")
+        logger.warning("[image_gen] 未取得可下载的生成图：%s", cache_key)
         return None
     img_bytes = chosen["image_bytes"]
     content_type = chosen["content_type"]
@@ -697,8 +751,8 @@ def generate_dish_image(dish_name: str):
         print(f"[image_gen] 生成并缓存成功{quality_note}：{cache_key} -> {oss_url}")
         return oss_url
     except TimeoutError:
-        print("[image_gen] 上传 OSS 超时（>15s），回退无图")
+        logger.warning("[image_gen] 上传 OSS 超时（>15s），回退无图：%s", cache_key)
         return None
     except Exception as e:
-        print(f"[image_gen] 上传 OSS 失败：{e}")
+        logger.warning("[image_gen] 上传 OSS 失败：%s（%s）", e, cache_key)
         return None
