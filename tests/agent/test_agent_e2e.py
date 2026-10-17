@@ -11,7 +11,12 @@
 """
 import os, sys, json, time, unittest
 
-sys.path.insert(0, r"D:\ai_prvo")
+# 仓库根 = 本文件上溯三层（tests/agent/xxx.py → tests/agent → tests → 仓库根）。
+# 2026-10-15 修正：原先这里写死的是 `r"D:\ai_prvo"`——一个既拼错（少了 v）又只
+# 在本机成立、且与真实仓库路径不符的绝对路径。协作者 clone 后该目录不存在，
+# 于是 sys.path 上挂了个空目录，`import agent.graph` 直接 ImportError，
+# 这个 e2e 用例在任何别人的机器上都跑不起来。改为从 __file__ 相对定位。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from langchain_core.messages import HumanMessage
 
@@ -62,3 +67,4 @@ class TestAgentE2E(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

@@ -222,8 +222,13 @@ if (-not $BackendRunning) {
             $env:PYTHONUTF8 = $PreviousPythonUTF8
         }
     }
-    if (-not (Wait-Http "http://127.0.0.1:$BackendPort/api/health/ready" 60)) {
-        Fail "后端启动或 readiness 超时，请查看 $BackendErr。"
+    # 就绪窗口必须覆盖冷启动预热：知识库预热实测 74.0s（reranker=on，见后端日志
+    # 的 [warmup] 行）。原先这里只等 60 秒 —— 必然判超时，而脚本 Fail 退出时会把
+    # 刚起好的后端进程一起回收（2026-10-14 实测：脚本报「后端启动或 readiness
+    # 超时」之后，8010 端口从此完全不可达，看起来像"后端没起来"，实际是起来了又被收走）。
+    # 180 秒 = 预热 74s + 首次加载向量模型与 Chroma 集合的余量。
+    if (-not (Wait-Http "http://127.0.0.1:$BackendPort/api/health/ready" 180)) {
+        Fail "后端启动或 readiness 超时（已等 180 秒），请查看 $BackendErr。知识库预热本身约需 74 秒；若日志停在预热那行，说明模型加载卡住了。"
     }
     Write-Host "[OK] 后端已启动：http://127.0.0.1:$BackendPort（PID $($Backend.Id)，单 worker）"
 } else {
@@ -242,7 +247,11 @@ if (-not $BackendRunning) {
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($FrontendOut, "", $Utf8NoBom)
 [System.IO.File]::WriteAllText($FrontendErr, "", $Utf8NoBom)
-$Frontend = Start-Process -FilePath $Npm.Path -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "$FrontendPort", "--strictPort") `
+# 不传 --host：让 vite.config.ts 里的 host:true 生效（同时监听 0.0.0.0 与 ::）。
+# 传 "--host 127.0.0.1" 会覆盖该配置，把开发服务器锁回本机 —— 那样手机连同一个
+# WiFi 也打不开页面，「拍冰箱照片录食材」就只能在电脑上用（2026-10-15 实测踩到：
+# vite 配置早就写了 host:true，却被这行参数盖掉，表现为"配置没错但手机就是连不上"）。
+$Frontend = Start-Process -FilePath $Npm.Path -ArgumentList @("run", "dev", "--", "--port", "$FrontendPort", "--strictPort") `
     -WorkingDirectory $FrontendDir -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $FrontendOut -RedirectStandardError $FrontendErr
 if (-not (Wait-Http "http://127.0.0.1:$FrontendPort" 30)) {

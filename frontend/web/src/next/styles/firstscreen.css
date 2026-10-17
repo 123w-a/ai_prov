@@ -42,11 +42,34 @@
 /* 每块：亮面 + 描边 + 落地光 + 14px 圆角，与主区卡片同一族形制，
  * 两栏因此读作"同一批家具"而不是"一张纸加四行注脚"。 */
 .fs-block {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--surface-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-paper);
-  padding: 18px 20px;
+  /* 稿的卡内更舒展（2026-10-10 重对版：18/20 → 20/22，右栏三卡同调）。 */
+  padding: 20px 22px;
+}
+
+/* 右栏卡片右上角的叶（2026-10-11 第二轮：用户「右侧三张小卡片的叶子没有严格
+ * 像素级还原」）。此前三张卡共用一份手绘 --leaf-sprig、缩到 84×50 贴卡角——
+ * 形状、尺寸、位置三样都对不上稿。现在换成从稿切的位图（card-leaf-2.png，
+ * 48×44 稿 px → 42.7×39.1 CSS）。
+ *
+ * 位置按稿的锚点算，不靠观感：
+ *   卡 2 的叶稿 bbox x1460..1500 / y351..395，卡 2 顶边 y339、右边框 x1504。
+ *   ⇒ 叶右缘离卡右边框 4 稿 px（3.6 CSS）、叶顶离卡顶 12 稿 px（10.7 CSS）。
+ * 三张卡的叶在稿里是同一母题的三个实例（各自切片 card-leaf-1/2/3 均为 47~48×43~44、
+ * 墨迹分布同形），所以共用 card-leaf-2 这一张；另外两张留在 manifest 里备查。 */
+.fs-block:not(.is-key)::after {
+  content: '';
+  position: absolute;
+  top: 10.7px;
+  right: 3.6px;
+  width: 42.7px;
+  height: 39.1px;
+  background: url('../assets/hero/card-leaf-2.png') no-repeat right top / 100% 100%;
+  pointer-events: none;
 }
 
 /* B1 待确认（强度一）：唯一带强调的块——升格成更明确的卡片，
@@ -119,15 +142,39 @@
   gap: 8px;
 }
 
+/* 2026-10-10 设计稿（用户六条之第 6 条「严格按稿」）：成员行从
+ * 「名左、数右同行」改成稿的 **头像圆 + 两行纵排**（名行 / 数字行）。
+ * 头像走 ::before 而不是加 DOM：这一段是 dl > div > dt/dd，HTML 规范
+ * 只允许那个 div 里放 dt/dd，塞 span 就违规了；图标本体因此取 tokens
+ * 的 data URI（--av-people / --av-alert，与 ui/Icon.tsx 同源路径）。 */
 .fs-mrow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap; /* 208px 窄栏（对调后）：溢出时数据换行，而不是把成员名压成 8px 宽 */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'av name'
+    'av num';
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+}
+
+/* 头像圆：浅陶底 + accent 人形剪影（红线：人形图标，不是人脸）。 */
+.fs-mrow::before {
+  content: '';
+  grid-area: av;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft) var(--av-people) no-repeat center / 15px 15px;
+}
+
+/* 共同忌口行：同尺寸圆换警示圈（稿里这行的标记也是圈形）。 */
+.fs-mrow.is-shared::before {
+  background-image: var(--av-alert);
 }
 
 .fs-mname {
+  grid-area: name;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -154,16 +201,72 @@
   border-radius: var(--radius-pill);
 }
 
-/* 数字事实：等宽 + tabular-nums 右对齐。
- * 科技感来自真实数据本身，不靠 TONIGHT/01 那类英文装饰标签（已否决）。 */
+/* 数字事实：等宽 + tabular-nums。稿里它从名字下方另起一行、比名字小
+ * 一档（30岁 · 165cm 是注释级），左对齐贴名——原来与名同行右对齐的
+ * 排法是首屏窄栏的旧妥协，纵排后不需要了。 */
 .fs-mnum {
+  grid-area: num;
   margin: 0;
-  flex: none;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-data);
+  font-size: var(--fs-note);
   color: var(--ink-soft);
-  text-align: right;
+  text-align: left;
+}
+
+/* ── 卡内小节标题与节间分隔线（2026-10-10 设计稿重对版）──────────────────
+   稿的右栏卡是**分节**的：「营养状况」「常吃菜品」各有小标题，趋势与护栏行
+   前有 hairline。此前卡内是平铺的，读感差一档——.fs-sub 是节标题（13px 加粗
+   深墨），.fs-rule 是节行的上分隔线（挂在 .fs-note 上，不加 DOM）。 */
+
+.fs-sub {
+  margin: 13px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+.fs-rule {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── 2026-10-14 本周块的次级层（只用于候选轮 variant='candidate'）──────────
+   「长期趋势」与「护栏」在这两个语境里的分量不同：首屏它俩是与营养状况并列的
+   两行注记，候选轮里它们是**给主结论托底的两层背景**，所以下沉成次级块——
+   浅底 + 左竖线 + 各自一句口径说明。这三个类名只在候选轮渲染（首屏那一支
+   走的是 .fs-note.fs-rule 老结构），所以放这里不动首屏任何一项。
+   浅底用 --bg-sunken（纸面下沉一档）：它是"背景信息"，不该长得像一张新卡片。 */
+.fs-layer {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: var(--bg-sunken);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.fs-layer-title {
+  margin: 0;
+  font-size: var(--fs-note);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* 口径说明（"为什么没有结论""这行判的是什么"）比正文再淡一档：
+   它是解释，不是结论；但**不许**小到读不清——12px 是契约 §6.2 的注记下界。 */
+.fs-trends,
+.fs-why {
+  margin: 4px 0 0;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.fs-why {
+  color: var(--ink-faint);
 }
 
 /* ── B3 / B4 共用的「计数 + 单位」行 ──────────────────────────────────── */
@@ -203,22 +306,26 @@
   color: var(--ink-soft);
 }
 
-/* ── B3 红绿灯：实心状态点 + 中文状态字（用户 2026-09-28 拍板 · lave 放行） ── */
+/* ── B3 红绿灯：实心状态点 + 中文状态字（用户 2026-09-28 拍板 · lave 放行） ──
+   2026-10-10 设计稿重对版：三灯从**纵排三行**改稿的**一行横排**（点+名+计数
+   一组，组间横排）；字降到 fs-note 一档给横排腾宽——卡内宽不够时自然折行，
+   **绝不为版式压缩真实计数**（数据真实性是用户第 3 条）。 */
 
 .fs-lights {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 12px;
 }
 
 .fs-light {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: var(--fs-data);
+  gap: 6px;
+  font-size: var(--fs-note);
 }
 
 /* 9px 实心状态点（用户 2026-09-28 拍板；lave 同日放行）。
@@ -244,15 +351,16 @@
   background: var(--red);
 }
 
+/* 名与计数同降到 fs-note 档（2026-10-10 横排腾宽；纵向语义不变）。 */
 .fs-lname {
-  font-size: var(--fs-data);
+  font-size: var(--fs-note);
   color: var(--ink);
 }
 
 .fs-lstat {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-data);
+  font-size: var(--fs-note);
   color: var(--ink-soft);
 }
 
@@ -390,33 +498,47 @@
    吃掉了主卡剩余高度、而内容填不满。示例区贴在主卡底部（.ask-main 是 flex column），
    所以把它长高就会反过来压缩 composer、自动把那段空档吃掉；
    **不要去调 margin**，调了只会与 flex 分配打架。 */
+/* 2026-10-10 设计稿改**一行四列**（原 2×2）：四张卡并排、每卡一枚小物在上、
+   文字两行内。列数收窄的影响在下面的两段断点里兜。 */
 .ask-examples {
   list-style: none;
-  margin: 18px 0 0;
+  /* 2026-10-10 第六轮：18 → 46px。行图（.tmp-p2a/rowmap.ps1）里稿的面板底发丝线
+     在 y528、「试试这样问：」文字带在 y581..598（隔 53px）；实拍面板底 ≈530、
+     标签原在 553（隔 23px）。按稿放到 46px 后标签落在 581 —— 与稿同一行。 */
+  margin: 46px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 12px;
 }
 
-/* 标签独占一行：它是这一小节的标题，不是第五张卡。 */
+/* 标签独占一行：它是这一小节的标题，不是第五张卡。
+   （右侧横线 + 小花章在本文件末尾的装饰线一节。）
+   2026-10-10 画风对齐：稿的「试试这样问：」约 15px、色偏深（--ink-soft），
+   原来是 12px 的 --ink-faint——小两号又淡一档，读起来像脚注而不是小标题。 */
 .ask-examples-label {
   grid-column: 1 / -1;
-  font-size: var(--fs-note);
-  color: var(--ink-faint);
+  font-size: 15px;
+  color: var(--ink-soft);
   letter-spacing: 0.02em;
 }
 
 .ask-example {
   display: flex;
+  /* 设计稿：小物在卡内顶部居中、文字在下——纵向排列，居中。2026-10-10
+     重对版把尺度提到稿的档位：图标 17 → 34px，卡高 96 → 124px，文案居中
+     两行（原左对齐一行是旧版密度）。 */
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: 12px;
   width: 100%;
-  min-height: 64px;
-  padding: 12px 16px;
-  text-align: left;
+  min-height: 124px;
+  padding: 16px;
+  text-align: center;
   font-family: var(--sans);
   font-size: var(--fs-data);
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--accent-ink);
   background: var(--accent-soft);
   border: 1px solid var(--accent-line);
@@ -428,8 +550,55 @@
   border-color: var(--accent);
 }
 
-/* 窄屏落回单列：两列时每张只剩 150px 上下，句子会挤成两行小字。 */
+/* 小物（2026-10-11：改用**从稿切片**的彩色位图，替换 17px 单色线稿）。
+   原来那一版是"取形状、不取颜色"（2026-09-28 语义色边界），但稿这四枚的色是
+   食物固有色（鱼=青、碗=陶、西兰花=绿、汤=黄），与状态圆点是两套语义；
+   逐像素切片把形状和颜色一起还原（maskIoU 0.944~0.995）。
+   盒子仍是 34px 见方、contain 居中：布局零变化，只有图变了。
+   切片尺寸见 assets/hero/manifest.json（icon-1 30.2×28.5 … icon-4 29.4×27.6）。 */
+.ask-example-art {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.ask-example-art.art-fish {
+  background-image: url('../assets/hero/icon-1.png');
+}
+
+.ask-example-art.art-bowl {
+  background-image: url('../assets/hero/icon-2.png');
+}
+
+.ask-example-art.art-broc {
+  background-image: url('../assets/hero/icon-3.png');
+}
+
+.ask-example-art.art-soup {
+  background-image: url('../assets/hero/icon-4.png');
+}
+
+/* 文案按稿分行（2026-10-10）：每段一个 span、列向排，断点在标点/语义处，
+   不让浏览器把词拆开。行距仍走卡上的 line-height。 */
+.ask-example-t {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs-data);
+  line-height: 1.6;
+}
+
+/* 窄屏列数兜底：四列在 900 以下每卡只剩 150px 上下、句子挤成小字——先落两列，
+   再窄（560，接近手机竖屏）落单列。原 2×2 版直接从 900 落单列，四列版多一档。 */
 @media (max-width: 900px) {
+  .ask-examples {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
   .ask-examples {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -438,3 +607,352 @@
 .rail-src-note[data-tone='weak'] {
   opacity: 0.78;
 }
+
+/* ── 首屏装饰线（2026-10-10 首屏方向稿，用户六条之第 4/5 条：图案架构布局）──
+   设计稿 ask-expect.png 里两处同样的语汇：一条贯穿的细横线，**正中/线上压一枚
+   小花叶章**（--leaf-seal，四瓣放射）。页头下方一条、"试试这样问"标签右侧一条。
+   线色用 --line（与叶纹同族的淡暖），章色是叶纹实测压深的 #DFC9B1——线与章
+   是同一个色阶的两档，不引入新颜色。章与线都走 background（无 DOM、无 a11y 树）。 */
+
+/* 页头线（.starter::before）**已删**（2026-10-10 第六轮）：
+   它画的是"功能页头行之下一条贯穿细横线 + 线上正中压一枚小花章"。删它的依据是
+   逐行扫描稿 ask-expect.png 主区 x330..1000：标题带在 y124..163，**其上方
+   y96..123 是一整片纸底**（.tmp-p2a/measure-btn-card.ps1 取 y96..124 众数 =
+   248,242,234 占 31.4%，其余全是同一色的噪声变体，无任何深色像素）——
+   稿在"页头与主标题之间"是空的。本项目这一带却有"页头行 + 48px 的线章"，
+   于是标题实测落在 y160，比稿低 36px；删掉线章后标题回到 y≈112，与稿的 124
+   只差功能页头行本身的高度。
+   同族的小花章**没有一起删**：稿在「试试这样问」这行右侧确实压了一枚
+   （见下面 .ask-examples-label::after），那一枚留着。 */
+
+/* "试试这样问"标签：稿里是文字在左、横线拉到行尾、章压在线上偏中右。
+   label 本身是 grid-column: 1/-1 的整行——把线画在它自己的 ::after（flex:1）。 */
+.ask-examples-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ask-examples-label::after {
+  content: '';
+  flex: 1;
+  align-self: center;
+  height: 15px;
+  background-image: var(--leaf-seal),
+    linear-gradient(var(--line), var(--line));
+  background-size: 15px 15px, 100% 1px;
+  background-position: 58% center, left center;
+  background-repeat: no-repeat;
+}
+
+/* 主区左下那一丛淡叶**已移走**（2026-10-11 第二轮）：它原来挂在这里，
+   与导航那丛（rail.css 的 .shell-rail-art）各自定位——上一版还用了 fixed，
+   于是两丛"贴视口底"、页面一滚动就浮在内容上（用户指认"摆放位置不对"）。
+   现在两丛一起挂 .shell-rail-art 的 ::after / ::before、共用 absolute + bottom:0
+   的同一条页底基线，见 rail.css 该处注释。 */
+
+/* 主区右上那枝**已删**（2026-10-11）：它画的位置（top:46/right:58 的 180×118 盒）
+   是按"稿这一枝 bbox x844..974 y132..330"摆的，而那个 bbox 是**标题文字**——
+   判据"亮度<175"把标题的深墨整段算了进去（标题实测 y130..172、横跨 x330..1040）。
+   逐格墨迹图（assets-build.cjs map 300 30 1140 180 10）显示那一带除了页头细线
+   与标题字之外**没有任何叶**；稿真正的叶在面板右上角（x992..1100/y232..346，
+   已挂 .composer-panel::before）与页底两处（.starter::after / .ask-main 底）。
+   所以这条不是"简化"，是把画错位置的叶搬回稿的位置。 */
+.ask-main {
+  position: relative;
+}
+
+.ask-main::before {
+  content: none;
+}
+
+/* ── 本餐用餐人（2026-10-15，用户裁决：「先确认这一顿是谁吃，再写想吃什么」）──
+ *
+ * 这一块不只是"选几个人"，它是这一顿归属的**唯一入口**：勾中的名字会随
+ * /api/chat 发出去（chatStream 的 members），后端据此写进记录的 `members`，
+ * 周报再按它算每个人的分母。所以它的显示态必须诚实：
+ *
+ *   ① 未确认 = 可操作模样（勾选可点、确认键在场）；已确认 = 静默的"已定"态
+ *      （行不可再点、确认键换成「改一下」）。两种态由 .is-confirmed 一切，
+ *      组件那边只切 class，不在这里猜状态。
+ *   ② **没勾任何人不是错误态。** 它的语义是"这一顿不登记用餐人、也不套用
+ *      任何成员约束"——一个有意义的选择。所以不给红字、不禁用确认键，
+ *      只由脚注把这句话说清楚。
+ *
+ * 配色只用 --tone-member / -soft / -line（成员·家人专属色相，全站唯一冷色，
+ * 专门标记"人"）。陶土 --accent 留给主行动「开始 →」，两者不抢同一处注意力。
+ */
+.crew {
+  margin: 0 0 24px;
+  padding: 16px 20px 14px;
+  background: var(--surface);
+  border: 1px solid var(--tone-member-line);
+  border-radius: var(--radius-lg);
+}
+
+.crew-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.crew-title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-family: var(--serif);
+  font-weight: 400;
+  font-synthesis: none;
+  color: var(--ink);
+}
+
+.crew-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.crew-count {
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+}
+
+/* 「全选」toggle。与成员行同族形态（药丸 + 边框），但更轻一档：
+   它是这一块里的**辅助动作**，不该与成员行抢读。已全选时用成员色实底标记，
+   与成员行的选中态共用同一个语汇——用户一眼能把"整块都选了"认出来。 */
+.crew-all {
+  padding: 3px 12px;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+/* 2026-10-15 修：这里必须排除 `.is-on`。
+   原写法 `.crew-all:hover:not(:disabled)` 的特异性是 (0,3,0)，高于下方
+   `.crew-all.is-on` 的 (0,2,0)——于是**鼠标停在按钮上的那一刻**，
+   hover 规则用 --ink(深棕) 盖掉了 .is-on 的 --bg-raise(浅)，
+   实测对比度只有 2.39:1（AA 要 4.5:1）。而用户点完「全选」后鼠标正好停在上面，
+   也就是说出问题的恰好是最常看到的那一帧；移开鼠标才恢复正常。
+   把 hover 限定在**未选中**态即可：选中态本来就该是实底浅字，没有"悬停变色"的需求。 */
+.crew-all:hover:not(:disabled):not(.is-on) {
+  border-color: var(--tone-member);
+  color: var(--ink);
+}
+
+.crew-all.is-on {
+  background: var(--tone-member);
+  border-color: var(--tone-member);
+  /* 实底必须配浅字：--bg-raise 对 --tone-member 是 5.46:1，过 AA。
+     换回任何 ink 系（深棕）都会掉到 2.4:1 左右。 */
+  color: var(--bg-raise);
+}
+
+.crew-all:disabled {
+  cursor: default;
+}
+
+.crew-all:focus-visible {
+  outline: 2px solid var(--tone-member);
+  outline-offset: 2px;
+}
+
+.crew-count b {
+  margin: 0 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  color: var(--tone-member);
+}
+
+.crew-note {
+  margin: 6px 0 14px;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.crew-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 每一行都是一个 button（可点、可键盘聚焦、aria-pressed 自带态）。
+   不用裸 div + onClick：那种写法键盘用户完全用不了，而且读屏念不出"选中没选中"。 */
+.crew-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 8px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--fs-data);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+/* 同 .crew-all 的理由：hover 的特异性 (0,3,0) 高于 .is-on 的 (0,2,0)，
+   不加 :not(.is-on) 就会在悬停时把选中行的边框从 --tone-member 退回浅色，
+   选中感一悬停就变弱。改动本身的对比度没问题（只动边框、不动文字），
+   但两处保持同一写法，免得下一个人只改一处。 */
+.crew-row:hover:not(:disabled):not(.is-on) {
+  border-color: var(--tone-member-line);
+}
+
+.crew-row.is-on {
+  background: var(--tone-member-soft);
+  border-color: var(--tone-member);
+  color: var(--ink);
+}
+
+/* 确认之后行不许再点：这一顿已经定了，要改得先点「改一下」。
+   保持视觉不塌（不降透明度）——它是"已定"而不是"失效"。 */
+.crew-row:disabled {
+  cursor: default;
+}
+
+.crew-row:focus-visible {
+  outline: 2px solid var(--tone-member);
+  outline-offset: 2px;
+}
+
+/* 勾选框：纯 CSS 画（无 DOM、无 a11y 树——可访问态走 aria-pressed 与文字）。
+   未选是空圈，选中是实底 + 一道白勾。 */
+.crew-box {
+  position: relative;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+}
+
+.crew-row.is-on .crew-box {
+  background: var(--tone-member);
+  border-color: var(--tone-member);
+}
+
+.crew-row.is-on .crew-box::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border-right: 1.6px solid var(--bg-raise);
+  border-bottom: 1.6px solid var(--bg-raise);
+  transform: rotate(40deg);
+}
+
+.crew-name {
+  color: var(--ink);
+}
+
+.crew-tags {
+  display: flex;
+  gap: 4px;
+}
+
+.crew-tag {
+  padding: 1px 7px;
+  background: var(--tone-member-soft);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-note);
+  color: var(--tone-member);
+}
+
+/* 「未填写约束」与真约束**必须长得不一样**：前者是"我们不知道"，后者是"确认没有"。
+   拿同一个样式画，就是把"不知道"伪装成"没有"——本仓不许补造的同一条纪律。
+   这里靠同色系、去掉填充底，读作"这里空着"而不是一枚标签。 */
+.crew-tag.is-blank {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  color: var(--ink-faint);
+}
+
+.crew-confirm {
+  margin-top: 14px;
+  padding: 9px 22px;
+  background: var(--tone-member);
+  border: 1px solid var(--tone-member);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--fs-data);
+  color: var(--bg-raise);
+  cursor: pointer;
+}
+
+.crew-confirm:hover {
+  filter: brightness(1.08);
+}
+
+.crew-confirm:focus-visible {
+  outline: 2px solid var(--tone-member);
+  outline-offset: 2px;
+}
+
+/* 已确认态：一句话 + 一个"改一下"。这里刻意不重复列出人名——
+   上面那些行还在，本来就显示着选了谁，再抄一遍是同一件事说两遍。 */
+.crew-done {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.crew-done-t {
+  margin: 0;
+  font-size: var(--fs-data);
+  color: var(--ink);
+}
+
+.crew-edit {
+  padding: 5px 14px;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--fs-note);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.crew-edit:hover {
+  border-color: var(--tone-member);
+  color: var(--ink);
+}
+
+.crew-foot {
+  margin: 10px 0 0;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* 关卡提示（AskView 在未确认时用它替换书写面）。
+   为什么是"换一句说明"而不是"把输入框设成 disabled"：禁用态会让用户对着一个
+   打不进字的框发呆，不知道缺的是哪一步。这里直接把缺的那一步说出来。
+   虚线框是"这里本该有个东西、现在还没轮到它"的语汇，不是错误提示。 */
+.ask-gate {
+  margin: 0;
+  padding: 22px 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  color: var(--ink-faint);
+  text-align: center;
+}
+

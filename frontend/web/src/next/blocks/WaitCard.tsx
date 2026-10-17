@@ -1,54 +1,61 @@
 import type { RunState } from '../data/model.ts'
-import { familyFacts, useHousehold } from '../data/household.ts'
+import { familyFacts, familyTiles, sharedDislike, useHousehold } from '../data/household.ts'
 import { benchLine, connLine } from '../data/waitLines.ts'
-import { WaitBench } from './WaitBench.tsx'
 import { WaitFacts } from './WaitFacts.tsx'
 import { WaitDetail } from './WaitDetail.tsx'
+import { WaitStream } from './WaitStream.tsx'
 
 /**
- * 等待界面 —— 「请求确认卡」。
+ * 等待界面（2026-10-12 第四轮改版：照 .tmp-img/wait-redesign-r1.png 重排）。
  *
- * 这一版推翻了上一版的时间卷带。推翻的理由不是审美，是表达对象错了：
+ * 这一版与前三版的关系，先说清楚哪一条被有意推翻、哪一条是**首次**落进这一页：
  *
- *   1. 卷带 + 心跳脉冲 = 地震仪 / 心电监护仪。这是一个吃饭的产品，而且档案里有一位孕妇，
- *      「琥珀色密集脉冲 + 时间轴」会把它污染成医疗焦虑。用户的原话就是「像心电图」。
- *   2. 把「后端还活着」放到视觉中心，用户感受到的不是透明，是「这东西很脆弱，得靠心跳维持」。
- *   3. 后端没有提供任何进度信息。上一版用「没有终点」来避免撒谎，方向是对的；
- *      但结论下早了——正确的下一步不是「把沉默画得更好看」，而是
- *      **不让这 7 分钟成为用户必须观看的事情**。
+ *   · 首次：页内页眉（印章 + 小膳管家 | 家庭膳食规划 + 右侧那句）。它是**本页自己**的
+ *     页眉，随 WaitCard 一起挂载/卸载，只在等待态存在。骨架明令禁止的是"跨页常驻的
+ *     顶部横向导航"——所以它绝不能搬进 Shell 或 .tn-head，那样就变回被禁的那条。
+ *   · 首次：标题下那条**渐隐横线**。它是静止的装饰（linear-gradient 画的一条线），
+ *     不是进度条：宽度写死、不随任何计数变化、无动画。任何让它"长出来"的做法
+ *     都会立刻读成进度（用户在 2026-09-22 明确判过"动效=进度"）。
+ *   · 有理由推翻 2026-09-23 的「真实痕迹」行：稿里没有它，而痕迹的**完整记录**本来
+ *     就在「处理详情」里（时刻 + 阶段 + 第几次，一条不少）。摘掉的只是版面上那 6 条
+ *     摘要，不是记录本身。WaitBench.tsx 随之删除。
+ *   · 有理由删掉卡片副标题、caveat 与「共同忌口」摘要行：稿把这三处的内容各自换了
+ *     载体——副标题并进卡片标题下的「已获取你家的食材、家庭成员与忌口信息」，共同忌口
+ *     升格成第三块瓦片，caveat 那句"菜单尚未确定"由大标题的「正在…整理」承担。
+ *   · 不动：不显示累计时间、不画三步进度、食材只作已知输入、动效一次性。
  *
- * 2026-09-22 第二轮改版：用户反馈「还在进行菜谱准备时的视觉真的不是很好」，
- * 由 kele_image_gen 出一张设计参考图（交付目录 设计稿-等待页-kelegen-20260922.png），
- * 照它改了三处结构，都跟"读起来像收据还是像详情页"有关：
- *   · 冰箱食材从一行逗号串改成 2×2 的可扫读块（等待页要让人 2 秒确认"它知道我家有什么"）。
- *   · 家庭档案从参数表改成一人一行（参数表是详情页的语言，而且会把两个人压成一条）。
- *   · 状态行（最近收到 / 连接正常）从版面中段移到最底部并降到 12px（它是活动凭证，不是导航）。
- *   另去掉卡片投影——设计稿用 1px 发丝线分离卡片和背景，不靠光。
- *
- * 2026-09-23 第三轮改版（用户原话：「动态，而不是死的、看上去没有意思的项目」）：
- * 把"后端最近一次真实活动"从底部 12.5px 的凭证提升为版面中段的「当前工位」，
- * 并加一行真实痕迹 + 一道沉默闸门。**这是对下面 rule 3 的有理由推翻**，
- * 详细理由在 WaitBench.tsx 的文件头，不要当成回归删掉。
- *
- * 所以这里现在是四件事：
- *   · 你的请求是什么（对象取自真实档案的 active 成员）
- *   · 后端此刻的工位是什么（真实阶段展开成一句人话；沉默超时后必须改口说没有新消息）
- *   · 真实到达过哪些工位（原样保留重复，重复本身就证明它不是流水线）
- *   · 连接是否还活着（静态状态点，不闪、不呼吸、不扩散）
- *
- * 硬规矩（来自对抗评审，全部可检验）：
- *   · 不显示累计时间。实测过「已等待 05:42」本身就会让用户推断"应该快了"。
- *     时间仍然被记录，但只出现在「处理详情」里。
- *   · 不把 查证 → 核对 → 整理 画成三步进度。后端会重复推这些阶段（循环 agent），不是流水线。
- *   · 食材只作为"已知输入"的证据，绝不占主位、不排序、不配图、不出现任何菜名——
- *     否则用户会以为菜单已经定了。
- *   · 动效只有三种，全部一次性：阶段改口 320ms 入场、状态点 160ms 变色、痕迹新项 320ms 入场。
- *     其余时间页面完全静止：不循环、不呼吸、不发光、不用心跳推动任何东西。
- *
- * 2026-10-01 拆分：319 行越过 blocks 层 150 行红线，纯文案规则下沉 data/waitLines.ts，
- * 当前工位 / 证据面板 / 处理详情三块拆成同目录子组件，本文件只留头注释与组装。
- * 渲染不变的判据见夹具台 wait case 的结构与几何基线（拆分前后逐节点比对）。
+ * 仍守着的硬规矩（对抗评审留下的，全部可检验）：
+ *   · 阶段那一行只说后端真发过的阶段展开的人话（推导在 data/waitLines.ts），
+ *     沉默超时后必须改口说"没有新消息"——绝不为了填满版面而编一个步骤。
+ *   · 连接状态只在**说不正常**的时候出现。稿画的是正常态，而"连接正常"本来就是
+ *     默认预期；断线或沉默超时才是用户必须知道的事，那时它出现在最底部。
  */
+
+/** 本页页眉。作成组件只为让 WaitCard 的组装段读起来是"版面的几块"而不是一堆 span。 */
+function WaitHead() {
+  return (
+    <header className="wait-head">
+      <span className="wait-head-l">
+        {/* 印章图形复用 tokens 的品牌 mark（碗 + 叶），用 mask 取形状、填 seal-ink：
+            稿里那枚章与此前的品牌图形是同一枚，不该再画第二版。 */}
+        <span className="wait-seal" aria-hidden="true" />
+        <span className="wait-brand">小膳管家</span>
+        <span className="wait-head-div" aria-hidden="true" />
+        <span className="wait-head-note">家庭膳食规划</span>
+      </span>
+      <span className="wait-head-tag">用家里的食材 · 做更合适的饭</span>
+      {/* 稿右上角那幅装饰（茶碗+热气+远山+叶+朱砂印）：纯装饰，且是绝对定位浮层，
+          不占位不推挤，页眉与后续每块几何零位移。落点见 wait.css 的 .wait-decor。 */}
+      <img
+        className="wait-decor"
+        src="/assets/hero/wait-decor.png"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+      />
+    </header>
+  )
+}
 
 export function WaitCard({
   run,
@@ -67,64 +74,72 @@ export function WaitCard({
 
   const conn = connLine(run)
   const facts = familyFacts(family)
+  const tiles = familyTiles(family)
+  const shared = sharedDislike(family)
   const bench = benchLine(run)
 
   return (
     <section className="wait">
-      <div className="wait-card">
-        <h2 className="wait-req">
-          正在为{activeName ? <b>{activeName}</b> : <b>你</b>}整理今晚的选择
-        </h2>
-        <p className="wait-sub">会结合家庭档案里的饮食约束，以及冰箱里现有的食材。</p>
+      <WaitHead />
 
-        {/* 当前工位 + 真实痕迹：推翻理由见 WaitBench.tsx 文件头（原 406 行注释）。 */}
-        <WaitBench run={run} bench={bench} />
+      <h2 className="wait-req">
+        正在为{activeName ? <b>{activeName}</b> : <b>你</b>}整理今天的选择
+      </h2>
 
-        {/* 已知输入证据（冰箱 + 档案）：纪律见 WaitFacts.tsx 文件头。 */}
-        <WaitFacts facts={facts} fridge={fridge} />
+      {/* 当前工位。key 挂在 bench.key 上：阶段改口时这一行整条重挂，320ms 入场
+          （一次性），阶段没变则 DOM 不动、页面完全静止。 */}
+      <p className={`wait-step${bench.quiet ? ' is-quiet' : ''}`} key={bench.key}>
+        <span className="wait-step-dot" aria-hidden="true" />
+        <span className="wait-step-text">{bench.text}</span>
+        <span className="wait-step-line" aria-hidden="true" />
+      </p>
 
-        {run.orphaned && (
-          <p className="wait-orphan">
-            {run.orphanCause === 'cancelled'
-              ? '你取消了这一轮，所以它没有跑完。「处理详情」里是取消前真实收到过的记录。'
-              : '页面被刷新或关掉时连接断了，这一轮没有跑完。「处理详情」里是中断前真实收到过的记录。'}
-          </p>
+      {/* 已知输入证据（冰箱 + 档案）：纪律见 WaitFacts.tsx 文件头。 */}
+      <WaitFacts facts={facts} fridge={fridge} tiles={tiles} shared={shared} />
+
+      {run.orphaned && (
+        <p className="wait-orphan">
+          {run.orphanCause === 'cancelled'
+            ? '你取消了这一轮，所以它没有跑完。「处理详情」里是取消前真实收到过的记录。'
+            : '页面被刷新或关掉时连接断了，这一轮没有跑完。「处理详情」里是中断前真实收到过的记录。'}
+        </p>
+      )}
+
+      {run.error && <p className="wait-error">{run.error}</p>}
+
+      {/* 顺序照稿：记录 → 过程稿 → 出口。 */}
+      <WaitDetail run={run} />
+
+      <WaitStream run={run} />
+
+      {/* 出口留在右下角，且是一条**低调文字**而不是整宽按钮：稿这一处是"想清楚
+          再点"的位置，不是主行动（主行动在结果页）。 */}
+      <div className="wait-actions">
+        {run.orphaned ? (
+          onRestart && (
+            <button type="button" className="wait-exit" onClick={onRestart}>
+              重新开始
+            </button>
+          )
+        ) : (
+          run.status === 'running' &&
+          onCancel && (
+            <button type="button" className="wait-exit" onClick={onCancel}>
+              取消
+            </button>
+          )
         )}
+      </div>
 
-        {run.error && <p className="wait-error">{run.error}</p>}
-
-        {/* 详情入口 + 动作按钮（顺序照设计稿：先读再决定）。 */}
-        <WaitDetail run={run} onCancel={onCancel} onRestart={onRestart} />
-
-        {/* 连接状态留在最底部并保持 12.5px：它回答的是"连接还活着吗"，
-            不是"做到哪一步了"。**这两件事从头到尾不许合流**——
-            心跳只能证明连接，绝不能证明工作又前进了一格（lave 两席一致点名）。
-            阶段那一行已经搬到上面的「当前工位」，「最近收到」不再是这里的职责。 */}
+      {/* 连接状态只在说不正常时出现（理由见文件头）：正常态这一页与稿完全同构，
+          断线/沉默时才多出这一行，且它只回答"连接还活着吗"，绝不回答"做到哪一步"。 */}
+      {conn.tone !== 'ok' && (
         <div className="wait-state">
           <p className={`wait-conn tone-${conn.tone}`}>
             <span className="wait-dot" />
             {conn.text}
           </p>
         </div>
-      </div>
-
-      {run.body && (
-        <section className="wait-body-wrap">
-          <h3 className="wait-body-title">
-            {run.orphaned
-              ? run.orphanCause === 'cancelled'
-                ? '取消前已经写出的内容'
-                : '中断前已经写出的内容'
-              : '已经写出的内容'}
-            <span className="wait-body-count">{run.body.length} 字</span>
-          </h3>
-          <div className="wait-body">{run.body}</div>
-          <p className="wait-body-note">
-            {run.orphaned
-              ? '这是没有跑完的过程稿，不构成最终建议。'
-              : '这只是过程稿，最终建议在整轮结束后才算完成。'}
-          </p>
-        </section>
       )}
     </section>
   )

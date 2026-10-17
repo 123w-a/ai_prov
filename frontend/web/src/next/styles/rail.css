@@ -17,13 +17,69 @@
   flex: 1;
   width: 100%;
   max-width: var(--content, 1268px);
-  margin: 0 auto;
+  /* ── 2026-10-11 第七轮：1366 档版心必须**从 x=0 起**，不能居中 ─────────
+   * 稿把左导航画在视口左缘（导航区 x0..262 → CSS 0..233），所以 1345 的版心
+   * 与视口之间没有左右对称的留白：`margin: 0 auto` 在 1366 下只会把它右推
+   * 10.5（= (1366−1345)/2），纸面板左缘就落到 244.4 而不是 233.9。
+   * 因此 1366 档 margin 为 0；更宽的视口由下面那条媒体查询交回 auto 居中
+   * （用户裁决：>1366 固定最大版心并居中，不继续等比放大）。
+   *
+   * ── 2026-10-12 第八轮：`margin: 0` 被 min-width:1366 的 auto 盖掉了 ──────
+   * 上面的意图（1366 档 margin 0）落不了地：下面那条 `@media (min-width:1366px)
+   * { .shell-body { margin: 0 auto } }` 在 1366 视口同样命中，同特异度、后写胜，
+   * auto 于是把 1345 的版心在 1366 里居中——实测 .shell-body 左缘 10.5，
+   * **五个房间的纸面板左缘统统是 244.39 而不是稿定的 233.9，整版右偏 10.5**
+   * （1366 档实测：.tn/.pf/.wk/.fv/.sv 左缘全 244.39，卡片列 280.89 而非 270.4）。
+   *
+   * 阈值 1366 本身也是错的：auto 居中会把版心左推 (vw−1345)/2，这一项要
+   * **≤ 21**（稿的右侧页边）才不违反"纸面板左缘 233.9"。
+   *   (vw − 1345)/2 = 21 ⇒ vw = 1387
+   * 所以交接写"只改 HTML 或 1366 阈值"都不够——阈值要放到 **1387**：
+   *   · vw ≤ 1386.9：贴左（左边距 0..20.95），纸面板左缘恒 233.9 ✓
+   *   · vw ≥ 1387 ：居中且左边距 ≥ 21，纸面板左缘 233.9 + 左边距，右页边 ≥ 21 ✓
+   * 1920 实测：左边距 287.5、纸面板左缘 521.4、右缘 1632.5（与 .sheet-foot 同值）。 */
+  margin: 0;
   display: grid;
   /* minmax(0,1fr) 而不是 1fr：主区里有长表格与 nowrap 的数值行，
      纯 1fr 的最小尺寸是 auto，会把栅格列顶宽、整页出现横向滚动。 */
-  grid-template-columns: var(--rail, 208px) minmax(0, 1fr);
-  gap: 40px;
+  grid-template-columns: var(--nav-w, 192px) minmax(0, 1fr);
+  /* ── 2026-10-11 第七轮：gap 40 → 0（照稿）────────────────────────────
+   * 稿上导航区右缘就是纸面板左缘（x262），两者之间没有空档；原先的 40px
+   * 是我方发明的中缝。轨道宽同时 192 → 233.9（= 稿 x262 × S），
+   * 于是"纸面板左缘 = 233.9"这一条由栅格自动满足，不需要再调 margin。 */
+  gap: 0;
   align-items: stretch;
+}
+
+/* 窄屏（<1366）不照稿写死：稿只在 1366 这一档标定过，比它窄的视口里
+   1345 的版心会横向溢出，所以整块允许收窄到可用宽度（100%），
+   既有断点与自适应一字不动。
+   ⚠ 选择器用 `.shell > .sheet-foot` 而不是 `.sheet-foot`：本文件在
+   STYLE_ORDER 里排在 sheet.css **之前**，同特异度的 `.sheet-foot` 基础规则
+   （max-width: calc(内容宽 − 导航轨)）会把它盖掉——1180 实测 maxWidth 仍是
+   1111.1px、页脚横向溢出版心。提高一级特异度才是干净的修法。 */
+@media (max-width: 1386.9px) {
+  .shell-body,
+  .shell > .sheet-foot {
+    max-width: 100%;
+  }
+  /* 阈值内**必须显式贴左**：上面基础规则的 `margin: 0` 与本块同级同特异度，
+     但本块在文件后面 —— 不写这一行，基础规则的 margin 仍会被下面那条
+     min-width 的 auto 命中（两条媒体查询在 1366..1386.9 区间重叠，
+     前者会被后者的 auto 静默压掉，正是本轮 10.5 残差的成因）。 */
+  .shell-body {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+/* 宽屏（≥1387）：固定最大版心并居中（用户裁决），不继续等比放大。
+   1387 而不是 1366：auto 居中产生的左边距 (vw−1345)/2 要 ≥ 21（稿的右页边），
+   否则纸面板左缘会大于稿定的 233.9。见上面基础规则的推导。 */
+@media (min-width: 1387px) {
+  .shell-body {
+    margin: 0 auto;
+  }
 }
 
 /* 覆盖 base.css 的横排导航与 frame.css 给它的 width:100%：
@@ -52,23 +108,25 @@
    ——两行要读成一组（"小膳管家 / 家庭膳食规划助手"），中间隔 24px 会把它们拆成
    两个不相干的东西。整组的间距交给 .shell-brand-note 的下边距。 */
 .shell-brand {
-  padding-left: 46px;
+  /* 2026-10-10 画风对齐：稿的品牌字实测约 27px（原 18px），图形 52px。 */
+  padding-left: 62px;
   margin-right: 0;
-  margin-bottom: 2px;
-  font-size: 18px;
+  margin-bottom: 4px;
+  font-size: 27px;
 }
 
 .shell-brand-note {
-  padding-left: 46px;
-  margin-bottom: 24px;
+  padding-left: 62px;
+  margin-bottom: 28px;
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 13px;
+  letter-spacing: 0.12em;
   color: var(--ink-faint);
 }
 
-/* 条目：横排时的"下划线短横"在竖栏里指不到任何方向（下划线指向下一行），
-   所以当前项的标记改为**左缘一道竖短线**——与顶栏那一横是同一族信号，只换朝向。
+/* 条目：横排时的"下划线短横"在竖栏里指不到任何方向（下划线指向下一行）。
+   2026-10-11 用户裁决后**当前项不再有任何形状标记**：稿上收藏选中态只有「浅陶
+   圆角块 + 砖红图标」，块内左缘没有竖线（详见下面删掉的那条 .is-on::after 记录）。
    条目一律左对齐并撑满栏宽，让整列左边缘成为一条可读的列线。
 
    2026-10-05 竖栏补密第二刀（用户反馈"还是有点空"，并给了两个并列方向：
@@ -84,61 +142,127 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   text-align: left;
-  font-size: 16px;
-  /* 内边距 14→19px：单项 46→56px。lave2(claude-opus-5-5) 看图后建议拉到 62px，
-     我取 56 是保守值——它是看过图的意见，所以不该无视，但 62px 已接近移动端列表比例，
-     与 1366 宽的桌面版心不太协调。先到 56 看效果。 */
-  padding: 19px 12px 19px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius, 4px);
+  /* ── 导航项几何：2026-10-11 第三次按稿校正（改成像素剖面实测值）──────────
+   * 上一版（2026-10-10）量的是"放大图目测"：项高约 40px、间距 2px。这次用竖直
+   * 剖面脚本（.tmp-nav/scan-col.cjs，取 x=200 列、避开图标与文字）量选中底块的
+   * 真实上下缘，量到：
+   *   · 底块高 58 稿px = 51.58 CSS px（profile 稿 y185..242、fav 稿 y315..372，
+   *     两张稿一致；service 稿量到 53 稿px，它那块边缘渐变最钝，取两稿一致的 58）；
+   *   · 相邻项图标 bbox 中心距 66.5 稿px = 59.14 CSS px（五个图标中心 y 依次
+   *     147 / 213 / 279.5 / 346 / 412.5，逐个相减 66 / 66.5 / 66.5 / 66.5）。
+   * 于是：项高 51.58 = 内容 21.33（图标槽比文字高，行盒取它）+ 上下内距 15.13×2；
+   * 项间距 59.14 → margin-top 7.56。原来那版（9px 内距 + 2px 间距 = 项高 39.33 /
+   * 间距 41.33）比稿紧一档，稿的导航其实是舒展的分立行。
+   * 水平内距 17.8px（2026-10-11 第四次校正，原为 14px）：稿里图标左缘 x40 −
+   * 选中底块左缘 x20 = 20 稿px = 17.8 CSS px。它只把图标与文字整体右移，不改项高
+   * 与中心距；文字左缘由「图标槽 27.13 + flex gap 12」决定，五个房间仍两两相等。 */
+  font-size: 18px;
+  padding: 15.13px 17.8px;
+  border: 0;
+  border-radius: 10px;
   background: none;
 }
 
-/* 相邻框共享一条边界：抵消上一条下边框与下一条上边框叠成的双线。
-   这样五项是一个整块（目录），而不是五个各自带四条边的小卡。 */
+/* 项间距 7.56px = 中心距 59.14 − 项高 51.58（稿实测，见上）。稿是分立的行。 */
 .shell-tab + .shell-tab {
-  margin-top: -1px;
-}
-
-/* 目录块的首尾各留一个圆角，内部接缝是直角——否则中间那些圆角会在接缝处
-   露出两个相对的月牙，看起来像没对齐。 */
-.shell-tab:first-of-type {
-  border-radius: var(--radius, 4px) var(--radius, 4px) 0 0;
-}
-
-.shell-tab:last-of-type {
-  border-radius: 0 0 var(--radius, 4px) var(--radius, 4px);
-}
-
-/* 当前项被夹在中间时，它自己的四条边要压住左右邻居的边界，否则相邻框的框线
-   会从它上面穿过去（当前项有底色，穿线尤其明显）。 */
-.shell-tab.is-on {
-  position: relative;
-  z-index: 1;
+  margin-top: 7.56px;
 }
 
 .shell-tab:hover {
-  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--sel-block) 55%, transparent);
 }
 
 .shell-tab.is-on {
-  /* 当前项用 --accent-soft 底 + --accent-line 边：与身体档案页"当前生效"那张卡完全同款，
-     所以这不是新引入的视觉，而是把既有模式用到导航上。刻意不用任何语义色铺底（红线）。 */
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+  /* 2026-10-10 按稿：选中 = **整行浅陶圆角块**（稿实测 → --sel-block）。
+   * 2026-10-11 复核：不再有边框，也不再有左缘竖条（见上面删掉的那条 ::after）。 */
+  background: var(--sel-block);
 }
 
-/* 图标：非当前项用 --ink-faint（比文字浅一档，读作辅助），当前项用 --accent 并与左缘
-   竖条同色——同一个信号出现两次不会显得吵，反而把"我在这一间"钉牢。 */
-.shell-tab .icon {
+/* ── 导航图标：从设计稿切片（2026-10-11 第三刀）─────────────────────────
+   原先是 <Icon name={ROOM_ICON[id]}>（手绘单色 SVG、1em 见方、stroke=currentColor）。
+   用户点名要「设计师给的导航小图标」，而稿上这五枚是**双色**的（陶棕描边 +
+   浅陶填充），单色线稿复刻不了那一档；形状也逐枚对不上——稿里五项实测是
+   房子 / 人像 / 折线图 / 五角星 / 心形，与 ui/Icon.tsx 的 utensils / people /
+   calendar / star / hat 只有 star 一项撞对。所以图形改由 background 供给。
+
+   尺寸全部照抄 assets/hero/manifest.json 的 cssWidth/cssHeight，逐个写死，
+   **不用 contain**：contain 会按比例缩进槽里，五枚之间的相对大小就不再是稿上的。
+
+   槽宽怎么来的：稿里五项图标左缘齐（x40）、文字左缘也齐（x84），这段 44 稿px
+   × S = 39.13px 由「槽宽 + .shell-tab 的 flex gap 12px」共同构成，故槽宽
+   = 39.13 − 12 = 27.13px；图标在槽内左对齐，于是图标左缘与文字左缘同时对齐。
+
+   选中态另行换图（见块末的 .shell-tab.is-on 规则）：稿里当前项的图标比未选中项
+   深一档，位图不跟随 currentColor，所以每个房间各备一张 on 版。五张里
+   **三张是稿上真实像素**（人像←profile 稿、五角星←收藏稿、心形←服务稿各自的当前项），
+   **两张是推导**（今晚这一顿 / 周报的稿里没有选中态样本）：它们的未选中位图切自
+   profile 稿，就按**该稿自身**实测的选中/未选中色差（描边段 R×1.261 G×0.904 B×0.670、
+   填充段 R×0.976 G×0.863 B×0.788，按亮度分段线性过渡）套色生成，alpha 与几何
+   完全沿用未选中版。manifest 里那两条带 derived:true，不冒充稿上像素。 */
+.shell-tab-i {
   flex: none;
-  color: var(--ink-faint);
+  width: 27.13px;
+  height: 21.34px;
+  background-repeat: no-repeat;
+  background-position: left center;
 }
 
-.shell-tab.is-on .icon {
-  color: var(--accent);
+/* 逐项尺寸 = manifest 的 cssWidth × cssHeight（稿 bbox × S，1:1 不缩放）：
+   tonight 稿 24×24 / profile 22×24 / weekly 23×23 / fav 25×24 / svc 24×23。 */
+.shell-tab-i-tonight {
+  background-image: url('../assets/hero/nav-tonight.png');
+  background-size: 21.34px 21.34px;
+}
+
+.shell-tab-i-profile {
+  background-image: url('../assets/hero/nav-profile.png');
+  background-size: 19.57px 21.34px;
+}
+
+.shell-tab-i-weekly {
+  background-image: url('../assets/hero/nav-weekly.png');
+  background-size: 20.45px 20.45px;
+}
+
+.shell-tab-i-fav {
+  background-image: url('../assets/hero/nav-fav.png');
+  background-size: 22.23px 21.34px;
+}
+
+.shell-tab-i-svc {
+  background-image: url('../assets/hero/nav-svc.png');
+  background-size: 21.34px 20.45px;
+}
+
+/* 选中态换 on 版位图。on 版比未选中版宽约 1 稿px（0.89 CSS px）——稿上当前项
+   的图标确实略大一点，所以尺寸逐项重给，仍照 manifest 的 cssWidth/cssHeight，
+   不用 contain。槽宽 27.13px 容得下最宽的 fav-on（23.12px），左对齐不变，
+   所以文字左缘不会因选中而移位。 */
+.shell-tab.is-on .shell-tab-i-tonight {
+  background-image: url('../assets/hero/nav-tonight-on.png');
+  background-size: 21.34px 21.34px;
+}
+
+.shell-tab.is-on .shell-tab-i-profile {
+  background-image: url('../assets/hero/nav-profile-on.png');
+  background-size: 20.45px 21.34px;
+}
+
+.shell-tab.is-on .shell-tab-i-weekly {
+  background-image: url('../assets/hero/nav-weekly-on.png');
+  background-size: 20.45px 20.45px;
+}
+
+.shell-tab.is-on .shell-tab-i-fav {
+  background-image: url('../assets/hero/nav-fav-on.png');
+  background-size: 23.12px 21.34px;
+}
+
+.shell-tab.is-on .shell-tab-i-svc {
+  background-image: url('../assets/hero/nav-svc-on.png');
+  background-size: 22.23px 20.45px;
 }
 
 .shell-tab-t {
@@ -147,16 +271,31 @@
   white-space: nowrap;
 }
 
-.shell-tab.is-on::after {
-  left: 0;
-  top: 50%;
-  bottom: auto;
-  width: 2px;
-  height: 16px;
-  margin-left: 0;
-  margin-top: -8px;
-  border-radius: 0;
-}
+/* ── 选中态左缘短竖条：已删除（2026-10-11 用户裁决）──────────────────────
+   用户原话：「我说的小图标是页面里，比如说收藏左边现在不是一条竖线吗，我想让你
+   换成设计图里的标」。这句指的就是这一条。
+
+   它当初是怎么来的：横排顶栏的当前项是「底下一道短横」，改成竖栏后那道横指不到
+   任何方向（下划线指向下一行），于是被换朝向、变成了左缘一道 2×16 的竖条。这是
+   **从旧形态推导出来的**，不是稿上的元素。
+
+   稿上的实际写法（fav-expect-v4.png，x0..272 y280..420 放大 3 倍逐像素看）：
+   收藏选中态 = 浅陶圆角块 + 一枚砖红五角星，**块内左缘没有任何竖线**。已删。
+
+   为什么连 base.css 的同名规则一起删：这一条只是覆盖几何（left/top/width/height），
+   **content 仍继承 base.css 的 `.shell-tab.is-on::after { content: '' }`**。
+   只删本片，横排时代那道 20×2 下划线会原地露出来，问题只是换了个形状。 */
+
+/* 2026-10-11 实测记录（.tmp-nav/probe.cjs，同一算法/同一阈值量稿与页面）：
+   选中态图标尺寸与颜色**本来就与稿一致**，因此不动尺寸、也不动颜色——
+     稿 fav-expect-v4 收藏星（bbox，ΔE≥12）       25×24 稿px = 22.23×21.34 CSS
+     稿降到 CSS 尺度后同法复量                     22×22 px
+     页面实测（截图墨迹 bbox，同阈值）              21×21 px
+   两者残差 ≤1px/轴，且方向是"页面略小"——原因是位图按 S=0.889 缩小后，星形左右
+   两个尖角的羽化边被稀释到阈值以下；把稿先降到 CSS 尺度再量，同一算法给出的就是
+   22（页面 21）。即残差来自测量方式，不是实现偏小。
+   颜色（同一张截图的墨迹中位色）：稿 168,100,54 / 页面 169,100,54 → ΔRGB(1,0,0)。
+   位图自带稿的像素色，所以"改成稿上那枚砖红"这一项无需改任何令牌。 */
 
 /* 家庭成员按钮推到竖栏底部（预期图里成员卡正是左栏的收束项）。
    分隔从"左竖线"改成"上横线"：它在底部已经是最后一项，需要的是与上方条目分开。 */
@@ -198,28 +337,31 @@
   gap: 2px;
 }
 
-/* 成员行比房间条目小一档：它们是这一栏的次要内容（房间才是主），
-   同尺寸会让"哪一列是导航"变得要靠位置去猜。 */
+/* 成员行（2026-10-10 画风对齐，放大图 design-B 的「成员区」格）：
+   稿的成员行高约 48px、名字约 16px、头像圆约 28px，且带「孕妇」标签——
+   原实现是 32px / 13.5px / 20px / 无标签，整体比稿小一档。
+   稿把"家庭成员"做成与房间导航同量级的第二组，不再压小：
+   原来"比房间条目小一档"的用意仍在（名字颜色仍用 --ink-soft），但尺度对齐稿。 */
 .shell-member {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 16px;
   color: var(--ink-soft);
   text-align: left;
   background: none;
   border: 0;
-  border-radius: var(--radius, 4px);
-  padding: 6px 10px 6px 14px;
+  border-radius: 10px;
+  padding: 10px 12px;
   cursor: pointer;
   position: relative;
 }
 
 .shell-member:hover:not(:disabled) {
   color: var(--ink);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--sel-block) 55%, transparent);
 }
 
 .shell-member:disabled {
@@ -227,20 +369,39 @@
   opacity: 0.5;
 }
 
-/* 当前生效：左侧一道竖短线，与 .shell-tab.is-on 同一族信号（朝向一致，都在左缘）。 */
+/* 2026-10-10 按稿：当前成员 = **整行浅陶圆角块**（与导航选中同款表达），
+   原左缘竖条退场——稿里两级选中用同一种语言，不再"导航用块、成员用条"。 */
 .shell-member.is-on {
   color: var(--ink);
+  background: var(--sel-block);
 }
 
-.shell-member.is-on::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 2px;
-  height: 14px;
-  margin-top: -7px;
-  background: var(--accent);
+/* 头像圆（2026-10-10 设计稿左轨成员行）：**实底陶圆 + 白色人形剪影**（稿的画法），
+   20 → 28px。图形走 --av-people 背景图，与右栏 fs-mrow::before **同源同形**
+   （原注释的意图保住了：一处定义、两处同形）；内部 Icon 由 Shell 移除，避免叠形。
+   红线仍是无肖像——人形剪影不是脸。 */
+.shell-member-av {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--av-people) no-repeat center / 28px 28px;
+  font-size: 0;
+}
+
+/* 「孕妇 / 增肌」标签（2026-10-10 按稿）：浅陶底圆角小片。稿里它挂在成员名右侧，
+   与名字同基线、比名字小一号——是"身份"的附注，不是按钮。 */
+.shell-member-tag {
+  flex: none;
+  margin-left: 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--sel-block);
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .shell-member-name {
@@ -265,92 +426,73 @@
   text-align: left;
 }
 
-/* ── 竖栏装饰：册页「书脊 + 三枚回纹章」（2026-10-05 第五刀换形 / 第六刀加厚）──
-   第四刀做的是"索引脊柱"（断续竖线 + 每 40px 一道 14px 短刻度），形态被否决——
-   不是因为不好看，而是因为**用户根本没看见**：截图像素统计（区域 27×415）显示
-   装饰线与纸底 rgb(238,225,207) 的最大通道差只有 **19**，差异超过 16 的像素仅占
-   **2.0%**，落在感知阈值以下。用户原话是问"不是要在导航栏下方给我增添一些图案吗"。
+/* ── 竖栏装饰：角落藤蔓（2026-10-10 换形，用户全盘认可首屏方向稿）─────────
+   换形依据（用户六条的第 5 条）：「整体色调调成今晚这一顿设计图那样的颜色，
+   包括底下的树叶之类的背景图案」——新稿的轨底是叶子暗花，不是方章。
 
-   第五刀按两家商讨的一致结论**换形态**而不是继续加深对比度：细线 + 刻度在语汇上
-   属于"测量工具"，而用户要的是"图案"。选 lave 的"书脊 + 三枚回纹章"而不是连续纹样带，
-   理由是它有**图案主体**（三枚章），符合"增添图案"的字面期待；纯纹样带容易被再次忽略。
+   上一版"书脊 + 三枚回纹章"（2026-10-05 第五/六刀）整段退役，但它的两条教训
+   随形保留下来：① 装饰必须过"看得见"的感知阈——第四刀"索引脊柱"因与纸底
+   最大通道差只有 19、超阈像素仅 2.0%，被用户完全没看见；藤蔓因此取叶纹实测
+   #E4CEB6 压深半阶的线色（--leaf-vine 里写死的那档）。② 装饰加重走面积不走
+   颜色——颜色一动就去和导航抢焦点，它的定位自始至终是纸面纹理。
 
-   第六刀只做一件事：用户看过成品后说"看着有些单薄"，于是**把笔画加厚**——
-   书脊 1.5 → 2.5px，章 22 → 26px 且边框 1.5 → 5px。
-   关键是**加厚走面积、不走颜色**：颜色一动（比如提到 --ink-faint，与纸底差约 95）
-   就会去和导航抢焦点，而这处装饰的定位自始至终是"纸面纹理"。
-   粗边框天然中空，所以加厚不需要任何"挖孔"技巧，也不需要引用竖栏底色——
-   书脊照样从章中间穿过去。
-
-   保留的技巧只有一条：**两端 mask 淡出**。这条来自更早那次失败的教训——我给
-   .shell-nav 加过一条贯穿到底的右边界线，硬边把空框得更显眼；硬截断的线读成
-   "没画完"，淡出之后它才是纸面的一部分。
-
-   位置必须在目录块之后、成员区之前（见 Shell.tsx 同名注释）：它靠 flex:1 吃掉
-   两者之间的剩余高度，竖栏高度怎么变都不用改这里的数字。 */
+   位置随稿换到**成员区之后**（轨底）：新稿里成员块不在贴底、叶子在它下方的
+   留白处生长。旧注释"不要随意挪"针对的是旧布局（art 在成员前吃中间空，
+   挪走后成员顶到目录块 364 处重合）——那是旧位置的约束，不是位置本身的
+   禁令；新位置同样靠 flex:1 吃剩余高度，竖栏高度怎么变都不用改这里的数字。 */
 .shell-rail-art {
   flex: 1;
-  /* 竖栏被压得很矮时不画：几像素里塞书脊与三枚章只会变成一团噪点。 */
+  /* 竖栏被压得很矮时不画：几像素里塞藤蔓只会变成一团噪点。 */
   min-height: 72px;
-  /* 用 flex 均分而不是绝对定位：竖栏高度变化时三枚章自动重排、永不重叠
-     （min-height 72px 时三枚 26px 仍排得下）。 */
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
-  align-items: center;
   position: relative;
   pointer-events: none;
-  /* 对比度取 --line-strong(#c7ac9c)：与纸底最大通道差约 53，在"看得见"之上、
-     又明显轻于导航文字的 --ink（差约 200），所以它不会把装饰变成焦点。
-     上一版用 --accent-line(#ddc7b6) 只有 19，是那次失败的直接原因。
-     颜色只在这里定义一次，下面全部走 currentColor。 */
-  color: var(--line-strong);
 }
 
-/* 书脊：一条贯穿的竖线，两端淡出。 */
+/* 轨底藤蔓（2026-10-11：改用**从稿切片**的位图，替换 --leaf-vine 那支手绘 SVG）。
+ *
+ * 换形依据（用户六条第 5 条）：「整体色调调成今晚这一顿设计图那样的颜色，包括
+ * 底下的树叶之类的背景图案」+ 2026-10-11「左下角那两条叶子有明暗的区别，不是
+ * 所有颜色都一个样」。手绘 SVG 给每片叶同一 fill/stroke，那条"明暗区别"**在结构上
+ * 就做不到**；切片 vine-nav-bl.png 保住了稿里深叶/浅叶/叶脉三档
+ * （切片闸门：maskIoU 0.981 / 覆盖率差 0.3% / 直方 EMD 0.0000）。
+ *
+ * 几何：稿 bbox x5..141 / y892..1024 → 121×117.4 CSS px，左 4.4、下缘即稿第 1024 行
+ * （被页底裁断）。
+ *
+ * 2026-10-11 第二轮（用户：「最下面的叶子摆放位置不对」）：上一版画在
+ * position:fixed 上，等于把它们钉在**视口**左下角——本实现 docH 1207 > 视口 900，
+ * 于是叶停在页面腰部、叠在内容上（用户看到的"位置不对"就是这个）。稿的语义是
+ * "贴着**页面**左下角、被页底裁断"，所以改挂 absolute + bottom:0 到本元素
+ * （.shell-rail-art 是轨底 flex:1 的占位块，其下缘就是整页最低的内容基线），
+ * 两丛叶共用这一条基线（.::before 是主区那丛淡叶，与稿"两丛同底"一致）。
+ *
+ * 为什么不挂本元素自己的 background：① 本元素是 flex:1，盒子高度随竖栏变，
+ * contain 会把 121 宽的图放大到盒子那么高（原来那支 SVG 就是这么被放大到 270 高的）；
+ * ② background 一律被裁在本元素盒内，而稿的藤要伸到页底。
+ * 不给 z-index：它与轨底同层、在轨底色之上、pointer-events:none 不吃点击。 */
+.shell-rail-art::after {
+  content: '';
+  position: absolute;
+  left: -28.6px;
+  bottom: 0;
+  width: 121px;
+  height: 117.4px;
+  background: url('../assets/hero/vine-nav-bl.png') no-repeat left bottom / 100% 100%;
+  pointer-events: none;
+}
+
+/* 主区那丛淡叶（与上面那丛同底，跨分隔线落在主区左下）。左 224.1 = 稿 x252 × S；
+   相对本元素（左边即轨左 x33）就是 +191.1px。这丛在稿里整体极淡（相对纸底
+   ΔE 只有 3~8），切片时单独降了阈值（thr [1.5,4.5]），闸门 IoU 0.912。 */
 .shell-rail-art::before {
   content: '';
   position: absolute;
-  left: 50%;
-  top: 4%;
-  bottom: 4%;
-  width: 2.5px;
-  margin-left: -1.25px;
-  background: currentColor;
-  /* 用 var(--ink) 而不是 #000：mask 只关心 alpha，不透明令牌等效，而本仓的门禁
-     (d_色值字面量) 规定只有 tokens.css 可以持有色值字面量——写字面量会当场判违规。 */
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--ink) 13%,
-    var(--ink) 87%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--ink) 13%,
-    var(--ink) 87%,
-    transparent 100%
-  );
-}
-
-/* 三枚回纹章：方框套方框，即"回"字。是章不是插画——没有曲线、没有具象，
-   与册页书口那排方折纹同源。书脊从章中间穿过，像印在装订线上。
-   26px 外框配 5px 粗边：留白只剩 3px 缝 + 2px 内框，笔画占比接近一半，
-   远看是一枚有分量的方章，近看才读出"回"字。 */
-.shell-rail-art i {
-  position: relative;
-  width: 26px;
-  height: 26px;
-  border: 5px solid currentColor;
-}
-
-.shell-rail-art i::before {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border: 2px solid currentColor;
+  left: 191.1px;
+  bottom: 0;
+  width: 71.2px;
+  height: 72.9px;
+  background: url('../assets/hero/vine-main-bl.png') no-repeat left bottom / 100% 100%;
+  pointer-events: none;
 }
 
 .shell-member-empty {

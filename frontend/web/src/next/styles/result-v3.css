@@ -10,17 +10,43 @@
    `.chef-tip` / `.block*` 规则已经全部没有对应元素了（v3 不再使用这些类名），
    留着是死字节，但不影响渲染；要清就得整文件重写，风险大于收益，暂不动。 */
 
-/* ── 页眉：极简一行，系统账目一律不在这里 ───────────────── */
+/* ── 页眉：左「返回今日方案」+ 右完成态，系统账目一律不在这里 ─── */
 
 .result-head {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
+  /* space-between：返回在左、完成态在右（2026-10-08 预期图顶栏形态）。 */
+  justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
   border-top: 1px solid var(--line-strong);
   padding-top: 12px;
   margin-bottom: 26px;
+}
+
+/* 顶部返回入口：弱化的文字按钮（‹ 返回今日方案），与页底「再做一顿」同一动作。
+   它是这页的"回到首屏"，所以要有可点性又不与菜名抢视觉——
+   hover 才提色，focus 可见。 */
+.result-back {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.result-back:hover {
+  color: var(--accent-ink);
+}
+
+.result-back:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* 品牌名由外层 .tn-head 提供，结果区不再重复。这条规则留着只为防止误用。 */
@@ -70,33 +96,38 @@
  * 另外：23 条里只有 9 条配了真实照片，14 条是 AI 补的，22/23 的 note 自己就承认了。
  * 所以不做"显示/不显示"的分档——那等于把后端的不确定性做成产品等级。
  */
-/* ── 首屏两栏：左图右文 ────────────────────────────────
- * 改这里的原因（2026-09-23 用户「图片放最上面，感觉留白太多了」）：
- * 菜品图受 max-height 限制，1:1 方图只能到 440px 宽，而正文栏 706px——
- * 两侧各空 131px，一张居中小图被 260px 空白包着。
- * 又不能把图放大：13/22 张是 1:1，撑满就是 706px 高，菜名会被推出首屏。
- * 所以改构图：图占定宽左栏（不裁切、高度天然有界），文字填右栏吃掉侧向空白。
- *
- * 图片列 260px 是算过的：一栏 706px 减去 40px 栏距 = 406px 文字栏，
- * 32px 的菜名在这宽度里一行约 12 个汉字，最长菜名（现炸带骨鸡腿/鸡翅减损吃法）
- * 折两行，不会碎成三行以上。 */
+/* ── 报头全宽 + 两列（图 ｜ 简介与营养表）2026-10-08 预期图 result-expect.png ──
+ * 旧结构「图 285px ｜ 标题栏」把菜名与图挤在一格里：无图时第二列仍被预留，
+ * 菜名栏实测塌到 371px、右侧空出一条槽——布局与架构"不好看"的直接来源之一。
+ * 新结构：报头（菜名+标签+指标）先占满整宽，下方 .dish-cols 两列；
+ * 图缺席时组件带 .is-single 落回单列，简介与营养表吃满整宽，有图无图同一骨架。
+ * 图列 300px 是量的：中区 672 − 栏距 22 ⇒ 右列 350，是简介段与三列营养表的舒适宽。 */
 .dish-top {
-  display: grid;
-  /* 图在右、且图是主视觉。左栏 331px 与照片 285px 是量出来的，不是估的：
-   * 设计稿内容区 x44..1424（1380px）里，文字栏 44..560（516px）、照片 580..991（412px）、
-   * 栏距 20px。按 636px 主栏等比折算 ⇒ 文字 346 / 栏距 16 / 照片 285。
-   * 改成这个比例的原因：原实现是「图在左 260px + 文字 406px」，把主次弄反了——
-   * 用户看到的是一张小缩略图配一大块字，而设计稿里照片是这一屏的主语。 */
-  grid-template-columns: minmax(0, 1fr) 285px;
-  gap: var(--s3) var(--s2);
-  align-items: start;
+  display: block;
   margin-bottom: var(--s4);
 }
 
-/* 显式指定栅格位：DOM 里 figure 在前，但视觉上要落在右列。 */
-.dish-top .dish-figure {
-  grid-column: 2;
-  grid-row: 1;
+.dish-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  gap: var(--s3) 22px;
+  align-items: start;
+  margin-top: var(--s3);
+}
+
+/* 无图轮（DishFigure 对无 image_url 返回 null，组件同步带 is-single）：
+   单列全宽，绝不把右列钉进空着的图位里。 */
+.dish-cols.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dish-side {
+  min-width: 0;
+}
+
+/* 图落左列（预期图）。对位标记、圆角、描边三条纪律原样保留——
+   照片仍然是"被安放上去的图版"，这与它在左还是在右无关。 */
+.dish-cols .dish-figure {
   margin: 0;
   /* 承载右上角的对位标记（见下面的 ::after）。 */
   position: relative;
@@ -106,7 +137,7 @@
  * （.shell-room::before，见 sheet.css）同族。
  * 这是整个结果页唯一的照片、也是这一屏的主视觉，这枚标记让它看起来是
  * 「被安放上去的图版」，而不是「被插进来的一张图」。1px、浅陶土，不发光不描粗。 */
-.dish-top .dish-figure::after {
+.dish-cols .dish-figure::after {
   content: '';
   position: absolute;
   top: 10px;
@@ -118,12 +149,9 @@
   pointer-events: none;
 }
 
-.dish-top .dish-hero {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.dish-top .dish-figure img {
+/* img 盒子就等于照片本身：width auto + max-width ⇒ 按原比例缩放，
+   圆角圆的是照片、不是盒子；不裁切、不拉伸（v3 起的既定规则，未动）。 */
+.dish-cols .dish-figure img {
   width: 100%;
   height: auto;
   max-height: none;
@@ -131,17 +159,16 @@
   /* 设计稿的照片是圆角 + 柔和投影（用户已撤销"禁阴影/禁渐变"两条私设红线）。 */
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-paper);
-  /* 2026-10-04：加一根 1px 描边，把它从"一张图"定格成"一张图版"——
-   * 照片外缘与纸面之间不再靠投影虚接，有了确定的边。 */
+  /* 2026-10-04：加一根 1px 描边，把它从"一张图"定格成"一张图版"。 */
   border: 1px solid var(--surface-line);
 }
 
-/* 图注跟图左对齐：图不再居中，图注居中会跟照片脱开。 */
-.dish-top .dish-figure figcaption {
+/* 图注跟图左对齐：图在左列，图注居中会跟照片脱开。 */
+.dish-cols .dish-figure figcaption {
   text-align: left;
 }
 
-/* 首屏文字左对齐——居中文字在窄栏里会失去阅读方向，读起来像海报。 */
+/* 报头文字左对齐——居中文字会失去阅读方向，读起来像海报。 */
 .dish-top .dish-name,
 .dish-top .dish-intro {
   text-align: left;
@@ -149,34 +176,22 @@
 
 .dish-top .dish-metrics {
   justify-content: flex-start;
-  /* 栏变窄后指标行会折行，所以用稍大的水平间距分组。
-   * （这里原来还有一条 `.metric + .metric::before` 的例外规则，专门用来关掉分隔线——
-   *   2026-09-26 照设计稿把分隔线整个撤了，那条例外规则一并删除。） */
   gap: 4px 18px;
 }
 
-/* 文字栏收窄到 331px（原 406px），菜名必须跟着降一档：
- * 32px 在 331px 栏里一行只放得下约 10 个字，长菜名会碎成三行以上。
- * text-wrap: balance 是必需的，不是修饰：截图里「现炸带骨鸡腿/鸡翅（减损吃法）」
- * 原本断成「…（减损吃」/「法）」，第二行只剩两个字加一个全角括号。
- * balance 让两行长度接近，消掉这个孤字。 */
+/* 报头恢复全宽后菜名升回 32px（旧版 28px 是为 331px 窄栏降的档）。
+ * text-wrap: balance 保留：长菜名两行等长，消掉「（减损吃」/「法）」那种孤字。 */
 .dish-top .dish-name {
-  font-size: 28px;
+  font-size: 32px;
   text-wrap: balance;
 }
 
-/* 窄屏落回竖排：两栏在手机上会把图和字都挤扁。 */
+/* 窄屏落回竖排：两栏在手机上会把图和字都挤扁。
+   需要动的只有 .dish-cols——报头本来就是全宽块，没有栅格位要撤。 */
 @media (max-width: 720px) {
-  .dish-top {
+  .dish-cols {
     grid-template-columns: 1fr;
     gap: var(--s3);
-  }
-
-  /* 竖排时必须撤掉显式栅格位，否则图仍被钉在第二列、整块塌掉。 */
-  .dish-top .dish-figure,
-  .dish-top .dish-hero {
-    grid-column: auto;
-    grid-row: auto;
   }
 
   .dish-top .dish-name {
@@ -184,27 +199,23 @@
   }
 
   /* 竖排时图注回到居中，与图本身居中的观感一致。 */
-  .dish-top .dish-figure figcaption {
+  .dish-cols .dish-figure figcaption {
     text-align: center;
   }
 }
 
 /* ── 上菜：结果页的入场编排 ─────────────────────────────
  *
- * 它**由真实信号驱动**，这是它不违反"不许伪造进度"的原因：
- * TonightApp 在 status 从 running 切到 succeeded 时才把整棵子树换成 RunResult，
- * 所以下面每个节点都是新挂载的，入场只在"结果真的到了"那一刻播一次。
- * 不是由计时器启动，也不是由心跳启动；动画时长表达的是界面的展示节奏，
- * 不表达后端还剩多少——页面在这 0.9 秒里没有说过任何关于"还差多少"的话。
+ * 它**由真实信号驱动**：TonightApp 在 status 切到 succeeded 时才挂 RunResult，
+ * 每个节点都是新挂载的，入场只在"结果真的到了"那一刻播一次——
+ * 不由计时器、不由心跳启动；动画时长表达界面节奏，不表达后端还剩多少。
  *
- * 次序照"标题—结论—细节"：图先落位，再菜名、回声、指标、图注、一句话介绍，
- * 最后才是安全项。总时长压在 0.9 秒内是硬要求：
- * 红色安全项必须在首屏且不许被拖延（对抗红线），延迟太久就等于把它推出了首屏。
+ * 次序照"标题—结论—细节"（图 → 菜名 → 指标 → 图注 → 介绍，安全项最先可见）。
+ * 总时长压在 0.9 秒内是硬要求：红色安全项必须在首屏且不许被拖延。
  *
- * 为什么给 .dish-hero 关掉它自己的动画：.dish-hero 上原本有 rise 0.5s both，
- * 而这里要给它的子元素各自错开延迟。父子的延迟会叠加，
- * 结果是菜名实际等到 0.07+0.5 才开始动、并且和父容器同时淡入两次——
- * 看着是"抖了一下"，不是"上菜"。 */
+ * .dish-hero 自身 animation:none：要给它的子元素各自错开延迟，
+ * 父子延迟叠加会让菜名"抖一下"而不是"上菜"。（2026-10-08 结构改报头+两列后
+ * figure 移入 .dish-cols，后代选择器仍命中，编排未动。） */
 .dish-top .dish-hero {
   animation: none;
 }
@@ -683,88 +694,10 @@
   grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
   gap: 0 40px;
   align-items: start;
-  /* 承载左侧章节轨道（见 .chap-rail）：它 absolute 定位，不参与这两列栅格。 */
+  /* 旧章节轨（.chap-rail）已于 2026-10-08 随预期图重排摘除：它 absolute 定位在
+     左侧留白，与 Shell 左竖栏叠成两套导航影子，且预期图没有页内章节导航。
+     position 留着：右栏的 ::before 标尺仍以本元素为定位基准。 */
   position: relative;
-}
-
-/* ── 页内章节轨道（2026-10-04 · 第 2 项）──────────────────────────────
- * 落在结果页**左侧留白**里，不占内容列：内容列仍是 1010px，正文与右栏的
- * 间距一个像素没动——「把页面撑宽」这条路早被实测否决过（多出来的宽度会
- * 变成正文与右栏之间的中缝，比两侧留白更难受）。
- *
- * 分工：左轨道承担语义导航，右栏那条标尺继续承担测量语汇，两者不抢注意力。 */
-.chap-rail {
-  position: absolute;
-  /* 1366 视口的左侧留白是 178px（内容列 1010 居中）。这条轨道只用掉 94px：
-   * 从视口 84px 起，右缘正好贴住内容列的左边缘。 */
-  left: -122px;
-  top: 0;
-  bottom: 0;
-  width: 94px;
-}
-
-/* 竖线：贯穿整个结果页高度（跟随 absolute 容器的全高），像图纸的边尺。 */
-.chap-rail::before {
-  content: '';
-  position: absolute;
-  left: 3px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--line);
-}
-
-/* 节点组跟随视口：滚到哪，章节列表都在视野里。 */
-.chap-rail ol {
-  position: sticky;
-  top: 128px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chap-rail a {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 0;
-  font-size: 12.5px;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  color: var(--ink-faint);
-  text-decoration: none;
-}
-
-/* 空心点：底色取页面底，把竖线遮断，看上去是点「骑」在线上。 */
-.chap-rail a::before {
-  content: '';
-  flex: none;
-  width: 7px;
-  height: 7px;
-  box-sizing: border-box;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  background: var(--bg);
-}
-
-.chap-rail a:hover {
-  color: var(--ink-soft);
-}
-
-/* 当前章节：实心陶土点 + 正文墨色。 */
-.chap-rail a[aria-current='location'] {
-  color: var(--ink);
-}
-
-.chap-rail a[aria-current='location']::before {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-/* 这三个（未来更多的）轨道元素是真实可聚焦链接，键盘焦点必须看得见。 */
-.chap-rail a:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 3px;
 }
 
 .result-main {
@@ -849,11 +782,75 @@
 }
 
 .rail-title {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--ink-faint);
+  /* 2026-10-08 四段化：标题行内图标与文字随字号对齐（Icon 是 1em 方块）。 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rail-title .icon {
+  flex: none;
+}
+
+/* 四段之间的分隔（2026-10-08 预期图右栏）：每段一根发丝线 + 留白，
+   首段不画（Panel 内边距已经是节奏）。
+   这组值是抠出来的：当前真实数据（关键 + 两段成员）下，18+16 的分隔把
+   「注意事项」顶到 y≈927 ——出首屏，违反"安全项必须首屏"的对抗红线。
+   压到 13+12 后 y≈878 回到首屏内；再密右栏就糊成一片。 */
+.rail-sect + .rail-sect {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* 段一「这次搭配的关键」：弱化一档——它是右栏导读，不是中区主文。
+   行高 1.72 同样是首屏预算的一部分（见上）。 */
+.rail-key {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.72;
+  color: var(--ink-soft);
+}
+
+/* 段二成员适配行：判词徽章 + 调整说明，行间靠间距不靠线。 */
+.rail-mline {
+  margin: 0 0 5px;
+  font-size: 12.5px;
+  line-height: 1.72;
+  color: var(--ink-soft);
+}
+
+.rail-mline:last-child {
+  margin-bottom: 0;
+}
+
+/* 判词徽章（可吃 / 需调整）：陶土描边小药丸。右栏内自成一套
+   （特异性 .rail-mline .member-verdict 高于中区裸规则，互不干扰）。 */
+.rail-mline .member-verdict {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-ink);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  vertical-align: 1px;
+}
+
+.rail-mline .member-dish {
+  margin-right: 6px;
+  color: var(--ink-faint);
+}
+
+.rail-mline .member-reason {
+  color: var(--ink-soft);
 }
 
 .lights + .rail-title {

@@ -319,8 +319,10 @@ export type RailProps = {
 
 const RAIL_FAM: RailFam = {
   members: [
-    { id: 'm_xiaomei', name: '小美', isActive: false, digits: ['30岁', '165cm'], tags: ['孕妇'] },
-    { id: 'm_self', name: '我', isActive: true, digits: ['19岁', '176cm', '63kg'], tags: ['增肌'] },
+    // progress 一律 null：这份夹具只喂首屏右栏（那块不显示进度），
+    // 不替夹具编一个"看起来像真的"的完成度。真值走真实后端。
+    { id: 'm_xiaomei', name: '小美', isActive: false, digits: ['30岁', '165cm'], tags: ['孕妇'], progress: null },
+    { id: 'm_self', name: '我', isActive: true, digits: ['19岁', '176cm', '63kg'], tags: ['增肌'], progress: null },
   ],
   // 共同忌口只写一次：两人都忌芹菜，写两遍只是噪音。
   shared: ['芹菜'],
@@ -340,19 +342,45 @@ const RAIL_WEEK: WeekView = {
     { nutrient: '糖', green: 1, yellow: 1, red: 0 },
     { nutrient: '脂肪', green: 1, yellow: 1, red: 0 },
   ],
-  // 后端实测全给 insufficient ⇒ 照实写"数据不足"，**不画趋势线**。
+  // 2026-10-10 实测：后端值域已出现 improving / stable（历史全 insufficient
+  // 的旧实测已过时），照当前真形态给——`trendLabel` 对它们返回「↑ 改善中」「— 稳定」。
   trends: [
-    { label: '钙', state: 'insufficient' },
-    { label: '脂肪', state: 'insufficient' },
-    { label: '钠', state: 'insufficient' },
+    { label: '钠', state: 'improving' },
+    { label: '脂肪', state: 'improving' },
+    { label: '糖', state: 'stable' },
   ],
+  // light_series（2026-10-10 新字段）：含今天 7 天的逐日绿灯占比，
+  // null = 当天该营养素无观测（sparkline 断线）。数值照 2026-10-10 curl 实测。
+  series: [
+    { label: '钠', values: [null, 0.5, null, 1, 1, null, null] },
+    { label: '脂肪', values: [null, 0.5, null, 0, 1, null, null] },
+    { label: '糖', values: [null, 1, null, 1, 1, null, null] },
+  ],
+  // dish_images：右栏 WeekBlock 是文字摘要不放图，真实命中也用不上——
+  // 空表是这个面的真形态（房间页 WeeklyView 才消费它）。
+  dishImages: {},
   guardrail: 1,
-  // 2026-09-29 curl 实测：/api/reports/weekly **不返回** recommendations
-  // （types.ts 定义了可选字段，接口不给），feedback_summary 给的是
-  // count:0 / tags:{}。夹具照真实形态造，不替后端编内容——与「趋势
-  // 照实写」是同一条纪律。
+  // 2026-10-14 更正：这条注释原据 2026-09-29 的一次 curl 断言「接口**不返回**
+  // recommendations」，此后后端已补上——周报房「建议」块实测有
+  // 「[番茄] 近两周已补货 8 次、冰箱暂时没有——下次采购记得带上。」
+  // 本夹具只喂**首屏右栏**，右栏不画建议，所以这里仍给空数组；但理由从
+  // 「后端不给」改成「这个面不用」，两者不许混为一谈（同一类文档与实现分叉，
+  // 本项目已在 household 共同忌口、收藏 feedback 上各踩过一次）。
   recommendations: [],
   feedback: { count: 0, tags: {} },
+  // 逐餐明细（2026-10-14 新字段）：这份夹具只喂**首屏右栏**，那里不展开明细，
+  // 所以空数组就是它在这个面上的真形态——不替夹具编几顿出来。
+  mealsDetail: [],
+  // 成员卡片（2026-10-15 新字段）：同理，右栏不渲染成员卡片，空数组即真形态。
+  members: [],
+  // 「较上周」/「本周达标率」/「逐周达标率」（2026-10-15 C 结构重排新增）：
+  // 三个字段右栏都不画。rate 与 prev 给**形态真实的数**而不是 null——
+  // 这份夹具的 meals 是 2（有数据），此时后端一定给得出 rate；给 null 会造出
+  // 一个后端不存在的状态（"有餐次却没有达标率"），下一个人照它写分支就会写错。
+  // rateSeries 给空数组，理由同上面的 members：这个面不用，不是后端不给。
+  rate: 0.5,
+  rateSeries: [],
+  prev: { meals: 2, onTarget: 1, rate: 0.5 },
 }
 
 const RAIL_CAND: RailCand = {
@@ -427,7 +455,7 @@ export const CASES: Record<string, FixtureCase> = {
     label: '首屏·单人无忌口(E)',
     run: run({}),
     rail: {
-      fam: { members: [{ id: 'm_self', name: '我', isActive: true, digits: ['19岁', '176cm'], tags: ['增肌'] }], shared: [] },
+      fam: { members: [{ id: 'm_self', name: '我', isActive: true, digits: ['19岁', '176cm'], tags: ['增肌'], progress: null }], shared: [] },
       week: RAIL_WEEK,
       cand: null,
       fridge: RAIL_FRIDGE,
@@ -469,7 +497,10 @@ export const CASES: Record<string, FixtureCase> = {
   },
   partial: { kind: 'result', label: '营养表·缺口（已覆盖小计）', run: run({ answer: NUTRI_PARTIAL, elapsed: 96000 }) },
   long: { kind: 'result', label: '长文本溢出压力', run: run({ answer: LONG }) },
-  prose: { kind: 'result', label: '纯散文（13/35）', run: run({ answer: PROSE, elapsed: 111000 }) },
+  /* body 不能省：散文路径读的是 run.body（流式正文），answer.opening 只是
+     answer 内的字段——省掉它 ProseResult 收到空串，冒烟就只测到了 empty 分支，
+     测不到散文渲染本身。 */
+  prose: { kind: 'result', label: '纯散文（13/35）', run: run({ answer: PROSE, body: PROSE.opening, elapsed: 111000 }) },
   empty: { kind: 'result', label: '空结构（整理失败）', run: run({ answer: EMPTY, elapsed: 47000 }) },
   wait: {
     kind: 'wait',
@@ -529,6 +560,8 @@ export const CASES: Record<string, FixtureCase> = {
 }
 
 export const CASE_IDS = Object.keys(CASES)
+
+
 
 
 

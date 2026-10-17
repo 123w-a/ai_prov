@@ -322,25 +322,137 @@
  *     · 趋势/建议/护栏/反馈这四块信息量小，并排两列，页面因此
  *       不再往下无限拉长，底部空白也一并收紧。 */
 .wk {
-  max-width: 1010px;
-  margin: 0 auto;
-  padding: 40px 24px 96px;
-  /* 网格：标题与副标题跨全宽，下面的区块按序落进两列。
-   * 条件渲染造成的"某块不存在"由 grid 自动补位，不会留空洞。 */
+  /* 骨架（max-width/margin/padding/纸带底色）2026-10-09 起由 sheet.css 四房
+     统一层接管：原硬编码 1010 + auto margin 本房靠"内容恰好撞上限"才没塌
+     （探针实测 1010），是幸存不是设计。
+     2026-10-10 方向稿：列结构从「等行高 grid + 块序配平」改成 **纵向三段**
+     （页头 / 营养灯 hero / 两列）——页头与 hero 全宽，.wk-cols 才是两列。
+     原 grid 的行高耦合正是空洞的根源：左列「常做的菜」带图变高后，同一行
+     右侧的「建议」会被行高顶出一段空档；两列独立流各排到底，不再有这个洞，
+     也不再需要 2026-10-09 的块序配平与 .wk-sec:last-child 跨满。 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  /* 卡片圆角：全局 --radius-card 是 0px（依据是「今晚这一顿」预期图
+     ask-expect.png 为硬直角），**周报稿不是直角**——描边追踪逐行扫周报稿
+     hero 卡左上角（.tmp-wk/probe2.cjs edge 262 300 156 182）：左边界从
+     y=162 的 x=277 收敛到 y=167 的 x=271，弧高 6 稿px；按圆心几何
+     offset = R - √(2R-1) 拟合得 R≈10 稿px → 8.89 CSS px。
+     这里按周报稿取 9px，只在 .wk 内生效，不动全局 token（动 token 会波及
+     另外三间房的卡片）。 */
+  --wk-radius: 9px;
+}
+
+/* ── 页头（设计稿）：花叶章 + 标题 + 日期行；右侧标语「科学搭配 · 健康相伴」。 */
+.wk-head {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  /* ── 2026-10-11 第七轮：按稿重标（gap 22.23 → 25.7，花章回退 19.6）──────
+   * weekly-expect.png y45..86 带的列投影实测（本轮复测，S=0.8893229）：
+   *   花章  稿 x282..323 → CSS 250.8..287.3
+   *   标题  稿 x349..388 → CSS 310.4 起
+   * 旧值 22.23 是拿"章右缘 x323 → 标题 x349 = 26 稿px"算的；本轮改成
+   * 两侧各自墨迹边相减：310.4 − 287.3 = 23.1，再补首字字形左边距 2.6
+   * （「周」的起笔不在字面左缘），取 25.7，落位与稿的 310.4 对齐。
+   *
+   * 花章左缘：容器左缘本轮 = 卡片列左缘 270.4（统一层给 36.5），而稿上
+   * 花章比卡片列还靠左 19.6（270.4 − 250.8），所以由 .wk-head-seal 自己
+   * 负 margin 回退，不用 padding 把整个页头右推。 */
+  gap: 25.7px;
+  /* 右上叶枝绝对定位不吃流，这里给它留出宽度，标语才不会钻到叶子底下。 */
+  padding-right: 96px;
+}
+
+/* 页头右上叶枝（设计稿）：稿里这枝比页头本身高（叶 y20..145、页头 40..110），
+ * 所以用负 top 让它往页头上沿探头，不撑高页头、也不压到下面的营养灯卡。 */
+.wk-head::after {
+  content: '';
+  position: absolute;
+  top: -18px;
+  right: 0;
+  width: 89px;
+  height: 100px;
+  background: url('../assets/hero/branch-right.png') no-repeat right top / contain;
+  pointer-events: none;
+}
+
+/* 页头花章（2026-10-11「小图标逐一复刻」）：用户口径是设计师稿上的图标必须
+ * 用稿上真像素，不用近似语汇。这里把 --leaf-seal（项目通用的四瓣梭形 SVG）
+ * 换成从周报稿切下来的这枚四瓣花：稿 bbox x282..323 y43..85，管线按自己的
+ * 前景规则（Lab dE≥8）读到 42×42 稿px，×0.8893 = 37.35×37.35 CSS。
+ * 图由 .tmp-p2a/room-assets.cjs（assets-build.cjs 的参数化副本，原管线未动）
+ * 切出并**追加**登记 manifest.json。
+ * ⚠ --leaf-seal 这个 token 本身不动：收藏卡角、首页页头、本文件下面那枚
+ *   18px 小花章仍用它——那是各自的独立规则，不属于"周报房门牌"这一处。
+ * 垂直：稿上花顶与标题字面同顶（两者都起于 y44），故花顶对齐字面顶而非行盒顶，
+ * 由实测的行盒 half-leading 补 3.2px。 */
+.wk-head-seal {
+  flex: none;
+  width: 37.35px;
+  height: 37.35px;
+  margin-top: 3.2px;
+  /* 2026-10-11 第七轮：稿的花章左缘（CSS 250.8）比卡片列左缘（270.4）
+     还靠左 19.6，容器左缘现在就在卡片列上，故由花章自己回退。
+     旧版没有这个负 margin，是因为旧容器左缘比卡片列左很多。 */
+  margin-left: -19.6px;
+  background: url('../assets/hero/wk-title-flower.png') no-repeat center / 100% 100%;
+}
+
+.wk-head-txt {
+  min-width: 0;
+}
+
+.wk-motto {
+  margin: 8px 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+/* 标语两侧各一段细横线（稿实测左 82 稿px、右 30 稿px → 73 / 27 CSS px）。
+ * 稿的右线本来就比左线短，照抄不等长。 */
+.wk-motto::before {
+  content: '';
+  width: 73px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.wk-motto::after {
+  content: '';
+  width: 27px;
+  height: 1px;
+  margin-left: 8px;
+  background: var(--line-strong);
+}
+
+/* 两列独立流（设计稿）：左 常做的菜→护栏；右 建议→趋势→反馈。 */
+.wk-cols {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--s2);
+  /* 稿实测两列内边距之间的空档 32 稿px → 28.5 CSS px
+     （原 --s2=16 是没量稿的默认值）。 */
+  gap: 28px;
   align-items: start;
 }
 
-/* 房间门牌（2026-10-01 解冻）：标题左侧一根 accent 竖条。
- * 这是"墙画"的落点——四个房间的 h2 靠它获得同一个视觉锚，
- * 而不是四个裸标题漂在纸上。竖条是排印（与 .tn-dot 同族），
- * 不是插图，因此不违反"不引入无数据装饰"。 */
+.wk-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+/* 房间门牌：四房的 h2 同族衬线大字。页头改版后左侧锚点从 accent 竖条换成
+ * 花叶章（.wk-head-seal，设计稿），竖条与章同在会重复——2026-10-10 删条，
+ * padding-left 一并收回；fav/service 等其它房的竖条不受影响（各自文件各自写）。 */
 .wk-h {
-  grid-column: 1 / -1;
   position: relative;
-  padding-left: 18px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
@@ -349,19 +461,7 @@
   -webkit-text-stroke: var(--stroke-h2);
 }
 
-.wk-h::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.18em;
-  bottom: 0.14em;
-  width: 5px;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
 .wk-sub {
-  grid-column: 1 / -1;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 13.5px;
@@ -375,66 +475,176 @@
 .wk-sec {
   background: var(--surface);
   border: 1px solid var(--surface-line);
-  border-radius: var(--radius-card);
+  border-radius: var(--wk-radius);
   box-shadow: var(--shadow-paper);
   padding: 18px 20px;
 }
 
-/* 营养灯：全宽仪表盘。 */
+/* 营养灯：全宽仪表盘（设计稿）。左品牌块（陶土圆标 + 标题 + 副题）
+ * 与右侧三盏灯之间一条细分隔线——分隔是排印，不是装饰面。 */
 .wk-sec.is-hero {
-  grid-column: 1 / -1;
-  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  /* 稿实测：卡外高 134 稿px（→119 CSS），内带（两段竖分隔线的跨度）
+     81 稿px（→72 CSS），⇒ 上下内边距各 (119-72)/2 ≈ 23 CSS px。 */
+  padding: 23px 24px;
 }
 
-.wk-k {
-  font-family: var(--mono);
-  font-size: 12px;
+.wk-hero-brand {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 26px;
+  border-right: 1px solid var(--line);
+}
+
+/* 陶土圆标：与「开始 →」同一 accent 容器语言（白图标 + accent 实底圆）。
+ * 语义色（红黄绿）不进这里——这是品牌位，不是状态位。 */
+.wk-hero-ic {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 22px;
+  flex: none;
+}
+
+.wk-hero-t {
+  font-family: var(--serif);
+  font-size: 19px;
+  color: var(--ink);
+  margin: 0 0 3px;
+}
+
+.wk-hero-s {
+  font-size: 12.5px;
   color: var(--ink-faint);
-  letter-spacing: 0.04em;
-  margin: 0 0 12px;
+  margin: 0;
+  line-height: 1.5;
 }
 
-/* 灯排成仪表：三个营养指标并排，各自是一组「点 + 名称 + 计数」。
+/* 块标题（设计稿）：图标 + 衬线中字 + 右侧灰注。原 mono 12px 小标签
+ * 是"日志段落头"的语言，房间化之后块标题是家具的名牌。 */
+.wk-k {
+  display: flex;
+  align-items: center;
+  /* 稿实测：图标右缘 330 → 标题起 345 = 15 稿px，按同类卡片内容宽比
+     （450/586）折算 ≈ 11.5 CSS px，取 10px。 */
+  gap: 10px;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  margin: 0 0 14px;
+}
+
+/* 稿里块标题的图标**比标题字更大**：帽墨迹 28 稿px vs 「常做的菜」字墨迹
+ * 22 稿px（probe2 vruns 312/352 320 364）≈ 1.27 倍。原 16px 反而比字小，
+ * 这里提到 22px——刚好让图标墨迹与 17px 标题的字墨迹齐平。
+ * 未继续追到 1.27 倍的原因：既有 hat 路径在 24 viewBox 里只画了 12.4 单位高
+ * （墨迹/框 = 0.52，其余图标 0.66~0.72），要凑够比例得把字号推到 40px 上下，
+ * 图标会喧宾夺主。改 hat 路径会波及另外三间房，不在本次范围内——已列为偏差。 */
+.wk-k .icon {
+  font-size: 22px;
+  color: var(--accent);
+  flex: none;
+}
+
+/* 盾徽是 accent 实底圆上的**白**图标，但 .wk-k .icon（0,2,0）在圆内同样命中：
+ * 陶土色画在陶土底上、字号又被压小——第一版实测圆里什么都看不见。
+ * 这里用更高优先级复位颜色；字号按稿的比例另给：稿盾墨迹 ≈ 圆径的 0.5 倍
+ * （56 稿px 圆里约 30 稿px 盾），46px 圆 ⇒ 盾墨迹 ≈ 23 CSS px，
+ * 而 shield 的墨迹/框 = 17.3/24 = 0.72 ⇒ 字号 26px。 */
+.wk-k .wk-guard-ic .icon {
+  font-size: 26px;
+  color: var(--surface);
+}
+
+.wk-k-note {
+  font-family: var(--sans, var(--fs-body, sans-serif));
+  font-style: normal;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  letter-spacing: 0;
+}
+
+/* 灯排成仪表：三个营养指标并排，每盏灯纵排「名称 / 点阵 / 文字计数」。
  *
  * 第一版用了 auto-fit 三等分 + 计数右对齐，实测失败：每格 320px 而内容
  * 只有 120px，名称与计数被拉到两端、中间空 200px，读起来像表格行而不是
  * 三个独立的灯。改成按内容排布 + 大间距——灯与灯之间靠 gap 分开，
- * 组内三个元素紧挨着，这才是一盏灯的样子。 */
+ * 组内元素紧挨着，这才是一盏灯的样子。2026-10-10 再叠设计稿的点阵：
+ * 中间那行从「1 个状态点」变成「一顿一个点」的读数排。 */
 .wk-lights {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 44px;
+  gap: 14px 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .wk-light {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  /* 稿实测：名称底→点阵顶 10 稿px、点阵底→计数顶 13 稿px → 取 9 CSS px。 */
   gap: 9px;
-  font-size: 15px;
+  padding: 0 26px;
+  min-width: 0;
 }
 
-/* 9px 实心点：语义色只用在状态点上，绝不铺到卡片底/按钮底/标签底。 */
-.wk-dot {
-  width: 12px;
-  height: 12px;
+.wk-light:first-child { padding-left: 0; }
+.wk-light:last-child { padding-right: 0; }
+
+/* 灯与灯之间的细竖线（设计稿）：仅在 hero 内容足够宽时出现。 */
+.wk-light + .wk-light {
+  border-left: 1px solid var(--line);
+}
+
+.wk-lname {
+  font-size: 15.5px;
+  color: var(--ink);
+}
+
+/* 点阵：一个点 = 一顿饭在该营养素上的真实灯色（绿 8 黄 1 ⇒ 8+1 个点）。
+ * 点数直接由后端计数渲染（WeeklyView Array.from(count)），点数=真实数据。
+ * 语义色在状态点上是既有许可面（2026-09-28 硬边界只禁卡片底/按钮底/
+ * 标签底/装饰面/渐变），这里是数据读数，不是装饰。 */
+/* 稿实测（probe2 runs 228 500 1536 8，逐点游程）：点径 14~16 稿px、
+ * 圆心间距 24.8 稿px ⇒ 13.3 CSS px 径 + 8.7 CSS px 净间隙；
+ * 原 12px/5px 是没量稿的值，间距明显偏紧。 */
+.wk-pips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  min-height: 13px;
+}
+
+.wk-pip {
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   flex: none;
-  align-self: center;
 }
 
-.wk-light[data-level='green'] .wk-dot { background: var(--green); }
-.wk-light[data-level='yellow'] .wk-dot { background: var(--yellow); }
-.wk-light[data-level='red'] .wk-dot { background: var(--red); }
-
-.wk-lname { color: var(--ink); }
+.wk-pip[data-c='g'] { background: var(--green); }
+.wk-pip[data-c='y'] { background: var(--yellow); }
+.wk-pip[data-c='r'] { background: var(--red); }
 
 .wk-lstat {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--ink-soft);
 }
 
@@ -447,9 +657,11 @@
 .wk-dish {
   display: flex;
   width: 100%;
-  align-items: baseline;
-  gap: 12px;
-  padding: 11px 0;
+  /* center：加入成品图后名称与数字以图的垂直中线对齐（原来 baseline 是纯文字行）。 */
+  align-items: center;
+  /* 稿实测：缩略图右缘 358 → 菜名起 378 = 20 稿px → 17.8 CSS px。 */
+  gap: 18px;
+  padding: 9px 0;
   background: none;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -462,16 +674,44 @@
 
 .wk-dish:hover { color: var(--accent); }
 
+/* 成品图（用户第 1 条「常做的菜放图片」）：52px 方形小图，稿的菜图语言。
+ * src 只来自后端 dish_images（dish_assets 命中才下发）；没图走 .is-empty
+ * 同尺寸淡底占位——几何稳定，也不猜不存在的地址。 */
+.wk-dish-img {
+  flex: none;
+  /* 稿实测缩略图 56~58 稿px 见方（56×0.8893 = 49.8）→ 50px；
+     行距 = 50 + 2×9 + 1 边框 = 69 CSS px，与稿的 77.5 稿px（→68.9）吻合。 */
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  align-self: center;
+}
+
+.wk-dish-img.is-empty {
+  background: var(--surface-2);
+}
+
 .wk-dish-name {
   flex: 1;
   min-width: 0;
 }
 
+/* 稿里次数不贴着「再做一顿」：数右缘 698 → 动作左缘 778 = 80 稿px（→71 CSS），
+   而其余间距只有 18 CSS px。次数落在固定列上（长短菜名的次数 x 都在 692~698），
+   所以用一个右边距把它从动作前推开——与 .wk-dish 的 gap 叠加生效。
+
+   2026-10-15 收窄：42px 是稿里"宽栏"实测的绝对间距，而周报页的中列只有 362px，
+   这 42px 白占 12%。菜名的可用宽度本来就紧张（长菜名要 182px），
+   把这里收到 12px，多出来的 30px 直接给菜名。 */
 .wk-dish-n {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 13.5px;
   color: var(--ink-soft);
+  margin-right: 12px;
 }
 
 .wk-dish-go {
@@ -484,6 +724,143 @@
   line-height: 1.75;
   color: var(--ink-soft);
   margin: 0;
+}
+
+/* 趋势脚注（诚实空态，原样保留语义）。 */
+.wk-note.is-tiny {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin-top: 12px;
+}
+
+/* ── 趋势 sparkline（设计稿 · 第 3 条「要数据真实」）────────────────────
+ * 数据 = 后端 light_series 的 7 天逐日绿灯占比；null 断线不插值。
+ * 三列横排：名称 / 状态 / 线。 */
+/* 稿实测三列的列心间距 187.5 稿px → 166.8 CSS px：三列仍等分，但间距远大于
+   原先的 14px，图幅因此收窄到 ~122 CSS px（稿约 111），与稿「窄图 + 宽留白」
+   的节奏一致（原 14px 时三条线几乎连成一片）。 */
+.wk-trends {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 44px;
+}
+
+.wk-trend {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.wk-tname {
+  font-size: 15.5px;
+  color: var(--ink);
+}
+
+.wk-tstate {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* 线色随状态：改善中=绿、稳定=黄（与稿的黄线一致）、需留意=红、
+ * 其余（数据不足）=灰。这是图表数据线，同 hero 点阵一个道理——
+ * 语义色承载数据语义，不是铺底装饰。 */
+.wk-spark {
+  width: 100%;
+  height: 36px;
+  color: var(--ink-faint);
+}
+
+.wk-spark[data-state='improving'] { color: var(--green); }
+.wk-spark[data-state='stable'] { color: var(--yellow); }
+.wk-spark[data-state='worsening'] { color: var(--red); }
+
+.wk-spark polyline,
+.wk-spark circle {
+  stroke: currentColor;
+  fill: currentColor;
+}
+
+.wk-spark polyline {
+  fill: none;
+}
+
+.wk-tline-none {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* 护栏行（设计稿）：盾徽圆标 + 「护栏」 + 竖线 + 次数，同行排布。
+ * 圆标实测 55 稿px 径（→48.9 CSS），与 hero 的陶土圆标同一容器语言，
+ * 尺寸收一档取 46px（与 .wk-hero-ic 同值，两处圆标不该有两个直径）。
+ * 稿的右端还有一个「→」，但该块没有可去的目标页，画箭头就是假按钮——
+ * 这一处**有意不做**，与稿的差异已在交付说明里列出。 */
+.wk-guard-ic {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 21px;
+  flex: none;
+  margin-right: 4px;
+}
+
+/* 块标题里带竖线的灰注（护栏的「本周触发 N 次」、反馈的「收到 N 条」）。
+ * 稿实测：标题末 416 → 竖线 447.5 → 注起 482（稿px），即两侧各留约
+ * 31 / 35 稿px → 这里左右各 14px 内边距、12px 外边距。 */
+.wk-k-note.is-div {
+  border-left: 1px solid var(--line);
+  padding-left: 14px;
+  margin-left: 12px;
+}
+
+/* 建议卡的右下角叶（设计稿）：稿里这片叶被卡的圆角裁掉一角、正压在角上。
+ * 用 overflow:hidden 让位图跟着圆角一起被裁，不额外描形。 */
+.wk-sec.is-leaf {
+  position: relative;
+  overflow: hidden;
+}
+
+.wk-sec.is-leaf::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 43px;
+  height: 39px;
+  background: url('../assets/hero/card-leaf-2.png') no-repeat right bottom / contain;
+  pointer-events: none;
+}
+
+/* 反馈空态（设计稿）：气泡图标 + 文案居中。 */
+.wk-fb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 稿实测：标题底→气泡顶 20 稿px（卡标题自带 14px 下边距，这里再补 4px
+     正好 18 CSS px）；气泡底→文案底 8 稿px（gap 10px 已覆盖）。 */
+  gap: 10px;
+  padding: 4px 0 0;
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-faint);
+}
+
+/* 空态气泡（设计稿）：稿里约 45×42.5 稿px，按同类卡片内容宽比折算 ≈ 35 CSS px
+ * 墨迹；chat 的墨迹/框 = 17.2/24 宽 ⇒ 字号 ≈ 46px。 */
+.wk-fb-empty .icon {
+  font-size: 46px;
 }
 
 .wk-list {
@@ -539,4 +916,51 @@
   color: var(--ink-soft);
   margin: 0;
 }
+
+/* 页脚花章（设计稿）：两列之下居中一枚四瓣小花，与页头的章首尾呼应。
+ * 用 ::after 不占 DOM——它是排印不是内容，读屏不需要听见。 */
+.wk::after {
+  content: '';
+  width: 100%;
+  height: 18px;
+  align-self: center;
+  margin-top: 4px;
+  /* 稿（放大 5 倍看 .tmp-wk/footer.png）：花章左右各一段细横线，线到章留约
+     15 稿px（→13 CSS）。章本身实测 19×20 稿px → 18 CSS，与原值一致。 */
+  background:
+    linear-gradient(var(--line-strong), var(--line-strong)) no-repeat left center / calc(50% - 18px) 1px,
+    linear-gradient(var(--line-strong), var(--line-strong)) no-repeat right center / calc(50% - 18px) 1px,
+    var(--leaf-seal) no-repeat center / 18px 18px;
+}
+
+/* 窄屏：两列合一列（块序 左→右 的阅读序在单列下自然变成
+ * 菜→护栏→建议→趋势→反馈，仍与稿的分组一致）。 */
+@media (max-width: 880px) {
+  .wk-cols { grid-template-columns: 1fr; }
+  .wk-sec.is-hero { flex-direction: column; align-items: stretch; gap: 18px; }
+  .wk-hero-brand { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+  .wk-light { padding: 0 18px; }
+  .wk-trends { grid-template-columns: 1fr; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

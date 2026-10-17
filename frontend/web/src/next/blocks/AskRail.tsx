@@ -27,12 +27,18 @@ export function AskRail({
   week,
   cand,
   fridge,
+  readErr = null,
   variant = 'ask',
 }: {
   fam: { members: FamilyMemberRow[]; shared: string[] } | null
   week: WeekView | null
   cand: { member: string; source: string; severity: string } | null
   fridge: { count: number; names: string } | null
+  /** 首屏读取失败的原因（useFirstScreen().readError）。
+   *  只用来把"没读到"与"本来就没有"分开说，绝不参与画数据本身。
+   *  2026-10-12 加：原来失败时这几块直接不渲染——用户看到的是一片空白，
+   *  分不清是后端在重启（已在自动重读，读到就会自己出现）还是这周真没记录。 */
+  readErr?: string | null
   /** 同一份数据的两处用法（2026-10-05 加）：
    *  'ask'（默认）= 首屏，语气是"我按谁的档案来定"；
    *  'candidate' = 候选选择页，那三块的作用变成"凭什么给你这三个方案"，
@@ -40,13 +46,24 @@ export function AskRail({
    *  默认 'ask' 保证首屏逐字不变；候选页不传 cand（待确认块是首屏专属）。 */
   variant?: 'ask' | 'candidate'
 }) {
-  if (!cand && !fam && !week && !fridge) return null
+  // 四块全空**且没有失败原因**才整栏不渲染（空框仍然不留；
+  // 但"读失败了"是一个要说的状态，不是空）。
+  if (!cand && !fam && !week && !fridge && !readErr) return null
   return (
     <aside className="ask-side">
       {cand && <CandidateBlock cand={cand} />}
       {fam && <FamilyBlock fam={fam} variant={variant} />}
       {week && <WeekBlock week={week} variant={variant} />}
       {fridge && <FridgeBlock fridge={fridge} variant={variant} />}
+      {/* 读失败那一块放最后：它不是内容，是"上面缺了哪一块、为什么"的交代。
+          文案里的"正在自动重读"与 useFirstScreen 的退避循环是同一件事，不夸大。 */}
+      {readErr && (
+        <section className="fs-block" data-block="readerr">
+          <h3 className="fs-title">有数据没读出来</h3>
+          <p className="fs-note">{readErr}</p>
+          <p className="fs-note">已按退避自动重读，读到就会显示在这里。</p>
+        </section>
+      )}
     </aside>
   )
 }
@@ -92,7 +109,9 @@ function FamilyBlock({ fam, variant = 'ask' }: { fam: { members: FamilyMemberRow
           </div>
         ))}
         {fam.shared.length > 0 && (
-          <div className="fs-mrow">
+          /* is-shared：头像圆换警示圈图标（tokens 的 --av-alert），
+             DOM 结构与成员行同构——dl>div 只许 dt/dd，图标走 CSS ::before。 */
+          <div className="fs-mrow is-shared">
             <dt className="fs-mname">共同忌口</dt>
             <dd className="fs-mnum">{fam.shared.join('、')}</dd>
           </div>

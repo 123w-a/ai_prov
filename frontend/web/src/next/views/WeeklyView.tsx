@@ -1,49 +1,61 @@
-import { rangeLabel, trendLabel, useWeeklyReport } from '../data/firstScreen.ts'
-
 /**
- * 周报房间（2026-09-29 户型图第 3 步 · 落地顺序第 3 间）。
+ * 周报页（C 设计稿结构，2026-10-15 按稿重排）。
  *
- * 与右栏 WeekBlock **同源不同版**：同一份 /api/reports/weekly，右栏是 278px 摘要，
- * 这里是整页。房间页多放两样右栏放不下的——后端给的可执行建议、反馈计数。
+ * 版面骨架照 `design-C-weekly-overview.png`：
  *
- * 三条验收判据（户型图第四节）逐条对应：
- *   1 真实数据可展示 → 灯 / 常做的菜 / 趋势 / 护栏 / 建议 / 反馈，全部来自后端；
- *   2 不足数据有明确空态 → has_data=false 显示后端 message，趋势照实写
- *     「数据不足」，**不画趋势线**（画了就是替后端编结论）；
- *   3 能从某顿回到今晚 → 后端 top_dishes 只给 [菜名, 次数]，**不给逐餐记录**
- *     （/api/reports/weekly 无 meals 列表字段，前端不越界造接口），所以这一步
- *     落在「点常做的菜 → 回今晚并接上话头」。要做成真·逐餐，得后端加接口。
+ *   header          标题 + 日期范围 + 一句口径
+ *   信息条          多位成员一起吃的餐按共同要求判定
+ *   区「家庭整体（本周）」
+ *     编号卡片 1 本周餐次 / 2 营养达标情况 / 5 趋势
+ *              3 常做的菜 Top 5 / 4 护栏提示 / 6 可执行建议
+ *   区「家庭成员（本周）」  ← 成员卡（可点进详情抽屉）
+ *   页脚            达标依据说明
  *
- * 点菜走自定义事件而不是 props 回调：今晚房在 Shell 里是**常驻挂载**（只藏不卸，
- * 保住跑一半的那一轮），所以它的监听一直活着；回调则要 Shell 把 handler 穿两层。
+ * 重排前是「hero 营养灯 + 两列独立流」，那是"方向稿"读法下我自己排的版；
+ * 用户对照设计稿后指出不一致，这次按稿做。原有内容一块没丢：
+ *   · 逐营养素灯 → 卡 2 的点阵（改成一餐一点，见 WeekStatCards 的说明）；
+ *   · 常做的菜 / 逐餐明细 → 卡 3，交互与展开态一并搬进 WeekDishCard；
+ *   · 护栏 + 反馈 → 卡 4；建议 → 卡 6；
+ *   · 逐营养素趋势线（SparkLine）→ **退场**：C 稿的趋势是"达标率随周变化"，
+ *     而卡 4 已经逐项说了哪个营养素没到绿灯，两张图放一起是同一件事说两遍。
+ *     SparkLine 本身留着，成员详情抽屉还在用它。
+ *
+ * 成员区与家庭区**同级**：家庭不是"默认视图"、成员也不是它的下钻。
  */
+import { useCallback, useState } from 'react'
+import { rangeLabel, useMemberWeekly, useWeeklyReport } from '../data/firstScreen.ts'
+import { MemberWeekCards } from '../blocks/MemberWeekCards.tsx'
+import { MemberWeekDrawer } from '../blocks/MemberWeekDrawer.tsx'
+import { WeekMealCount, WeekLights } from '../blocks/WeekStatCards.tsx'
+import { WeekRateCard } from '../blocks/WeekRateCard.tsx'
+import { WeekDishCard } from '../blocks/WeekDishCard.tsx'
+import { WeekGuardCard, WeekAdviceCard } from '../blocks/WeekTipCards.tsx'
+
 export default function WeeklyView() {
   const { view, loading, error } = useWeeklyReport()
+  const [openMember, setOpenMember] = useState<string | null>(null)
+  const member = useMemberWeekly(openMember)
+  const closeMember = useCallback(() => setOpenMember(null), [])
 
   if (loading) {
     return (
       <section className="wk" data-room="weekly">
-        <p className="wk-loading">正在读取本周…</p>
+        <p className="wk-loading">正在汇总这一周…</p>
       </section>
     )
   }
 
-  if (error) {
-    // 失败要说话：退回 null 装作「这周没数据」，会把故障写成用户没吃饭。
+  if (error || !view) {
     return (
       <section className="wk" data-room="weekly">
-        <h2 className="wk-h">周报</h2>
-        <p className="wk-err">本周报告读取失败：{error}</p>
+        <p className="wk-empty">读不到这一周的数据：{error || '未知原因'}</p>
       </section>
     )
   }
-
-  if (!view) return null
 
   if (view.isEmpty) {
     return (
       <section className="wk" data-room="weekly">
-        <h2 className="wk-h">周报</h2>
         <p className="wk-empty">{view.message}</p>
       </section>
     )
@@ -54,99 +66,92 @@ export default function WeeklyView() {
     window.location.hash = 'room=tonight'
   }
 
-  const fbTags = view.feedback ? Object.entries(view.feedback.tags) : []
-
   return (
     <section className="wk" data-room="weekly">
-      <h2 className="wk-h">周报</h2>
-      <p className="wk-sub">
-        {rangeLabel(view.range) ?? '本周'} · {view.meals} 餐
+      <header className="wk-head">
+        <span className="wk-head-seal" aria-hidden="true" />
+        <div className="wk-head-txt">
+          <h2 className="wk-h">周报</h2>
+          <p className="wk-sub">{rangeLabel(view.range) ?? '本周'}</p>
+          <p className="wk-sub2">本周数据基于家庭成员的共同饮食记录</p>
+        </div>
+        {/* 右上信息条（C 设计稿）：把"多人同桌怎么判达标"这条口径摆在最上面。
+            它是我之前一直列在待办里没做的那块，也是多人共餐落地后最容易
+            被误读的一件事——数字看着比独食低，不是吃得差，是判得严。 */}
+        <aside className="wk-note-top">
+          <span className="wk-note-top-ic" aria-hidden="true">
+            ⓘ
+          </span>
+          <span>
+            多位成员一起吃的餐，
+            <br />
+            其达标按这几位共同要求判定
+          </span>
+        </aside>
+      </header>
+
+      <div className="wk-zone">
+        <h3 className="wk-zone-t">家庭整体（本周）</h3>
+        {/* 三列各自独立堆叠（不是网格的两行）：
+              列 1  卡 1 本周餐次   → 卡 4 护栏提示
+              列 2  卡 2 营养达标   → 卡 3 常做的菜
+              列 3  卡 5 趋势       → 卡 6 可执行建议
+            为什么不是"1 2 5 一行 / 3 4 6 一行"：那会让第一行强行对齐，
+            卡 1(151px) 与卡 2(169px) 到卡 5(321px) 之间必然裂出 184px / 166px
+            两个大空洞，而卡 3 被压在最窄列里、菜名只剩 59px。C 设计稿本来就是
+            三列独立流，卡 3 接着卡 1 往下长。
+            编号仍按稿子（1,2,5 / 3,4,6 的乱序也是稿子原样）——编号是内容标签，
+            不是位置序号；位置服从内容体量：卡 3 要放长菜名所以进中列，
+            卡 4 内容短所以进窄列。 */}
+        <div className="wk-cols">
+          <div className="wk-col">
+            <WeekMealCount meals={view.meals} memberCount={view.members.length} prev={view.prev} />
+            <WeekGuardCard guardrail={view.guardrail} lights={view.lights} feedback={view.feedback} />
+          </div>
+          <div className="wk-col">
+            <WeekLights mealsDetail={view.mealsDetail} />
+            <WeekDishCard
+              dishes={view.dishes}
+              dishImages={view.dishImages}
+              mealsDetail={view.mealsDetail}
+              onPick={pick}
+            />
+          </div>
+          <div className="wk-col">
+            <WeekRateCard rate={view.rate} series={view.rateSeries} prev={view.prev} />
+            <WeekAdviceCard recommendations={view.recommendations} />
+          </div>
+        </div>
+      </div>
+
+      {view.members.length > 0 ? (
+        <div className="wk-zone is-crew">
+          {/* 区标题与上面「家庭整体（本周）」同级同款——两个平级对象的标题
+              长得不一样的话，读起来会以为成员区是家庭区的附属。
+              「点一位看详情」放这里，不放卡内：它说的是这一整区怎么用。 */}
+          <h3 className="wk-zone-t">
+            家庭成员（本周）
+            <em className="wk-zone-note">· 点一位看这一周的详情</em>
+          </h3>
+          <MemberWeekCards members={view.members} onOpen={setOpenMember} />
+        </div>
+      ) : null}
+
+      <p className="wk-foot-note">
+        提示：达标依据每位成员的个性化营养目标；多位成员一起吃的餐，按共同要求判定达标。
       </p>
 
-      {view.lights.length > 0 && (
-        <div className="wk-sec is-hero">
-          <p className="wk-k">营养灯</p>
-          <ul className="wk-lights">
-            {view.lights.map((l) => (
-              <li
-                key={l.nutrient}
-                className="wk-light"
-                data-level={l.red > 0 ? 'red' : l.yellow > 0 ? 'yellow' : 'green'}
-              >
-                {/* 9px 实心点：只做状态点，语义色不上卡片底/按钮底（lave 硬边界）。 */}
-                <span className="wk-dot" aria-hidden="true" />
-                <span className="wk-lname">{l.nutrient}</span>
-                <span className="wk-lstat">
-                  {l.green > 0 && <>绿 {l.green}</>}
-                  {l.yellow > 0 && <> · 黄 {l.yellow}</>}
-                  {l.red > 0 && <> · 红 {l.red}</>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {view.dishes.length > 0 && (
-        <div className="wk-sec">
-          <p className="wk-k">常做的菜 · 点一道回今晚</p>
-          <ul className="wk-dishes">
-            {view.dishes.map(([name, n]) => (
-              <li key={name}>
-                <button className="wk-dish" type="button" onClick={() => pick(name)}>
-                  <span className="wk-dish-name">{name}</span>
-                  <b className="wk-dish-n">{n}</b>
-                  <span className="wk-dish-go">再做一顿 →</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {view.trends.length > 0 && (
-        <div className="wk-sec">
-          <p className="wk-k">趋势</p>
-          <p className="wk-note">
-            {view.trends.map((t) => `${t.label} ${trendLabel(t.state)}`).join('、')}
-            ——数据不足以判断时不画趋势线，画出来的线是编的。
-          </p>
-        </div>
-      )}
-
-      {view.recommendations.length > 0 && (
-        <div className="wk-sec">
-          <p className="wk-k">建议</p>
-          <ul className="wk-list">
-            {view.recommendations.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="wk-sec">
-        <p className="wk-k">护栏</p>
-        <p className="wk-note">
-          {view.guardrail > 0 ? `本周触发 ${view.guardrail} 次` : '本周没有触发'}
-        </p>
-      </div>
-
-      <div className="wk-sec">
-        <p className="wk-k">反馈{view.feedback ? ` · 收到 ${view.feedback.count} 条` : ''}</p>
-        {fbTags.length > 0 ? (
-          <ul className="wk-tags">
-            {fbTags.map(([tag, n]) => (
-              <li key={tag}>
-                {tag}
-                <b>{n}</b>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="wk-note">还没有收到反馈</p>
-        )}
-      </div>
+      {openMember ? (
+        <MemberWeekDrawer
+          name={openMember}
+          view={member.view}
+          loading={member.loading}
+          error={member.error}
+          onClose={closeMember}
+        />
+      ) : null}
     </section>
   )
 }
+
+

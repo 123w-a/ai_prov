@@ -29,7 +29,14 @@
   --line: #e8d8c4; /* 第七轮随卡片暖调同步（预期图卡片内发丝线未单独取样，取"比卡片边线浅一档"） */
   --line-strong: #c7ac9c; /* 第七轮：预期图导航底线实测值（原 #d4c9b8 的 R−B 是 28，现 43） */
 
-  --accent: #a96f4e;
+  /* ── 2026-10-10 第六轮（画风对齐）：主强调色按稿**像素实测**重定 ──────
+   * 触发是用户「画风也不一致，似乎不是一个层面的前端视觉」。
+   * 证据（.tmp-p2a/measure-fills.ps1，只取实心块内部的众数）：
+   *   「开始 →」按钮实底  稿 rgb(185,105,57)  |  实测 rgb(169,111,78)  ← 原 --accent
+   *   标题强调字          稿 rgb(181,98,53)   |  实测 rgb(169,111,78)
+   * 即稿的强调色**更红更饱和**（R+16 / G−6 / B−21），原值是偏灰的"陶土泥"。
+   * 对照度无回退：白纸底上 3.67:1（原 3.72:1），大字号标题按 3:1 判仍过。 */
+  --accent: #b9693a;
   --accent-ink: #7d4e33;
   --accent-soft: #f4ece5;
   --accent-line: #ddc7b6;
@@ -132,7 +139,10 @@
    * 命名沿用现状：首屏四块 .fs-* 用它，结果页/等待页是否沿用**属后续单元**
    * （它们有自己的基线与回退风险，不在本轮一起动）。 */
   --fs-h2: 19px;
-  --fs-count: 22px;
+  /* 2026-10-10 画风对齐：稿的「9 餐」计数实测约 38px（原 22px）。大数字是稿
+   * "有分量"的一部分——它把"本周做了多少"顶成视觉焦点，而不是与小字并排的注脚。
+   * 此 token 目前仅 firstscreen.css 的 .fs-count 一处使用（已核对）。 */
+  --fs-count: 38px;
   --fs-data: 13.5px;
   --fs-note: 12px;
   --fs-body: 15px;
@@ -209,21 +219,56 @@
    * 即上一轮"背景没有任何提升"的量化根因：**暖度不足，读作灰白**。
    * 下面三值直接取预期图顶部中心 / 中段 / 底部边缘的实测均值，
    * 明暗跨度与原值相近，变的只是色相（减蓝、加红）。 */
+  /* ── 2026-10-08 第三轮：背景"看得见"的第二修（用户："根本没有页面背景"）──
+   * 上一轮（2026-10-04）只动了**色相**（减蓝加红），强度一个没动：网格线仍
+   * 3.5% 不透明、wash 顶部仍 92% 不透明——网格在首屏被 wash 整片盖住，
+   * 用户于是第二次得出"没有背景"。这一轮改**强度**：
+   *   ① 网格线 3.5% → 8.5%：图纸格读得出来，仍不抢正文
+   *   ② 网格 56 → 64px：线加强后必须更疏，否则变密格纸
+   *   ③ wash 顶部 92% → 58%：网格从首屏第一眼就在，页头不再被糊平
+   *   ④ 底再沉两档 #eee0ce → #ead6be：与卡片面 #fbf6f0 的明度差从 4% 拉到 10%，
+   *      "纸浮在台上"的层次才真的成立
+   * 四条全作用在 body 上，五个房间一起变——用户说的"整体页面问题"，
+   * 所以本轮不再只补结果页。 */
   --bg-hi: #fcf5e9;
-  --bg-lo: #f6ecdd;
-  --bg-deep: #eee0ce;
-  --grid-line: rgba(61, 42, 24, 0.035);
-  --grid-size: 56px;
+  /* 2026-10-10：--bg-lo 是 **.tn 纸带的底色**（atmosphere.css L180），它决定
+   * 主区与页头那一片的呈现色。原来 #f6ecdd 实测 rgb(246,236,221)，比稿的
+   * 页头带 rgb(248,243,236) 黄 15 级、深 12 级——所以"页头偏黄"的真凶不是
+   * wash 而是这一层。改取稿的实测值：稿里纸带与地板**同色**（都是 248,242,234），
+   * 层次由卡片承担，不由底色分档。 */
+  --bg-lo: #f8f2ea;
+  /* ── 2026-10-10 第四轮：按 design/ask-expect.png（今晚这一顿）**像素实测**重定 ──
+   * 触发是用户「整体色调要等于今晚这一顿设计图的颜色」。在真实页面上采了稿的
+   * 同批基准点（canvas 3×3 均值，脚本 .tmp-p2a/sample-design.cjs）：
+   *
+   *   采样点      设计稿             改前真实页面
+   *   页纸底    #F8F2EA(248,242,234)  #EAD6BE(234,214,190)   ← 深 20 级、黄 44 级
+   *   左轨底    #F4EBE0(244,235,224)  （透明，露 body 底）
+   *   右栏卡    #F9F3EB(249,243,235)  --surface #FBF6F0 ✓ 已接近
+   *   页头带    #F8F3EC(248,243,236)  ≈页纸底（稿无光带）
+   *
+   * 上一轮（10-08）把底沉到 #EAD6BE 是为了回应用户当时"根本没有页面背景"，
+   * 靠的是**深底 + 11% 网格**；稿的做法不是深底，而是**浅米纸 + 叶饰**。
+   * 两条用户指令方向不同，本轮的折中：底色照稿调浅（色调对齐），网格降到 4%
+   * （保留用户否决过的"纯平色"所缺的背景秩序，远看已接近稿的均匀纸面）。
+   * 叶饰密度另按稿加强（firstscreen.css 的 .starter::after / .ask-main::before）。 */
+  --bg-deep: #f6eee4;
+  --grid-line: rgba(61, 42, 24, 0.04);
+  --grid-size: 64px;
   --grid:
     repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size)),
     repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px var(--grid-size));
-  /* 中段改用 --bg-lo：原来四档全是 --bg-hi 的不同透明度，于是"中段"只是
-     顶部色被摊薄，三段之间没有可辨色差；接上 --bg-lo 后渐变才有中间色。 */
-  --room-wash: radial-gradient(1600px 820px at 50% -10%,
-    color-mix(in srgb, var(--bg-hi) 92%, transparent) 0%,
-    color-mix(in srgb, var(--bg-lo) 62%, transparent) 34%,
-    color-mix(in srgb, var(--bg-hi) 14%, transparent) 68%,
-    color-mix(in srgb, var(--bg-hi) 0%, transparent) 100%);
+  /* ── 2026-10-08（第三轮第二修）：**径向光撤掉，换线性** ─────────────
+   * 径向的圆心原本压在内容列正上方（at 50% -10%），被内容遮住后它只剩
+   * **外围**露出来——实测截图里左栏与页面两侧出现一圈橙黄晕，
+   * 读起来像污渍而不是光，而内容区的网格仍被它盖住。
+   * 两轮都栽在同一处，所以这次不再调它的不透明度，改结构：
+   * 光只留顶部一道线性渐隐（页头保持干净），网格与沉底**全页均匀**。
+   * 页面层次改由"台面 / 纸带 / 卡片"三层明度差承担
+   * （纸带见 atmosphere.css 里的 .tn）。 */
+  --room-wash: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-hi) 18%, transparent) 0,
+    color-mix(in srgb, var(--bg-hi) 0%, transparent) 420px);
 
   /* ── 版心尺度（2026-10-04 预期图对齐）────────────────────────────────
    * 这两个变量**一直只有 fallback、从没被定义过**（base.css L50/L864、
@@ -240,8 +285,82 @@
    * 正文与右栏之间形成约 194px 中缝、"中缝比两侧留白更难受"。
    * 预期图要的是 92.8%（比 1440 档还宽）。这是他的旧裁决与预期图标准的冲突，
    * 只有他能裁——他若否决，删掉下面两行即回到 1010（全仓唯一改动点）。 */
-  --content: 1268px;
-  --rail: 208px;
+  /* 2026-10-09 用户裁决「改吧」：上面那条工单结案——按预期图标准放宽。
+   * 取 1300 而不是 1268：视口 1351 下两侧各留约 25px 边距，再宽就贴边。
+   * 1300 − 192(导航) − 40(gap) − 56(.tn 内边距) = **1012px 内容区**（原 964，+48）。 */
+  --content: 1345px;
+  /* ⚠️ --content 在 1366 档**不再等于纸面板宽度**（那是 1111.1）。这是本轮
+   * 照稿后必然的分层，写清楚免得下一个人误读：
+   *   · 版心外层（.shell-body / .sheet-foot）= 1345 = 视口 1366 − 右侧页边 21，
+   *     它从 x=0 起（稿上导航区就贴着左缘），所以 1366 档 `margin: 0 auto` 不生效；
+   *   · 纸面板（.shell-room > section / .tn）左缘 233.9、宽 1111.1（另一条变量）；
+   *   · 两者之差 233.9 正是左导航轨道宽。
+   * `--content-pad` 36.5 见下。
+   *
+   * ── 2026-10-11 第七轮：版心骨架**照设计稿改尺寸**（用户裁决）────────────
+   * 依据：fav-expect-v4.png 1536×1024 原始像素实测，S = 1366/1536 = 0.8893229…
+   *   · 纸面板内缘左缘 稿 x262        → 233.9 CSS
+   *   · 卡片列左缘     稿 x304        → 270.4 CSS（= 内缘左缘 + 36.5 内部左内距）
+   *   · 页面标题墨迹左缘 稿 x322       → 286.3 CSS（标题再内缩 16）
+   *   · 右栏           稿 x1202..1512 → 1069..1345（宽 276）
+   *   · 右侧页边       21 CSS
+   * 于是版心总宽 = 1345、纸面板 = 1111.1、右缘 = 1345、右页边 = 21，
+   * 四个数由"右栏左缘 1069"与"卡片列左缘 270.4"联立唯一确定。 */
+  /* 左侧常驻竖导航的**栅格轨道宽**。192 → 233.9：稿里纸面板左缘就在 233.9，
+   * 而导航与纸面板之间没有间隙（gap: 0）——它比 192 宽出的 41.9 不是空白，
+   * 而是稿上导航区本身就有那么宽（最长的成员行要放得下）。 */
+  --nav-w: 233.9px;
+  /* 纸面板内缘宽（= 版心 − 导航轨道）。1366 档 = 1345 − 233.9。 */
+  --paper-w: 1111.1px;
+  /* 纸面板内部左内距（稿 233.9 → 卡片列 270.4）。四房统一由
+   * sheet.css 的 .shell-room > section 使用，四房样式里的私有 padding 归零。 */
+  --content-pad: 36.5px;
+  /* ⚠️ 这里记一笔撞名事故（2026-10-08）：--rail 是**左导航栏**宽度，不是结果页右栏。
+   * 结果页右栏一直写 `var(--rail, 278px)`，以为自己的 fallback 278 在生效；
+   * 本变量一被定义成 208，右栏实际就变成 208px——文案折行到"可按共同做法正常食/用"。
+   * 结果页现已改为在 .result-body 里直接写字面值。留着这条注释，免得下一个人再踩。
+   * 2026-10-09：值 208 → 192，把省下的 16px 让给内容区。192 仍够放最长项
+   * （图标 16 + 间距 10 + 四字标题 64 + 内边距 26 = 116）。 */
+  --rail: 192px;
+  /* 三视图（首屏 / 等待 / 结果）的**右侧**栏宽。它与 --rail（左导航）是两件
+   * 完全不同的东西，却一直被写成同一个变量：首屏右栏写 `var(--rail, 278px)`，
+   * 拿到的其实是左导航的宽度。2026-10-09 把 --rail 从 208 收到 192 时，
+   * 首屏右栏跟着变 192，19px 的「按谁的档案来定」当场折行，这个撞名才暴露。
+   * 现在给它自己的名字。值取 240：base.css 记着用户 10-04 的骨架裁决里
+   * 右栏占版心 19%（1300 × 19% ≈ 247），240 贴着这个比例、又不挤压主卡；
+   * 被它替掉的原值 208 在 19px 标题上只有 16px 余量，收到 192 就折行了。 */
+  /* 240 → 276（2026-10-11 第七轮照稿）：稿里右栏 x1202..1512 = 276 CSS 宽。
+   * 首屏 .ask-side 与结果页右栏都读这个值，四房与首屏因此同一档宽度。 */
+  --side: 276px;
+
+  /* ── 2026-10-08 第三轮：功能色（用户："颜色基本统一，没有不同功能颜色的对比性"）
+   *
+   * 实测证据：改前全页出现最多的色值是 #3d2a18×159、#8e8271×82、#63523c×82
+   * ——前三名全是**同一个墨色阶**，非墨色只有 accent 系共 23 次。
+   * 也就是说整站只有"墨 + 陶土"两种颜色，营养、成员、依据、账目全无区分。
+   *
+   * 这批令牌给**四类信息**各自一个低饱和记号色，色相都压在暖底能容的区间内
+   * （不用纯蓝/纯紫，那会和暖纸底打架、显廉价）：
+   *   营养/数据 → 青碧（承接既有的"绿=营养"语义，见上面 --ok-mark）
+   *   成员/家人 → 靛紫（全站唯一冷色相，专门标记"人"，最容易分辨）
+   *   依据/来源 → 蓝灰（沿用 --pending 的色相，账目类信息同族）
+   *   账目/时间 → 暖灰
+   * 安全仍用既有的 --red/--yellow/--green，不另起炉灶。
+   * 每个色都配 -soft（淡底）与 -line（发丝边），规矩同 --warn-soft/--bad-soft。
+   *
+   * 用法红线（写在 styles/atmosphere.css 顶部）：色只落在**标记物**上——
+   * 标题图标、左色标、徽章、数值、表头线。**不铺大面积色块**：
+   * 铺满就变成幼稚的色块页，那是用户明确否决过的方向。 */
+  --tone-nutri: #3f7a63;
+  --tone-nutri-soft: #e7f1ec;
+  --tone-nutri-line: #bcd6cb;
+  --tone-member: #6a5f96;
+  --tone-member-soft: #edeaf7;
+  --tone-member-line: #cfc7e6;
+  --tone-source: #55607a;
+  --tone-source-soft: #eef0f4;
+  --tone-source-line: #ccd3e0;
+  --tone-time: #9a8b74;
 
   /* ── 形与光 ── */
   --radius-card: 0px; /* 第七轮：预期图卡片是硬直角——逐行扫 y=166..178 的左边界，x 恒为 318-321，没有圆角过渡 */
@@ -250,6 +369,82 @@
    * 允许强调色参与光效的第一个位置（仍不铺大面积色块）。 */
   --shadow-go: 0 6px 18px color-mix(in srgb, var(--accent) 26%, transparent);
   --shadow-go-hi: 0 10px 26px color-mix(in srgb, var(--accent) 34%, transparent);
+
+  /* ── 2026-10-10 「总统房」装饰层（首屏方向稿 ask-expect.png 用户全盘认可）──
+   * 用户第 5 条：「整体色调调成今晚这一顿设计图那样的颜色，包括底下的
+   * 树叶之类的背景图案」。像素实测（.tmp-p2a/sample-color.cjs）：页顶中
+   * #F8F2EA、页右下 #F5EDE3、叶纹区 #E4CEB6、左轨选中 #ECDFC7、输入面板
+   * 框底 #E9D9C4。底色实测与现有 --bg（#f8f4f0）差 ≤6 阶 ⇒ 不动底色
+   * （改它波及九页计算值验证，收益是一档肉眼不可分的差）；真缺口是装饰层，
+   * 落在下面的新令牌上。 */
+  --leaf: #e4ceb6;
+  /* ── 2026-10-10 第四轮**画风对齐**（用户：「画风也不一致，似乎不是一个层面的
+   * 前端视觉」）：稿的图形语言是「**浅陶实底填充 + 深棕描边**」，而本实现原来
+   * 全是单色细线描（--accent 1.7px 描边、叶 #dfc9b1 2px 描边）——线描的视觉
+   * 重量远低于实底，读起来"薄、飘"，这就是"不是一个层面"的量化来源。
+   * 像素证据（.tmp-p2a/pick-fills.cjs，只统计非底色像素的众数）：
+   *   品牌碗身填充 rgb(208,160,120)  叶填充 rgb(176,144,104)
+   *   图标深棕线 rgb(88,56,32)       导航选中块底 rgb(232,216,200)
+   *   成员头像圆底 rgb(224,208,184)  输入面板底 rgb(240,232,216)
+   * 下列令牌即按这组实测值落位；语义色（红黄绿）依旧只做状态，不参与装饰。 */
+  --figure-fill: #d0a078;
+  --figure-line: #8a5a34;
+  --leaf-fill: #b09068;
+  --leaf-fill-soft: #c9a87c;
+  --leaf-stem: #a8894f;
+  --leaf-vein: #8a6a44;
+  --clay-panel: #f0e8d8;
+  --clay-avatar: #e0d0b8;
+  /* 导航选中块底。2026-10-11 按收藏稿重测修正：#e8d8c8 → #f0dfcc（原值偏深）。
+   * 实测（.tmp-nav/probe.cjs pick/areamode，避开图标与文字的块内取色，逐点）：
+   *   fav-expect-v4.png   (240,222,201) (240,223,205) (241,223,206) (240,223,204) …
+   *   profile-expect-v5   (238,221,201) (239,220,200) (239,223,205)
+   *   service-expect-v5   (236,221,205) (234,215,195)
+   *   ask-expect.png      (237,220,202) (237,221,203)   ← 本注释上方那组实测的同一张稿
+   * 四张稿聚在 (236..241, 215..223, 195..206)，原值 (232,216,200) 落在簇外偏深一侧；
+   * 稿纸底 (246,236,223) 与页面纸底 (245,236,227) 几乎相同，所以这不是全局色偏，
+   * 是这一块自己深了：块相对纸的色差 稿 23.6 / 页面 36.1（约 1.53 倍）。
+   * Lab ΔE = 2.93（原值 → 稿值），是"并排看得出、单独看基本看不出"的一档。 */
+  --sel-block: #f0dfcc;
+
+  --rail-active: #e8d8c8;
+  --entry-panel: #f0e8d8;
+
+  /* 左轨底部藤蔓（rail.css 左轨容器 ::after 的背景图）：枝根在左下、叶朝
+   * 右上伸展，七片长卵叶大小角度错落。线色取叶纹实测 #E4CEB6 压深半阶的
+   * #DFC9B1——在轨底 #F4EBE0 上恰好是"看得见但不抢"的暗花档。
+   * 每片叶 = 对称双贝塞尔闭合 + 中脉子路径；只作纸面暗花。 */
+  --leaf-vine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 190 250'%3E%3Cpath d='M10 242Q62 140 176 34' fill='none' stroke='%23a8894f' stroke-width='2.2' stroke-linecap='round'/%3E%3Cg transform='translate(25.8 213.4) rotate(-109.4)'%3E%3Cpath d='M0 0C9.7 -15.9 25.5 -13.6 34.5 0C25.5 13.6 9.7 15.9 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L30.3 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(43.1 185.9) rotate(0.8)'%3E%3Cpath d='M0 0C9.3 -15.2 24.5 -13.1 33 0C24.5 13.1 9.3 15.2 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L29.1 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(62.5 158.4) rotate(-117.3)'%3E%3Cpath d='M0 0C8.9 -14.5 23.4 -12.5 31.6 0C23.4 12.5 8.9 14.5 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L27.8 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(84.2 130.7) rotate(-0.6)'%3E%3Cpath d='M0 0C8.4 -13.9 22.3 -11.9 30.2 0C22.3 11.9 8.4 13.9 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L26.5 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(108.1 102.8) rotate(-105.2)'%3E%3Cpath d='M0 0C8 -13.2 21.3 -11.4 28.7 0C21.3 11.4 8 13.2 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L25.3 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(134.2 74.8) rotate(18.1)'%3E%3Cpath d='M0 0C7.6 -12.6 20.2 -10.8 27.3 0C20.2 10.8 7.6 12.6 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L24 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(162.5 46.7) rotate(-93.8)'%3E%3Cpath d='M0 0C7.2 -11.9 19.1 -10.2 25.8 0C19.1 10.2 7.2 11.9 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L22.7 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3C/svg%3E");
+
+  /* 小花叶章（四瓣放射 + 中心点）：页头横线中点/卡片角的章位备用——
+   * 首屏页头横线与卡片角章随批次 B/C 挂载，令牌先落。
+   * 2026-10-10 第六轮修两处（画风对齐取证时发现）：
+   *   ① 花心的 fill 写成 `%25238a6a44`——多了一层转义，落进 SVG 是 `%238a6a44`
+   *      这个**非法颜色**，浏览器整条 fill 作废、花心退回花瓣同色 ⇒ 四瓣章在
+   *      15/18px 下糊成一枚"＋"。改成 `%23` 前缀后花心才真的是深棕。
+   *   ② 花瓣填充从 #c9a87c 压到**稿实测的叶填充** #b09068、描边 0.7 → 0.9：
+   *      章在这一档尺寸下的识别度靠"填充够沉"，淡一档就只剩一根十字线。 */
+  --leaf-seal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='%23b09068' stroke='%238a6a44' stroke-width='0.9'%3E%3Cpath d='M12 10.6C14.6 8.4 15.2 5.2 12 1.6 8.8 5.2 9.4 8.4 12 10.6Z'/%3E%3Cpath d='M13.4 12c2.2 2.6 5.4 3.2 9 0-3.6-3.2-6.8-2.6-9 0Z'/%3E%3Cpath d='M12 13.4c-2.6 2.2-3.2 5.4 0 9 3.2-3.6 2.6-6.8 0-9Z'/%3E%3Cpath d='M10.6 12c-2.2-2.6-5.4-3.2-9 0 3.6 3.2 6.8 2.6 9 0Z'/%3E%3C/g%3E%3Ccircle cx='12' cy='12' r='1.8' fill='%238a6a44'/%3E%3C/svg%3E");
+
+  /* 输入面板右上角的叶枝（批次 B·设计稿 ask-expect.png 面板右上那枝）：
+   * 枝根在右上角、向左下伸展，五片长卵叶。--leaf-vine 是左下生的纵向藤蔓，
+   * 两者方向不同，不能旋转复用（旋转 180 会让枝根跑到右下）。面板
+   * overflow:hidden 裁切，只露伸入的那部分。 */
+  --leaf-sprig: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 140'%3E%3Cpath d='M172 12Q98 44 18 128' fill='none' stroke='%23a8894f' stroke-width='2.2' stroke-linecap='round'/%3E%3Cg transform='translate(151.2 22) rotate(102.3)'%3E%3Cpath d='M0 0C9.7 -15.9 25.5 -13.6 34.5 0C25.5 13.6 9.7 15.9 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L30.3 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(127.1 35.9) rotate(204.9)'%3E%3Cpath d='M0 0C9.2 -15.1 24.2 -13 32.8 0C24.2 13 9.2 15.1 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L28.8 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(102.7 52.4) rotate(79.9)'%3E%3Cpath d='M0 0C8.7 -14.3 23 -12.3 31 0C23 12.3 8.7 14.3 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L27.3 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(77.9 71.7) rotate(190.4)'%3E%3Cpath d='M0 0C8.2 -13.5 21.7 -11.6 29.3 0C21.7 11.6 8.2 13.5 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L25.8 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(52.9 93.6) rotate(80.3)'%3E%3Cpath d='M0 0C7.7 -12.7 20.4 -10.9 27.6 0C20.4 10.9 7.7 12.7 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L24.3 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3Cg transform='translate(27.6 118.1) rotate(198.6)'%3E%3Cpath d='M0 0C7.2 -11.9 19.1 -10.2 25.8 0C19.1 10.2 7.2 11.9 0 0Z' fill='%23b09068' stroke='%238a6a44' stroke-width='0.7'/%3E%3Cpath d='M2 0L22.7 0' stroke='%238a6a44' stroke-width='0.6' fill='none'/%3E%3C/g%3E%3C/svg%3E");
+
+  /* 成员头像圆内的小图标（2026-10-10 今晚这一顿严格按稿）：
+   * 设计稿右栏成员行是「浅陶圆 + 人形剪影」——注意是**人形图标**不是人脸
+   * （红线：全站无肖像）；共同忌口行同尺寸圆里放警示圈。
+   * 路径照抄 ui/Icon.tsx 的 people / alert（同源才不会两处两形），
+   * 色值走 accent（2026-10-10 第六轮起 = #b9693a），色值字面量只许在本文件。 */
+  --av-people: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='12' fill='%23e0d0b8'/%3E%3Ccircle cx='12' cy='9.3' r='3.4' fill='%23fdf8f2'/%3E%3Cpath d='M5.4 20.6a6.6 6.6 0 0 1 13.2 0Z' fill='%23fdf8f2'/%3E%3C/svg%3E");
+  --av-alert: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9693a' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8.6'/%3E%3Cpath d='M12 7.4v5.4'/%3E%3Cpath d='M12 16.3h.01'/%3E%3C/svg%3E");
+
+  /* 品牌图形标（2026-10-10 设计稿重对版）：稿的品牌是**碗 + 碗口两片叶**的
+   * 图形，不是「膳」字方章——旧红章（--seal #9c2314 实底）在新稿里没有，
+   * 且红色实底块本身撞"语义色只做状态"的房规。单色 accent 线描：稿的叶子
+   * 是绿色，但 --green 是状态语义色、不许装饰用，故不追那个颜色。 */
+  --brand-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M6.5 21.5h35a17.5 17.5 0 0 1-35 0Z' fill='%23d0a078' stroke='%238a5a34' stroke-width='1.8' stroke-linejoin='round'/%3E%3Cpath d='M4.6 21.5h38.8' stroke='%238a5a34' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M18.5 42.4h11' stroke='%238a5a34' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M24 21.5V12.6' stroke='%238a5a34' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M24 12.6C19.6 12.6 16.2 9.6 15.6 5.4c4.4-.6 7.8 2.4 8.4 7.2Z' fill='%238a6a44' stroke='%236f5233' stroke-width='1'/%3E%3Cpath d='M24 12.6c4.4 0 7.8-3 8.4-7.2-4.4-.6-7.8 2.4-8.4 7.2Z' fill='%23b09068' stroke='%238a6a44' stroke-width='1'/%3E%3C/svg%3E");
 }
 
 

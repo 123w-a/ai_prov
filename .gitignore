@@ -207,3 +207,26 @@ storage/data/
 agent/data/
 domain/data/
 infrastructure/data/
+
+# --------------------------------------------------------------------------- #
+# 以下为「会拖垮协作者 clone」的体积与凭据隔离规则（2026-10-15 补）
+#
+# 起因：本机工作区里有两类内容从未被任何规则拦住，一旦 git add -A 就会进仓库：
+#   ① dsh-edge-cdp-verify/ —— 一整个 Edge 用户数据目录，内含 Login Data、
+#      Cookies、Vpn Tokens、History。这是**浏览器凭据**，不是项目文件。
+#   ② docs/ppt-preview/ —— 161.7 MB / 154 个文件（9 个各 10.6 MB 的 fix*.pdf
+#      加几百张逐版预览图）。docs/ppt-work/ 另有 11.2 MB 的 pptx 中间稿。
+#      GitHub 仓库被这两块撑到 170MB+ 后，协作者 clone 会极慢甚至超时，
+#      而它们全是可重建的中间产物（PPT 上早已有定稿的 md 与最终 pdf）。
+# --------------------------------------------------------------------------- #
+
+# 其它 DSH 会话的浏览器调试 profile（含登录凭据，绝不入库）
+dsh-edge-cdp-verify/
+
+# 根目录里的一次性临时脚本（不属于项目源码）
+tmp-hello.cjs
+
+# 参赛 PPT 的排版中间产物与逐版预览导出（体积巨大、可重建，不入库；
+# 定稿另有 docs/参赛-*.md 与 docs/参赛-佐证材料.pdf 入库）
+docs/ppt-preview/
+docs/ppt-work/

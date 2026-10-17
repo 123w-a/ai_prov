@@ -9,35 +9,49 @@
  * 加一个细点，不是一块色底。
  */
 .pf {
-  max-width: 1010px;
-  margin: 0 auto;
-  padding: 40px 24px 96px;
+  /* 骨架（max-width/margin/padding/纸带底色）2026-10-09 起由 sheet.css 四房
+     统一层接管：原硬编码 1010 + auto margin 在 flex 列父级里塌缩成 504px
+     窄条、左右各空 282px（探针实测）。 */
   display: flex;
   flex-direction: column;
   gap: var(--s2);
 }
 
-/* 门牌竖条：与 .wk-h / .fv-h / .sv-h 同族。 */
+/* ── 门牌左侧锚点（2026-10-11 第四轮：回滚第三轮的标题图标）──
+ *
+ * 本房标题 = **纯文字**：无竖条、无图标。
+ *   · 竖条是代码自造，第三轮已删、不回滚：稿上该位置逐列 dE>12 全 0（THR=2 只剩纸纹），
+ *     同一方法在收藏稿同位置能测到 645 px ⇒ 稿上确实没有竖条。
+ *   · 第三轮换上的标题图标也一并撤回：用户裁决书里的「稿上该处是漏画图标的图标位」被
+ *     实测推翻，用户据此撤回原裁决。定标尺（原始像素扫描线，不是阈值猜测）：
+ *       纸面板内缘竖线 稿 x262..263（两稿一致）
+ *       卡片列左缘      profile 稿 x304..305，service 稿 x305..306
+ *       标题墨迹左缘    profile 稿 x322，service 稿 x328~331（6× 目视复核首字笔画）
+ *     ⇒ 标题墨迹距**卡片列左缘**只有 18 稿px（16.0 CSS）/ 23 稿px（20.5 CSS），装不下
+ *       28.4 宽的图标 + 18.7 的间距；收藏稿的同一量是 54 稿px（48.0 CSS），正等于它
+ *       30.23+18.7 的槽位。原约束 47.1 只在「以纸面板内缘为基准」时才对得上
+ *       （59/65 稿px = 52.5/57.8 CSS）——是把基准串成了纸面板内缘。
+ *
+ * padding-left:18px（第三轮之前的原值）：它复现的是稿上标题墨迹相对内容区左缘的那
+ * 16~20.5 CSS 内缩（实测页面上落在 19.0 CSS，差值就是首字字形左边距）。
+ * 不调成 47.1，也不为凑数字调到 16 或 20.5——两稿本身不一致（16.0 / 20.5），差的正是
+ * 首字字形而不是规则。 */
 .pf-h {
   position: relative;
-  padding-left: 18px;
+  /* ── 2026-10-11 第七轮：标题左内缩 18 → 16（照稿标定）──────────────────
+   * 本轮起 `.pf` 自己不再给水平内距，标题的基准从"内容区左缘 + 18"改成
+   * "卡片列左缘 + 16"。稿实测（profile-expect-v5，y88..150 带列投影）：
+   *   纸面板内缘 x262 → CSS 233.0；卡片列左缘 x304..305 → 270.4；
+   *   标题墨迹左缘 x322..359 → CSS 286.4。286.4 − 270.4 = 16.0，
+   *   而 286.4 − 233.9（旧基准）= 52.5 —— 旧值 18 是把基准认成纸面板内缘。
+   * 本房标题左侧稿上无图形（无竖条、无图标），故只有这一个内缩量。 */
+  padding-left: 16px;
   font-family: var(--serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 400;
   color: var(--ink);
   margin: 0 0 6px;
   -webkit-text-stroke: var(--stroke-h2);
-}
-
-.pf-h::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.18em;
-  bottom: 0.14em;
-  width: 5px;
-  border-radius: 3px;
-  background: var(--accent);
 }
 
 .pf-sub {
@@ -86,10 +100,141 @@
 /* 一人一卡。用 --radius-card 且带回落：该令牌在第七轮被定为 0（预期图卡片是硬直角），
    但它挂在作用域里而非 :root，取不到时退回 0 而不是让整条声明作废。 */
 .pf-card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--surface-line);
   border-radius: var(--radius-card, 0px);
   padding: 20px 22px;
+}
+
+/* 叶子落在**每位成员自己那张卡**的右上角（2026-10-11 用户裁定：按成员归属落，
+   不再全页每张卡都撒）。用的就是「今晚这一顿」右栏卡片那同一枚切片、同一位置口径
+   （top 10.7 / right 3.6 / 42.7×39.1），三页共用一枚叶子、朝向一致。
+   pointer-events:none —— 卡片头右侧就是「设为当前／编辑／删除」三个按钮，
+   叶子绝不能吃掉点击；下面的 padding-right 是给叶子留出来的位置。 */
+.pf-card::after {
+  content: '';
+  position: absolute;
+  top: 10.7px;
+  right: 3.6px;
+  width: 42.7px;
+  height: 39.1px;
+  background: url('../assets/hero/card-leaf-2.png') no-repeat right top / 100% 100%;
+  pointer-events: none;
+}
+
+/* ── 版式骨架（2026-10-11 照 v5 设计稿重建）─────────────────────────
+   稿是两列：左主区（成员卡两列并排）+ 右侧信息栏，段落各带小标题与一道细横线。
+   注意叶子只挂在 .pf-card（成员卡）上，右栏用 .pf-rail-card，天然不吃那条 ::after ——
+   这正合用户 2026-10-11 的裁定：叶子按成员归属落，不是每张卡都撒。 */
+.pf {
+  display: grid;
+  /* ── 2026-10-11 第七轮：右栏轨道 300 → 276、列间距 22 → 8.1（照稿）────
+   * 与收藏房同一档右栏宽（稿 profile-expect-v5 右栏 x1202..1512 → 1069..1344.7）。
+   * 容器左缘 270.4、纸面板右内缘 1345：
+   *   270.4 + 左列 + 8.1 + 276 = 1345 ⇒ 左列 = 790.5，右栏左缘 1069 ✓
+   * 旧值 300 是本房 10-05 首次落地时按"版面观感"定的，不是稿测值。 */
+  grid-template-columns: minmax(0, 1fr) 276px;
+  align-items: start;
+  gap: 26px 8.1px;
+}
+
+.pf-main {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.pf-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pf-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.pf-sec-h::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* 成员卡两列并排（稿上两人各占一列）；窄了自动回落成一列。 */
+.pf-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--s2);
+}
+
+.pf-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.pf-rail-card {
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card, 0px);
+}
+
+.pf-rail-h {
+  margin: 0 0 10px;
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.pf-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pf-rail-mem {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pf-rail-name {
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+}
+
+.pf-rail-tag {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-soft);
+}
+
+.pf-rail-on {
+  margin-left: auto;
+  font-size: var(--fs-note, 12px);
+  color: var(--accent-ink);
+}
+
+.pf-rail-body {
+  margin: 0;
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
 }
 
 /* 当前生效的这张卡：只加重描边，不改底色——底色一变就成了"选中行"，
@@ -104,6 +249,8 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 14px;
+  /* 右上角那枚叶子占的宽度：不腾出来的话，「编辑／删除」会压在叶子底下。 */
+  padding-right: 46px;
 }
 
 .pf-name {
@@ -438,5 +585,397 @@
 @media (max-width: 720px) {
   .mf-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── 照 v5 稿补齐的区块（2026-10-11）─────────────────────────────────
+ *
+ * 稿上 bbox 都是 1536×1024 的稿坐标；此处注释里的「稿 x/y」即实测值，
+ * CSS px = 稿 px × 0.8893（= 1366/1536）。
+ *
+ * 两处**故意不等比**，因为定稿骨架不许推翻：
+ *   · 稿左主区两列卡各 403 稿 px；本页 .pf 栅格定稿为 690px + 300px，
+ *     左列内再分两列后每张成员卡 = (690 - 22) / 2 = 334px 轨道（卡实测 337px）。
+ *   · 稿右栏 348 稿 px；本页 rail 定稿 300px。
+ * 所以块内边距、进度条长度、圆环直径都按本页实际宽度给，不硬套稿值——
+ * 硬套会把内容挤出卡片。下面每条新规则都注明它对应的实测稿值。
+ *
+ * 屋规不变：语义色只落在圆点、细线、轨道上，绝不铺底；新增块一律直角（--radius-card=0）。
+ */
+
+/* 左主区：单列纵向流（标题 / 成员卡区 / 添加 / 并排两块 / 提示）。
+   这里**不用栅格**排这几块：试过"成员卡通栏 + 两块各钉第 2/3 行第 2 列"，
+   实测显式行与 auto-flow 混用时共同忌口被挤到第 3 行第 2 列、冰箱落到第 4 行第 1 列，
+   两个都掉进空行（y 分别 179/279，本该同排）。改成一层普通的"两列横排"包一层，
+   位置就不再依赖浏览器的空隙填充规则。 */
+.pf-main {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+/* 左主区里并排的两块（稿上第二行：左"共同忌口与偏好"右"冰箱现有食材"）。
+   只有共同忌口缺席时（单人家庭）冰箱会被拉成整行——那是对的：
+   稿上的两列是"两块都在"的样子，只剩一块时留半行空白反而像内容没加载完。 */
+.pf-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  align-items: start;
+}
+
+.pf-pair > .pf-sec {
+  min-width: 0;
+}
+
+/* 卡内小标题（「基础数据」「孕期目标与进度」）。
+   稿上它下面压着一道极浅的横线（实测 y=508..513 那一行 "++" 带整段贯通），
+   但那条线的深浅只有 8~16 的墨级、且与卡片底色漂移混在一起，量不出可靠端点；
+   所以这里按页面既有语汇收口：文字宽度的一像素底边，不做通栏线。 */
+.pf-blk-h {
+  display: inline-block;
+  margin: 0;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: var(--fs-data, 13.5px);
+  font-weight: 400;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+/* ── 成员卡内的「基础数据」多列 ──────────────────────────────────────
+   稿上三列的列心实测在 x≈344 / 452 / 600（体重 / BMI 孕周），列距 97 稿 px ≈ 86 CSS。
+   本页这块内容区实测 291px：列数按成员实际有几项由内联 gridTemplateColumns 给出
+   （见 BasicData），列宽均分，所以这里只定形制、不写死列数——
+   写死 3 列会在「身高」那一列插进来时把数据挤出卡片。 */
+.pf-basic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin: 10px 0 0;
+}
+
+.pf-basic-col {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pf-basic-k {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  line-height: 1.2;
+}
+
+.pf-basic-v {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-body, 15px);
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+/* 数值自己一格（flex 子项），保证它与右边小签之间那 6px 的 gap 真的出现。 */
+.pf-basic-num {
+  white-space: nowrap;
+}
+
+/* 每格的第二行小字（年龄）。稿上没有这一行——它是本地多出来的事实
+   （改版前年龄画在「身体数据」那一行里），用最小一号字压在数值下面，
+   不跟主值抢注意力，也让两张卡的主值行仍然对齐。 */
+.pf-basic-sub {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  line-height: 1.2;
+}
+
+/* BMI 档位小签（稿上是「正常」那两个字的浅色底签）。这里含的是中性占位，
+   所以底色比稿上那块语义签更淡一档：它此刻不代表任何判定。 */
+.pf-basic-tag {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius, 4px);
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+/* ── 成员卡内的「目标与进度」（稿条长 162 稿 px、轨道 y 居中在数值行）── */
+.pf-goal-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-goal-item {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 12px;
+}
+
+.pf-goal-k {
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+/* 百分比位：后端没有这个数，所以只有中性占位，右对齐到与数值列同一条基线。 */
+.pf-goal-v {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  text-align: right;
+  line-height: 1.3;
+}
+
+/* 进度轨道（稿上轨道底色 #efe4d4 一类的浅驼、填充是 --accent）。
+   这里**只画轨道不画填充**——填充宽度在后端就是"已达成多少"，
+   没有这个数就填一半等于编造进度。 */
+.pf-bar {
+  display: block;
+  height: 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+
+/* 卡内小注（说明哪几项是占位）。mono 小字，与 .pf-note 同族但更贴卡片。 */
+.pf-mdnote {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
+/* ── 冰箱现有食材（稿右格 x=730..1113，标题 y≈772、四样分两列两行）── */
+.pf-fridge {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+
+.pf-fridge-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 稿上每样食材有一枚成品图（鸡蛋/西兰花/面条/大蒜）。本地没有对应素材，
+   所以这里只留一个中性的方槽——不猜图地址、不放破图框。 */
+.pf-fridge-ic {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card, 0px);
+  background: var(--surface-2);
+}
+
+.pf-fridge-n {
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ── 冰箱的写路径（2026-10-14 接线）────────────────────────────────
+   此前这一块只能读：后端 `/fridge/set`（覆盖）与 `/fridge/add`（补货）
+   早就有了，新版前端一次都没调过。于是"我买了几样菜"在界面上无路可走，
+   而冰箱正是推荐的第一号输入（等待页那句「冰箱里只有鸡蛋和西兰花」就是它）。
+
+   视觉上不新开一层：沿用 .pf-add-btn 的语言（透明底 + --line 描边 + 直角），
+   这一块此前的定位是"纯真实数据、无装饰"，加了交互也不该变成最花的一块。 */
+
+/* 每样一枚「吃完了」。半透明的小圆叉，落在行的右端。 */
+.pf-fridge-del {
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius, 4px);
+  cursor: pointer;
+  /* 常态淡化，但**不藏**（2026-10-14 改）：
+   * 原先是"只在 :hover 时出现"（并用 @media (hover:hover) 给触屏留常显）。
+   * 视觉上确实更干净，代价是入口要靠摸索——这一块本来就是拿来管理冰箱的，
+   * 一个看不见的删除按钮等于没有。何况实测两种环境行为还不一致：
+   * 无头 Chromium 报 hover:none（常显），真实桌面 Chrome 报 hover:hover（全藏）。
+   * 现在两端一致：常态 0.55 的淡 ×，悬停变清晰并转语义色。 */
+  opacity: 0.55;
+}
+
+.pf-fridge-del:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--danger, var(--accent-ink));
+  border-color: var(--accent-line);
+}
+
+.pf-fridge-del:focus-visible {
+  opacity: 1;
+}
+
+.pf-fridge-del:disabled {
+  cursor: default;
+  opacity: 0.25;
+}
+
+.pf-fridge-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.pf-fridge-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 4px);
+}
+
+.pf-fridge-input::placeholder {
+  color: var(--ink-faint);
+}
+
+.pf-fridge-btn {
+  flex: none;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 4px);
+  cursor: pointer;
+}
+
+.pf-fridge-btn:hover:not(:disabled) {
+  color: var(--accent-ink);
+  border-color: var(--accent-line);
+}
+
+.pf-fridge-btn:disabled {
+  cursor: default;
+  color: var(--ink-faint);
+  border-color: var(--line);
+}
+
+/* ── 右栏「营养目标达成情况」：稿上 2×2 四个圆环（环外径 98 稿 px ≈ 87 CSS）── */
+.pf-ring-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 12px;
+}
+
+.pf-ring-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pf-ring-k {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-soft);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* 环：conic 轨道 + 中心挖空。轨道两端本来带进度色，
+   但进度值后端没有，所以整圈同一档浅驼——它此刻不是"0%"，是"还没接上"。 */
+.pf-ring {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  /* stylelint-disable-next-line -- 与 check-layers 无关：这里引用的是令牌，不是字面色值 */
+  background: conic-gradient(var(--line) 0deg 360deg);
+  display: grid;
+  place-items: center;
+}
+
+.pf-ring-hole {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+}
+
+/* ── 右栏「今日饮食建议」：稿上三条要点（圆点 + 一行内文）── */
+.pf-tips {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pf-tip {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pf-tip-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  /* 圆点与首行文字视觉居中对齐（baseline 对齐会把点顶到字上头）。 */
+  transform: translateY(-1px);
+}
+
+.pf-tip-v {
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+/* 窄屏：并排的两块收成一列，否则会窄到放不下一个中文词。 */
+@media (max-width: 860px) {
+  .pf-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pf-goal-item {
+    grid-template-columns: 68px minmax(0, 1fr) 34px;
+    gap: 8px;
   }
 }

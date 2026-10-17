@@ -1,5 +1,5 @@
 /* ── 做法 ─────────────────────────────────────────────
-   大号陶土编号是全页唯一"重"的装饰，它承载的是动作顺序，不是奖励。
+   2026-10-08 起：编号圆圈 + 每步一卡并排（见下方 .steps 段的裁定）。
    步数按后端给的真实条数渲染（实测 3~8 条），绝不截成"三步"。 */
 
 .steps-block {
@@ -92,12 +92,32 @@
  * （重点区、右栏）本来就是面，只有做法区与调料区还裸着，读起来像两种
  * 画风贴在同一页上。整页套一张大卡是不对的——结果页是长文档而不是任务卡，
  * 所以按**逻辑块各自成面**，块与块之间靠间距分隔。 */
+/* ── 步骤：编号圆圈卡并排（2026-10-08 照预期图 result-expect.png）────────
+ *
+ * 结构照图（每步一卡、编号圆圈、卡并排），几何按真实数据裁：
+ * 稿子里每步正文十几个字，真实 50~70 字/步——图上那种一行 6 卡（每卡约 100px）
+ * 会重蹈 10-07 上午 B 稿窄卡的覆辙（386px 已被用户判过「窄得难读」）。
+ * auto-fill minmax(300px,1fr)：672px 主栏两列、窄屏自然单列，每卡 ≥300px（约 20 字/行）。
+ * 整排不再共用一张外壳（旧版 10-07 下午的全宽大卡随这次退役）：
+ * 每步自己成面，卡间 gap 就是节奏，与页面其它逻辑块的分块方式一致。 */
 .steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
   margin: 0;
-  padding: 4px 20px;
+  padding: 0;
   list-style: none;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: start;
+  margin: 0;
+  padding: 14px 16px;
   font-size: 15px;
-  line-height: 1.85;
+  line-height: 1.75;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--surface-line);
@@ -105,30 +125,51 @@
   box-shadow: var(--shadow-paper);
 }
 
-.steps li {
-  display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 12px;
-  align-items: baseline;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 0;
-}
-
 .steps li:last-child {
-  border-bottom: none;
+  /* 卡化后没有"列表末行"这回事，边框归属每张卡自己。 */
 }
 
+/* 编号圆圈：描边空心圈 + 陶土数字（预期图的 ①②③ 形态），
+   它承载的是动作顺序，不是奖励——所以不填实、不放大。 */
 .step-no {
-  font-size: 21px;
-  font-weight: 800;
-  line-height: 1.35;
-  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  box-sizing: border-box;
+  margin-top: 1px;
+  border: 1.5px solid var(--accent-line);
+  border-radius: 50%;
+  background: var(--bg-raise);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* 「小标题：正文」拆出来的标题行（无标题时整卡只剩正文，间距自然合并）。 */
+.step-body {
+  display: block;
+  min-width: 0;
+}
+
+.step-head {
+  display: block;
+  margin: 2px 0 2px;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
 }
 
 .step-text {
+  display: block;
   min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--ink-soft);
 }
 
 /* 折叠区里的做法收一档，避免"盒子里套盒子"的视觉噪声。 */

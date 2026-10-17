@@ -49,6 +49,14 @@ import './styles/primitives.css'
    它单独成片而不进 base.css：当时 base.css 已 875 行，追加会越过 checkScale 的
    1000 行上限（2026-10-01 注：抽屉与侧栏两段又拆出 panels.css 后，base.css 现 647 行）。 */
 import './styles/fav.css'
+/* 收藏房卡片片（2026-10-11 第二轮照 fav-expect-v4 稿重建）。从 fav.css 拆出：
+   那一轮加的规则让 fav.css 到了 1011 行，越过 checkScale 的 1000 行上限。
+   拆法按"片 = 一组同源规则"：fav.css 留骨架、三态、动作与既有元素；
+   本片是**照稿重建的那一层**（页头星形/副标题图标、工具行、卡片几何、
+   配图与角叶、元信息、右栏三块、页底花章、窄屏断点），一律后写覆盖。
+   必须紧跟 fav.css 之后：它大量使用同选择器覆盖（.fv-h/.fv-list/.fv-thumb…），
+   同特异性下后写的胜出，顺序错了整页就回到第一轮的几何。 */
+import './styles/fav-cards.css'
 /* 服务房样式（第 5 步新增）。同理：只定义 .sv-* 新类名，放末层不挪动已有层叠。 */
 import './styles/service.css'
 /* 浮层面板样式（2026-10-01 B 批次①③新增：家庭成员抽屉 + 历史会话侧栏）。
@@ -64,6 +72,22 @@ import './styles/candidate.css'
    所以登记为末层、排在 candidate.css 之后——check-layers 的 f_样式顺序要求
    main.tsx 里的相对顺序与 STYLE_ORDER 完全一致，插在中间会直接判违规。 */
 import './styles/profile.css'
+/* 冰箱块拍照入口（2026-10-14 新增）。从 profile.css 拆出：那一轮加进来之后
+   profile.css 到了 981 行，再加就越过 checkScale 的 1000 行上限（与
+   fav.css → fav-cards.css 是同一类拆分）。本片只定义 .pf-fridge-shot* 一族
+   新类名，不覆盖 profile.css 的任何既有选择器，所以排它后面即可；
+   weekly.css / atmosphere.css 仍是更后的层。
+   夹具台（fixture-main）不渲染身体档案房，不需要同步登记这一行。 */
+import './styles/profile-fridge.css'
+/* 周报房逐餐明细（2026-10-14 新增）。从 panels.css 拆出：那一轮加进来之后
+   panels.css 到了 1052 行，越过 checkScale 的 1000 行上限（与 fav.css →
+   fav-cards.css 是同一类拆分）。本片只定义 .wk-dish-row / .wk-dish-more /
+   .wk-meals / .wk-meal* 这一族新类名，唯一的覆盖是 `.wk-meal-light .wk-pip`
+   把 hero 点阵的 13px 缩到 7px——被覆盖的定义在 panels.css 里，所以必须排在
+   它之后。atmosphere.css 仍是最末层，故本片排在它前面。
+   夹具台（fixture-main）不渲染周报房，不需要同步登记这一行。 */
+import './styles/weekly.css'
+import './styles/atmosphere.css'
 
 import Shell from './app/Shell.tsx'
 import TonightApp from './app/TonightApp.tsx'

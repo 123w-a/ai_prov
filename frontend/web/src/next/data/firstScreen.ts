@@ -6,54 +6,93 @@
  * 两者的数据源、空值语义都不一样，塞进 household 会让那个文件变成杂物间。
  *
  * 两条纪律（与 household.ts 同源，不能丢）：
- *   1 只读，不写。任何一侧失败都退化成 null / 空数组，不抛错、不编造。
+ *   1 只读，不写。任何一侧失败都退化成 null / 空数组，不抛错、不编造，
+ *      **但也不许静默**：失败原因经 readError 交出去，读取本身按阶梯退避重读（见下）。
  *      **本文件全程不碰写接口**——B1 的确认/忽略已由用户拍板延后（契约 §1/§9 W1）。
  *   2 只返回值本身，标签与版式由 blocks 给。不写「照顾全家」这类替系统承诺的话。
  *
  * 空值语义按契约 §1 分三类，**不要合并成同一种「没数据」**：
  *   · candidates / members / items 为空 ⇒ 返回 null ⇒ 调用方整块不渲染
  *   · 本周 has_data=false             ⇒ 返回 isEmpty 真 ⇒ 显示明确空态（内容性空）
- *   · 接口失败或未返回                ⇒ 返回 null ⇒ 不渲染、不留白
+ *   · 接口失败或未返回                ⇒ 返回 null ⇒ 不渲染那一块，但 readError 有话说
+ *     （2026-10-12 补：原先这里与上一类在页面上长得一模一样，用户分不清"该等"
+ *      还是"这周真没吃饭"——所以第三类必须交出一个可呈现的原因。）
  */
 
 import { useEffect, useState } from 'react'
 import {
+  fetchMemberWeekly,
   fetchPendingMemoryCandidates,
   fetchWeeklyReport,
 } from '../../api/client.ts'
 import { type FamilyData } from './household.ts'
+import { dislikesIntersection } from './fieldFacts.ts'
+import type { MemberWeeklyReport, NutritionProgress } from '../../types.ts'
+import { readErrorLine, startRetryRead } from './readLoop.ts'
 
 export type Weekly = Awaited<ReturnType<typeof fetchWeeklyReport>>
 export type PendingCandidate = Awaited<ReturnType<typeof fetchPendingMemoryCandidates>>[number]
 
 /* ── 数据拉取 ─────────────────────────────────────────────────────────── */
 
-/** 首屏四块中的两块（本周 + 待确认）各只拉一次。家庭与冰箱沿用 useHousehold()。 */
+/** 首屏四块中的两块（本周 + 待确认）各只拉一次。家庭与冰箱沿用 useHousehold()。
+ *
+ * 读取必须会自愈（2026-10-12 修，与 household.ts 同一套口径、同一份阶梯）：
+ *   · 这一读同样发生在**页面加载那一刻**，而那一刻未必是后端可用的一刻
+ *     ——实测后端重启窗口里有 22 个 /api/* 同时 502；
+ *   · 原先两处都是 `.catch(() => {})`：失败被吞成"这块没有数据"，
+ *     而右栏对 null 的处置是**整块不渲染**，于是后端恢复后「本周」「待确认」
+ *     会一直空着，直到用户手动刷新（真实事故，不是预防性重构）；
+ *   · 现在：失败按 retry.ts 的阶梯退避重读（1s→…→30s 封顶）直到读到；
+ *     失败只记 readError，**绝不清空已经渲染出来的数据**；
+ *     读到即清掉原因。循环本体在 data/readLoop.ts（纯函数，node --test 钉着）。
+ *
+ * 为什么这块必须与「本周 has_data=false」分开：那块是**内容性空**（这周真没吃饭），
+ * 要显示明确空态；读失败则要给得出原因——两者在页面上长得一样的话，
+ * 用户分不清是该等还是该去记录，排查者也看不到 HTTP 状态。 */
 export function useFirstScreen(): {
   weekly: Weekly | null
   candidates: PendingCandidate[]
+  /** 读失败的原因（本周 / 待确认 各一路，按实际失败的那些拼）；读到成功即清。 */
+  readError: string | null
 } {
   const [weekly, setWeekly] = useState<Weekly | null>(null)
   const [candidates, setCandidates] = useState<PendingCandidate[]>([])
+  const [weeklyError, setWeeklyError] = useState<string | null>(null)
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
 
   useEffect(() => {
-    let alive = true
-    fetchWeeklyReport()
-      .then((r) => {
-        if (alive) setWeekly(r)
-      })
-      .catch(() => {})
-    fetchPendingMemoryCandidates()
-      .then((list) => {
-        if (alive) setCandidates(list)
-      })
-      .catch(() => {})
+    const stopWeekly = startRetryRead<Weekly>({
+      read: fetchWeeklyReport,
+      onData: (r) => {
+        setWeekly(r)
+        setWeeklyError(null)
+      },
+      onError: setWeeklyError,
+    })
+    const stopCandidates = startRetryRead<PendingCandidate[]>({
+      read: () => fetchPendingMemoryCandidates(),
+      onData: (list) => {
+        setCandidates(list)
+        setCandidatesError(null)
+      },
+      onError: setCandidatesError,
+    })
+    // 卸载即取消：两个循环各自清掉待发的 timer，迟到结果不再写状态。
     return () => {
-      alive = false
+      stopWeekly()
+      stopCandidates()
     }
   }, [])
 
-  return { weekly, candidates }
+  return {
+    weekly,
+    candidates,
+    readError: readErrorLine([
+      ['本周', weeklyError],
+      ['待确认', candidatesError],
+    ]),
+  }
 }
 
 /* ── B1 待确认候选（只读） ─────────────────────────────────────────────── */
@@ -87,6 +126,13 @@ export type FamilyMemberRow = {
   digits: string[]
   /** 条件与目标（孕妇 / 增肌），描边小标签。 */
   tags: string[]
+  /** 后端 `profile.nutrition_progress` 的**原样**（2026-10-14 补）。
+   *
+   *  此前没带出来，于是收藏页成员块只能写「进度待补 · 后端没有这一项」——
+   *  那是错的：字段一直有（`reports_route.py` `member_nutrition_progress`），
+   *  只是这一屏没接。现在原样透传（不做换算，缺值就是 null），
+   *  由 `progressShort` / `progressLine` 决定怎么显示。 */
+  progress: NutritionProgress | null
 }
 
 /**
@@ -119,11 +165,24 @@ export function familyRows(
       isActive: m.id === family.active_id,
       digits,
       tags,
+      // 原样透传，不做换算：缺值就是 null（`memberBodyExtras` 同一条纪律）。
+      progress: p.nutrition_progress ?? null,
     }
   })
 
   // 共同忌口只写一次：两个人都忌芹菜时，写两遍只是噪音。
-  const shared = [...new Set(family.members.flatMap((m) => m.profile.dislikes))]
+  //
+  // ⚠ 2026-10-14 修：这一行原先是
+  //     `[...new Set(family.members.flatMap((m) => m.profile.dislikes))]`
+  //   ——那是**并集**：把"任意一个人忌的"都算成全家的共同忌口，与上面这句注释
+  //   写的"两个人都忌"（交集）正好相反。同一个缺陷 2026-10-05 只在 household.ts
+  //   修过一次，首屏这一份漏了；真实档案两人恰好都忌芹菜，两种口径结果相同，
+  //   所以它一直没露出来——只要有一天只有一个人忌香菜，首屏就会把香菜写成
+  //   全家的共同忌口，把个人忌口安到全家人头上。
+  //
+  //   现在优先读后端算好的 `shared_dislikes`（判定已收归
+  //   api/routes/preferences_route.py 的 `_shared_dislikes`），兜底也走交集。
+  const shared = family.shared_dislikes ?? dislikesIntersection(family.members)
   return { members, shared }
 }
 
@@ -151,6 +210,15 @@ export type WeekView =
       lights: LightCounts
       /** 趋势：label → 后端给的字符串（实测全为 insufficient）。照实呈现，不画趋势线。 */
       trends: Array<{ label: string; state: string }>
+      /**
+       * 趋势图的逐日真数据（2026-10-10 · 周报方向稿第 3 条「要数据真实」）：
+       * 营养素 → 含今天最近 7 天的绿灯占比，null = 当天无观测（画断点不插值）。
+       * 与 trends（状态字符串）**并存**：trends 决定箭头文案，series 决定线的形状；
+       * series 缺席或全 null 时前端退化为纯文字，绝不画假线。
+       */
+      series: Array<{ label: string; values: (number | null)[] }>
+      /** top 菜品的成品图（后端 dish_assets 命中才有；缺席的菜走占位块）。 */
+      dishImages: Record<string, string>
       guardrail: number
       /**
        * 下面两个是**周报房间**（2026-09-29 户型图第 3 步）要、右栏摘要不用的：
@@ -158,6 +226,62 @@ export type WeekView =
        */
       recommendations: string[]
       feedback: { count: number; tags: Record<string, number> } | null
+      /**
+       * 逐餐明细（2026-10-14）：把 top_dishes 的聚合次数展开成「哪几顿」。
+       * 只给**周报房间**用——右栏摘要（278px）放不下也不需要，与上面两条同理。
+       * member 为 null = 那一顿没记到人，**不许**显示成「全家」。
+       */
+      mealsDetail: Array<{
+        ts: string
+        dish: string
+        member: string | null
+        lights: Array<{ nutrient: string; level: string }>
+        onTarget: boolean
+      }>
+      /**
+       * 成员卡片（2026-10-15 后端新增 `_member_week_rows`）。
+       *
+       * **家庭与每位成员是同级对象**，所以这一段与上面那些家庭字段并列，不是它们的
+       * 下钻。名单来自后端档案，所以 `meals: 0` 的成员**也在列表里**——如实显示
+       * 「这一周还没记到」，不因为数字是 0 就不画这张卡（不画等于说这人不在这个家）。
+       *
+       * lights 走同一个 parseLights 拆解（后端给的是同一套复合键），
+       * 不给它第二个实现。
+       */
+      members: Array<{
+        name: string
+        meals: number
+        onTarget: number
+        lights: LightCounts
+        shared: number
+        /**
+         * 上周同期这位成员自己的餐数与达标数。两个都是 0 ⇒ 上周没有他的记录，
+         * 界面要写「上周无记录」——**不许**读成"上周一餐都没达标"。
+         */
+        prevMeals: number
+        prevOnTarget: number
+        /** 后端给的一句话（「需要注意」）。空串表示后端没话说，那一段就不渲染。 */
+        hint: string
+      }>
+      /**
+       * 本周达标率（0..1）。`null` = 本周零记录（空态走 isEmpty 那条路，正常到不了这里）。
+       */
+      rate: number | null
+      /**
+       * 逐周达标率，最旧在前、本周在后（C 设计稿「趋势」折线）。
+       * 某周 `rate: null` ⇒ 零记录，折线在那里**断开**，不连到 0%。
+       */
+      rateSeries: Array<{
+        label: string
+        rate: number | null
+        meals: number
+        onTarget: number
+        isCurrent: boolean
+      }>
+      /**
+       * 上一周同期整户。`null` 表示后端没给这个键（空周）。`rate: null` = 上周零记录。
+       */
+      prev: { meals: number; onTarget: number; rate: number | null } | null
     }
 
 /**
@@ -192,10 +316,154 @@ export function weekView(r: Weekly | null): WeekView | null {
     dishes: r.top_dishes ?? [],
     lights: parseLights(r.lights ?? {}),
     trends: Object.entries(r.light_trends ?? {}).map(([label, state]) => ({ label, state })),
+    series: Object.entries(r.light_series ?? {}).map(([label, values]) => ({ label, values })),
+    dishImages: r.dish_images ?? {},
     guardrail: r.guardrail_triggers ?? 0,
     recommendations: r.recommendations ?? [],
     feedback: r.feedback_summary ?? null,
+    mealsDetail: (r.meals_detail ?? []).map((m) => ({
+      ts: m.ts,
+      dish: m.dish,
+      member: m.member ?? null,
+      lights: m.lights ?? [],
+      onTarget: m.on_target ?? false,
+    })),
+    members: (r.members ?? []).map((m) => ({
+      name: m.name,
+      meals: m.meals ?? 0,
+      onTarget: m.on_target ?? 0,
+      lights: parseLights(m.lights ?? {}),
+      shared: m.shared ?? 0,
+      prevMeals: m.prev_meals ?? 0,
+      prevOnTarget: m.prev_on_target ?? 0,
+      hint: m.hint ?? '',
+    })),
+    rate: r.rate ?? null,
+    rateSeries: (r.rate_series ?? []).map((w) => ({
+      label: w.label,
+      rate: w.rate ?? null,
+      meals: w.meals ?? 0,
+      onTarget: w.on_target ?? 0,
+      isCurrent: w.is_current ?? false,
+    })),
+    // 后端空周直接不返回这个键，所以这里要区分"没有这个键"（null）与"值是 0"。
+    prev: r.prev
+      ? {
+          meals: r.prev.meals ?? 0,
+          onTarget: r.prev.on_target ?? 0,
+          rate: r.prev.rate ?? null,
+        }
+      : null,
   }
+}
+
+/* ── B3b 成员周报详情（2026-10-15，周报页成员卡片点开）────────────────── */
+
+/**
+ * 一位成员的 7 天视图。与 `WeekView` 是**两个视角**而不是同一份的两个版本：
+ * 这里只装"这位成员"的餐，分母只算他参与的顿数。
+ *
+ * ⚠ 刻意**没有** `lights` 这个字段：后端的成员版不返回顶层灯计数（家庭版才有），
+ * 而前端要的"这一周的灯分布"能从 `mealsDetail` 里逐餐数出来。宁可让渲染层从明细
+ * 现数，也不在这里凭 series 反推一个假的分布。
+ */
+export type MemberWeekView =
+  | { isEmpty: true; name: string; message: string }
+  | {
+      isEmpty: false
+      name: string
+      meals: number
+      /** 后端还不知道分子分母时 value 为 null ⇒ 页面显示「待补」，不许写成 0%。 */
+      progress: NutritionProgress | null
+      trends: Array<{ label: string; state: string }>
+      series: Array<{ label: string; values: (number | null)[] }>
+      dishes: [string, number][]
+      dishImages: Record<string, string>
+      recommendations: string[]
+      mealsDetail: Array<{
+        ts: string
+        dish: string
+        members: string[]
+        lights: Array<{ nutrient: string; level: string }>
+        onTarget: boolean
+      }>
+    }
+
+export function memberWeekView(r: MemberWeeklyReport | null): MemberWeekView | null {
+  if (!r) return null
+  if (!r.has_data) {
+    // 内容性空：后端给了原因就用它（查无此人也走这条，它是"没记到"不是异常）。
+    return {
+      isEmpty: true,
+      name: r.name ?? '',
+      message: r.message || '近 7 天还没有记到这位成员的餐次。',
+    }
+  }
+  return {
+    isEmpty: false,
+    name: r.name,
+    meals: r.meals ?? 0,
+    progress: r.progress ?? null,
+    trends: Object.entries(r.light_trends ?? {}).map(([label, state]) => ({ label, state })),
+    series: Object.entries(r.light_series ?? {}).map(([label, values]) => ({ label, values })),
+    dishes: r.dishes ?? [],
+    dishImages: r.dish_images ?? {},
+    recommendations: r.recommendations ?? [],
+    mealsDetail: (r.meals_detail ?? []).map((m) => ({
+      ts: m.ts,
+      dish: m.dish,
+      members: m.members ?? [],
+      lights: m.lights ?? [],
+      onTarget: m.on_target ?? false,
+    })),
+  }
+}
+
+/**
+ * 按需拉一位成员的周报。`name` 为 null（抽屉没开）时**不发请求**，
+ * 所以周报页平时只有一次 `/reports/weekly`，点开某人才多一次。
+ *
+ * ⚠ 换人时必须先把上一位的 view 清掉：不清的话点「小美」再点「我」，抽屉会先
+ * 拿小美的数据渲染一帧（她的名字配我的数字），等请求回来才纠正。
+ * 那种一闪而过的错配正好出现在用户盯着看的时候。
+ */
+export function useMemberWeekly(name: string | null): {
+  view: MemberWeekView | null
+  loading: boolean
+  error: string | null
+} {
+  const [view, setView] = useState<MemberWeekView | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!name) {
+      setView(null)
+      setLoading(false)
+      setError(null)
+      return
+    }
+    let alive = true
+    setView(null)
+    setLoading(true)
+    setError(null)
+    fetchMemberWeekly(name)
+      .then((r) => {
+        if (!alive) return
+        setView(memberWeekView(r))
+        setLoading(false)
+      })
+      .catch((e: unknown) => {
+        if (!alive) return
+        setError(e instanceof Error ? e.message : String(e))
+        setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [name])
+
+  return { view, loading, error }
 }
 
 /**
@@ -235,10 +503,22 @@ export function useWeeklyReport(): {
   return { view, loading, error }
 }
 
-/** 趋势文案照实写。实测后端给的是 insufficient —— 中文化，**不补任何推断**。 */
+/**
+ * 趋势文案照实写（2026-10-10 补全值域并修英文泄漏）。
+ *
+ * 后端 `_light_trends` 的实测值域是四个：insufficient / improving / worsening /
+ * stable（reports_route.py L150-159）。原实现只认前两个英文词之外的 insufficient
+ * 与 sufficient，于是真实的 improving / stable **原样落到页面上**——首屏右栏
+ * 「趋势 · 钠 improving、脂肪 improving」就是这么来的（英文 UI 泄漏）。
+ * 箭头按设计稿周报样式（↑ 改善中 / — 稳定 / ↓ 需留意）；未知值仍原样返回，
+ * 不替后端编词。
+ */
 export function trendLabel(state: string): string {
   if (state === 'insufficient') return '数据不足'
   if (state === 'sufficient') return '数据充足'
+  if (state === 'improving') return '↑ 改善中'
+  if (state === 'stable') return '— 稳定'
+  if (state === 'worsening') return '↓ 需留意'
   return state
 }
 
@@ -255,3 +535,8 @@ export function fridgeView(items: string[]): { count: number; names: string } | 
   if (items.length === 0) return null
   return { count: items.length, names: items.join('、') }
 }
+
+
+
+
+

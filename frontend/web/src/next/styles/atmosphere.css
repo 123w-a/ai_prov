@@ -1,0 +1,405 @@
+/* ── 2026-10-08 第三轮：功能色 + 分区收口 + 布局修正（atmosphere）────────
+
+   用户第二轮反馈（原话）：
+     "结果栏还是很丑，不好看……布局和架构都不对，空白过于多，
+      最严重的整体页面问题就是，我们根本没有页面背景，显得非常单调，
+      并且我们的颜色基本统一，没有什么不同功能颜色的对比性。"
+
+   背景那一半在 tokens.css（网格 3.5%→8.5%、wash 顶部 92%→58%、
+   底色再沉两档，全站五房一起生效）。本片负责**颜色**与**分区/布局**：
+
+   一、颜色不再"一个墨阶走完全页"。实测改前全页色值前三名是
+       #3d2a18×159 / #8e8271×82 / #63523c×82——全是同一个墨色阶，
+       营养、成员、依据、账目之间没有任何区分。现在每类信息一种记号色：
+       营养=青碧 / 成员=靛紫 / 依据=蓝灰 / 安全=红黄绿(既有) / 账目=暖灰。
+       **色只落在标记物上**——段色标、标题、徽章、数值、表头线；
+       绝不铺大面积色块（铺满=幼稚色块页，用户明确否决过）。
+
+   二、分区。结果页原来全平铺：报头、营养、做法都是透明底、与页面同色，
+       连成一片纸。现在营养区有自己的底面与边界，空白由结构收口。
+
+   三、布局三处实测修正（result-v3.css 已 992/1000 行，放不下，故在此覆盖）：
+      · 右栏 208 → 280px。它一直写 `var(--rail, 278px)`，以为 fallback
+        278 在生效；而 --rail=208 是**左导航**宽度，两处撞名，右栏实际被
+        压到 208，文案折行成"可按共同做法正常食/用"。
+      · `.result-main` 的 `max-width: 42em` 从**整栏**收到**正文**：它的本意是
+        限制正文行宽（一行 42 字），却把营养表与步骤卡一起限在 672。
+        列宽 716 − 672 = 44px 白，表格再限 560 → 再 112px 白，
+        右侧合计 156px 空洞——这就是"空白过于多"的直接来源。
+      · 营养表的 560 限宽取消（那是上一轮为"无图态单列"加的补救）。
+
+   加载顺序：本片必须**最后**加载（main.tsx / fixture-main.tsx 都排在
+   profile.css 之后），靠"同特异性后者胜"覆盖前片，不靠 !important。 */
+
+/* ══ 一、布局：右栏加宽 / 主栏放开 / 间距统一 ══════════════════════ */
+
+.result-body {
+  /* 不再引用 --rail（那是左导航的宽度，撞名注释见 tokens.css） */
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 0 32px;
+}
+
+/* 42em 只属于**正文段落**。栏内其它块（营养表、步骤卡、用料）用满列宽。
+   护栏从"整栏"缩到"正文"，是这一轮减少右侧空洞的关键一步。 */
+.result-main {
+  max-width: none;
+}
+
+.dish-intro {
+  max-width: 42em;
+}
+
+.dish-cols.is-single .nutri-table,
+.dish-cols.is-single .nutri-head {
+  max-width: none;
+}
+
+/* 块间距统一到 --s3(24px) 节奏：原为 26/40/30/24 四种随手值，读起来发松。 */
+.result-head {
+  margin-bottom: var(--s3);
+}
+
+.ask-echo {
+  margin-bottom: var(--s3);
+}
+
+/* ══ 二、功能色：记号，不是色块 ══════════════════════════════════════ */
+
+/* 右栏每段一根左色标（2px），色随段的性质变：
+   关键=陶土 / 成员=靛紫 / 注意=警示黄 / 依据=蓝灰。
+   用局部 --tone 变量驱动，四段共用一条规则，段自己只声明颜色。 */
+.rail-sect {
+  --tone: var(--accent-line);
+  position: relative;
+  padding-left: 11px;
+}
+
+.rail-sect::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--tone);
+}
+
+.rail-sect[data-sect='key'] {
+  --tone: var(--accent);
+}
+
+.rail-sect[data-sect='member'] {
+  --tone: var(--tone-member);
+}
+
+.rail-sect[data-sect='notice'] {
+  --tone: var(--warn);
+}
+
+.rail-sect[data-sect='evidence'] {
+  --tone: var(--tone-source);
+}
+
+/* 标题跟随段色——但只在有确定功能的段上；「这次搭配的关键」保持墨色，
+   它是导读不是数据，给它上色会与菜名抢第一眼。 */
+.rail-sect[data-sect='member'] .rail-title {
+  color: var(--tone-member);
+}
+
+.rail-sect[data-sect='evidence'] .rail-title {
+  color: var(--tone-source);
+}
+
+/* 成员判词徽章改走靛紫（原来跟全局 accent 陶土，与菜名同色、分不出是"人的信息"） */
+.rail-mline .member-verdict {
+  color: var(--tone-member);
+  background: var(--tone-member-soft);
+  border-color: var(--tone-member-line);
+}
+
+/* 营养表：表头线 + 数值 + NRV% 三处走青碧。
+   数值原来是陶土（与菜名同色），改成青碧之后"这一列是营养数据"一眼可辨。 */
+.nutri-table thead th {
+  color: var(--tone-nutri);
+  border-bottom-color: var(--tone-nutri-line);
+}
+
+.nutri-value {
+  color: var(--tone-nutri);
+}
+
+.nutri-pct {
+  color: var(--tone-nutri);
+}
+
+.nutri-row[data-unknown='true'] .nutri-value {
+  color: var(--ink-faint);
+}
+
+/* 账目类信息（时间戳）走暖灰，与正文墨色分开，也不再抢 accent。 */
+.ask-echo-stamp {
+  color: var(--tone-time);
+}
+
+/* ══ 三、分区：让"纸"从台面上浮起来 ══════════════════════════════════
+
+   底色已下沉（--bg-deep #ead6be），卡片面 #fbf6f0——两者明度差从 4% 拉到 10%，
+   这时给营养区一张纸才真的读得出层次。只在**无图态**加：有图态的营养表
+   本来就在右列里，那列已是天然分组，再套一层盒子就重了。 */
+.dish-cols.is-single .nutri {
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-paper);
+}
+
+/* 无图态的简介也收进同一条纸边内，否则它孤零零浮在深底上、
+   与下面的纸面营养区接不上。 */
+.dish-cols.is-single .dish-side .dish-intro {
+  margin-top: 0;
+}
+
+/* ══ 四、页面层次：台面 / 纸带 / 卡片 ════════════════════════════════
+
+   这一节才是"根本没有页面背景"的正面解法。三层明度自上而下递减：
+
+     · 台面 = body（--bg-deep #ead6be）+ 可见网格（8.5%）  → 制图台
+     · 纸带 = .tn（--bg-lo #f6ecdd）                        → 页面中轴那条走到底的纸
+     · 卡片 = --surface（#fbf6f0）+ 发丝边 + 投影           → 浮在纸带上的块
+
+   三档明度差约 7% 与 4%，都落在低饱和暖色里**可辨**的区间——
+   上一轮"背景没有任何提升"的根因正是把差压进 4% 以内还不给结构。
+
+   纸带**不加边框、不加圆角、不加阴影**：它是衬底不是盒子；
+   一加边框就变成"内容被框住"，整页平白多一个盒子。
+   它也同时解释了"空白过多"——纸带两侧露出的台面是**有内容的空**
+   （看得见网格与层次），而不是一片什么都没画的空白。 */
+.tn {
+  background: var(--bg-lo);
+}
+
+/* 底部动作区与输入区之间的间隔收一档：32px 是上一轮随手的值，
+   与页面统一的 --s3 节奏不合，视觉上把页尾拉长了一截。 */
+.again {
+  margin-top: 24px;
+}
+
+/* ── 页尾间距收紧（2026-10-09 · lave2 商定的 d1）──────────────────────
+   独立探针把「body 底 1641 → 页脚 2107」的 466px 逐元素拆开：278px 是功能
+   元素（过程折叠 39 + 状态条 28 + 再做一顿 42 + 输入区 169），140px 是四处
+   元素间距，48px 是 .tn 统一底 padding。纯空白只有那 140px，故只收间距、
+   不动任何元素，预期净收约 50px——收多了会挤，那是拿呼吸换数字。
+   选择器带 .result（0,2,0）以压过各处单类定义，且只作用于结果页：
+   .process/.rs-acts 的原值在别处还有语境，不整片覆盖。 */
+.result .process {
+  margin-top: 24px;
+}
+
+/* ── 2026-10-14：过程块与恢复说明的右缘归位 ──────────────────────────────
+   `.result.is-prose > *` 把这一列每个直接子元素的宽度都定成 42em，而 em 是
+   **该元素自己的字号** ⇒ 同一条「这一列」上：.result-head/.ask-echo/.composer
+   是 16px→672，13px 的 .process 只有 546，12.5px 的恢复说明只有 525。
+   实测缺口 126px / 147px，右缘参差一眼可见（这正是报告里 546/525 两个数字的
+   真出处——CSS 里从来没有过这两个字面量）。
+   这两块不是正文散文，是这一列的账目行，按同列归位：宽度改回**同一列的
+   42rem**。用 rem 而不是 em 正是这条修复的要点——rem 恒等于根字号 16px，
+   与元素自身字号无关 ⇒ 两块都拿到 672，与 .result-head/.composer 右缘重合。
+   试过写成 max-width:none，实测更糟：.process 直接涨到父级 1055.09，比同列的
+   672 长出去 383px，右缘从"短一截"变成"突出去"。选择器 (0,3,0) 稳过
+   `.result.is-prose > *` 的 (0,2,0)。 */
+.result.is-prose > .process,
+.result.is-prose > .process-note {
+  max-width: 42rem;
+}
+
+.result .rs-acts {
+  margin: 14px 0 12px;
+}
+
+/* again 原 gap 48 = rs-acts 下 24 + 本体上 32（实测相加、不折叠），
+   两头各收：24→12、32→16 ⇒ 48→28。 */
+.result .again {
+  margin-top: 16px;
+}
+
+.result .composer.is-followup {
+  margin-top: 20px;
+  /* 2026-10-15：padding-top 归零、border-top 去掉，分隔改由面板自身承担
+     （见 composer.css 同档注释）。留着的这两行是给结果页的那条间距微调。 */
+  padding-top: 0;
+}
+
+/* ── 页尾书写面默认收敛成一行邀请（2026-10-15）──────────────────────────
+   用户看完结果页判定那个摊开的书写面"肯定是不好的"。病灶不是"能不能说话"，
+   而是默认态就把整块面板 + 两行隐私小字 + 语音/相机图标排一起铺在页尾，
+   读起来像一张等着人填的表；而且它与上方「再做一顿」之间还隔着一大段空白，
+   两块功能被拉成两截。
+   改法：默认只留一行邀请 + 一枚暖色圆钮，点开才展开原来那个书写面。
+   语汇全部取自同页既有件：上边界用 .rail-meta / .result-body 同款发丝线
+   （--line），圆钮同 --radius-pill，暖色只落在这一处——与设计稿
+   「整页只允许一处极小的暖色做状态提示」一致。
+   收起态与展开态在 DOM 里**不同时存在**，所以上面那条
+   .composer.is-followup 的间距不受影响，展开后与今天逐像素一致。 */
+.result .rs-say {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  width: 100%;
+  margin-top: 20px;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.result .rs-say:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.result .rs-say-hint {
+  transition: color 0.18s;
+}
+
+.result .rs-say:hover:not(:disabled) .rs-say-hint {
+  color: var(--accent-ink);
+}
+
+/* 圆钮：整页唯一的暖色落点。默认只铺极淡的底，悬停才满上——
+   它是"请继续说"，不是主行动，不应比「再做一顿」更响。 */
+.result .rs-say-go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  /* 补一道内描边：--accent-soft(#f4ece5) 压在暖白底 --bg(#f8f4f0) 上，
+     实测两色差只有 4 个色阶，截图上圆几乎读成白圈——钮还在，形状没了。
+     用 inset 的 box-shadow 而不是 border：不占布局、不改尺寸，
+     色取 --accent-line(#ddc7b6)，与 .again 的描边同族。 */
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--accent-ink);
+  font-size: 15px;
+  transition: background 0.18s, color 0.18s;
+}
+
+.result .rs-say:hover:not(:disabled) .rs-say-go {
+  background: var(--accent);
+  color: var(--bg-raise);
+}
+
+/* 展开后的「收起」：只在草稿为空时出现（有草稿就锁在展开态，免得字"消失"）。
+   比正文小一档、用最淡的墨——它是退路，不是选项。 */
+.result .rs-say-collapse {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.result .rs-say-collapse:hover {
+  color: var(--accent-ink);
+}
+
+/* ── 右栏列尾与两列公共底的收口（2026-10-09 · lave2 二诊 B/A，用户已批）──
+   实测右栏 .result-rail 拉伸高 1390 = body 高、与整页同层同色纸带，所以那
+   385px 不是"洞"也不是"栏短"——rail 没短，短的是四段卡组（止于 1244），
+   它在左列还在继续时没收尾就断了。两道终止符补这个符：
+   · .result-body 公共底线：border 恒在容器底 = 两列 max 底，rail 更长的
+     case 仍落在公共底，不写死单 case 的 385；无文案、删线即回滚。
+   · .rail-meta 列尾一行：时间取回声条同款 run.askedAt，无时刻不渲染
+     （与 AskEcho 纪律 3 相同，时间是事实、猜一个是错的）。 */
+.result-body {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 20px;
+}
+
+.rail-meta {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+/* ══ 五、有图态：图与右列等高 ════════════════════════════════════════
+
+   用户原话："图片右侧有文字，但是文字下面没有多少内容。"
+   实测：有图态里图是 300×300，右列（简介 + 营养表）实测高约 430
+   ⇒ **图下方空出约 130px**，首屏里这块空最显眼。
+
+   根因是 .dish-cols 用了 `align-items: start`：图按自身比例落位（300×300），
+   右列被营养表 6 行真实数据撑到 430，两者不等高，短的那边就露出空白。
+
+   改法：让**图吸收高度差**（stretch + object-fit:cover 裁切，不变形）。
+   为什么不是反过来把右列压短——右列的高度是营养表 6 行的真实高度，
+   压它只能靠砍行或缩行高，那是拿数据换版面；图是视觉块，
+   让它吸收差值不损失任何信息，且竖构图的美食图本来就更像"端上来的那盘"。 */
+.dish-cols {
+  align-items: stretch;
+}
+
+.dish-cols .dish-figure {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dish-cols .dish-figure img {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 220px;
+  object-fit: cover;
+}
+
+/* 图注占自身高度，不跟着被拉伸。 */
+.dish-cols .dish-figure figcaption {
+  flex: 0 0 auto;
+}
+
+/* ── 区块间距再收一档（"空白还是这个问题"）───────────────────────────
+   报头 → 两列：--s4(40) 收到 --s3(24)；做法区 → 折叠区的 34 也收到 24。
+   这些都是上一轮各自随手定的值，与页面统一的 24 节奏不合，
+   累加起来就是页面上几段"没有内容的横带"。 */
+.dish-top {
+  margin-bottom: var(--s3);
+}
+
+.steps-block {
+  margin-bottom: var(--s3);
+}
+
+/* 步骤卡奇数条时，尾卡只占半行、右半整块空（实测 5 条时右侧空约 320px——
+   这也是"文字下面没有多少内容"能看到的另一处）。让尾卡跨满全宽：
+   它多是"合锅拌面"这类收尾步骤，句子本来也比前面的长。 */
+.steps > li:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+/* 页尾：.tn 的 96px 底内边距是给首屏房留的，结果页内容已经到底，
+   页脚之前因此多出近 100px 空带。只收结果页这一档——
+   用 :has() 限定，首屏/等待页的节奏不受影响；
+   浏览器不支持 :has() 时这条整条不生效，退化成原样，不会坏。 */
+.tn:has(.result) {
+  padding-bottom: 48px;
+}
+
+

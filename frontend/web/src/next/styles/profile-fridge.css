@@ -1,0 +1,88 @@
+/* ── 冰箱块的拍照入口（2026-10-14）─────────────────────────────────────
+   接的是后端**早就有**的 `/api/fridge/vision`（草稿契约见 fridge_route.py 的
+   「AI 识别草稿，请确认或删改后写入」）：认出食材 → 填进补货框 → 用户按下
+   「存进冰箱」才真写。此前这一块只能手打，而人站在冰箱前最自然的动作是拍一张。
+
+   为什么另起一个文件：profile.css 已 981 行，这个块加进去就越过 check-layers
+   的 1000 行上限（同 fav.css / fav-cards.css 的拆法）。加载顺序紧跟 profile.css
+   之后，`main.tsx` 与 `scripts/check-layers.mjs` 两处必须同步登记；本文件不覆盖
+   profile.css 的任何既有选择器。
+
+   几何与书写面的 `.ask-photo-btn` 同语汇（细描边圆形、无填充、34×34、图标 17px），
+   但**类名独立**：`ask-` 前缀属于书写面，跨房间借用会让"这块样式归谁"在半年后
+   无人能答。 */
+
+.pf-fridge-shot {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 真的 input[type=file] 不占位：它是按钮的扳机，不是界面的一部分。
+   用 display:none 而不是 visibility/opacity —— 后者仍参与布局、会把补货行撑高。 */
+.pf-fridge-shot-file {
+  display: none;
+}
+
+.pf-fridge-shot-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, color 0.18s;
+}
+
+.pf-fridge-shot-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pf-fridge-shot-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 识别中：按钮不消失（它同时是"正在忙"的唯一可见信号），只压成注记色。 */
+.pf-fridge-shot-btn.is-busy {
+  color: var(--ink-faint);
+  cursor: progress;
+}
+
+/* 图标与书写面那枚同占位 17px：圆一样大，里面的图形也就该一样大。
+   Icon 组件的 svg 是 1em 见方，这里把盒子定死，不靠父级字号传。 */
+.pf-fridge-shot-btn .icon {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+/* 结果 / 失败说明：**浮层，不参与布局**（出现时不推挤输入框与按钮，
+   补货行高度因此不随一次 502 变化）。锚在按钮的正上方。
+   后端原话可能很长（实测形如「视觉识别失败：Error code: 404 - ... Model not
+   exist.」），所以限高、内部滚动，不截断内容。 */
+.pf-fridge-shot-note {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 4;
+  width: max-content;
+  max-width: 320px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--fs-note);
+  line-height: 1.55;
+  color: var(--ink-soft);
+}

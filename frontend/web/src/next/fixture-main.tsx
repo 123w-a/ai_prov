@@ -34,6 +34,7 @@ import './styles/service.css'
 // 必须与 main.tsx 同步——否则候选卡在夹具台量到的几何不是正式页的。
 import './styles/candidate.css'
 import './styles/profile.css'
+import './styles/atmosphere.css'
 
 import { RunResult } from './views/ResultView.tsx'
 import { WaitCard } from './blocks/WaitCard.tsx'
@@ -41,6 +42,7 @@ import { AskRail } from './blocks/AskRail.tsx'
 import { AskComposer } from './blocks/AskComposer.tsx'
 import { CASES, CASE_IDS } from './fixtures.ts'
 import { leadBodyPhrase } from './data/viewModel.ts'
+import { weekView } from './data/firstScreen.ts'
 
 /**
  * 只读夹具台（/fixture.html）。
@@ -72,6 +74,37 @@ const current = CASES[caseId]
 const zoom = Number(query.get('zoom') ?? '')
 if (Number.isFinite(zoom) && zoom > 0 && zoom !== 1) {
   document.documentElement.style.zoom = String(zoom)
+}
+
+/* ?fridge=鸡蛋,秋葵,面条 —— 只读覆盖冰箱清单。
+ *
+ * 为什么必须在这里开一个口子：等待页的冰箱来自 GET /api/fridge（真实返回是
+ * 「鸡蛋、西兰花、面条、大蒜」四样，**全都已登记**），浏览器里再没有别的入口
+ * 能把"未登记食材"送进 WaitFacts 那条渲染路径。验收要证的是两件事同时成立：
+ * 命中的出图、未命中的只有名字——前者真实后端就有，后者只能由夹具给。
+ *
+ * 实现刻意只换这一个端点的响应，其余请求原样透传；WaitCard / WaitFacts /
+ * useHousehold 全是正式那一份，走的仍是同一条路径（本夹具台存在的意义）。
+ * ?fridge=（空值）就是「冰箱清空」这一降级态的现成入口。 */
+const fridgeOverride = query.get('fridge')
+if (fridgeOverride !== null) {
+  const items = fridgeOverride
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const realFetch = window.fetch.bind(window)
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url.includes('/api/fridge')) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ items }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+    }
+    return realFetch(input, init)
+  }
 }
 
 /* ?stroke=0 —— 关掉伪粗体做对照。
@@ -143,6 +176,9 @@ const linkStyle = {
 
 const rootEl = document.getElementById('root')
 if (!rootEl) throw new Error('夹具台页面缺少 #root 容器')
+/* 取下非空类型：上面的 throw 只在本模块顶层生效，mount() 是函数体、又在
+   `.finally(() => …)` 的闭包里被调用，TS 不会把那份收窄带进去。 */
+const host: HTMLElement = rootEl
 
 /* 只在容器还是空的时候挂载。
  *
@@ -154,14 +190,15 @@ if (!rootEl) throw new Error('夹具台页面缺少 #root 容器')
  *
  * 为什么必须修：这个夹具台是我做视觉验收的证据源，而验收判据里有一条是
  * console 零错误。留一条自己制造的常驻错误，等于给后面每一步都埋一个假红灯。 */
-if (rootEl.childElementCount === 0) {
-  createRoot(rootEl).render(
+function mount() {
+  if (host.childElementCount !== 0) return
+  createRoot(host).render(
     <StrictMode>
       <div className="tn">
         <header className="tn-head">
           <span className="tn-brand">小膳管家</span>
           <span className="tn-dot" />
-          <h1 className="tn-title">今晚这一顿</h1>
+          <h1 className="tn-title">今天吃什么</h1>
           <span className="tn-conn">就绪</span>
         </header>
 
@@ -197,7 +234,7 @@ if (rootEl.childElementCount === 0) {
             <div className="ask-layout">
               <div className="ask-main">
                 <h2 className="ask-lead">
-                  今晚这一顿，按<em>{leadBodyPhrase(current.rail?.fam?.members.length)}</em>来定。
+                  今天吃什么，按<em>{leadBodyPhrase(current.rail?.fam?.members.length)}</em>来定。
                 </h2>
 
                 {/* 书写面**直接复用 AskComposer 组件**，不再照抄一份 markup。
@@ -268,6 +305,31 @@ if (rootEl.childElementCount === 0) {
       )}
     </StrictMode>,
   )
+}
+
+/* ?week=live —— 用**真实后端**这一周的数据渲染右栏的本周块（GET /api/reports/weekly
+ * 经 dev server 的 /api 代理到 8010，与正式页同一条路），raw JSON 走**正式适配器**
+ * weekView()。这里一个数值都不写死。
+ *
+ * 为什么需要这个口子：候选轮那个变体（variant='candidate'）只在真实候选轮里渲染，
+ * 而真实候选轮要真跑一次 LLM（本次验收明令禁止真发消息）；而「三项趋势全是
+ * insufficient」这条分支**只能**由真实数据触发——夹具里那份手写周报（RAIL_WEEK）
+ * 的趋势是 improving/stable，走不到那条分支，于是「长期趋势 · 数据不足」这行字
+ * 永远验不到。只换 rail.week 这一个字段，其余一律照旧。 */
+const wantLiveWeek = query.get('week') === 'live'
+if (wantLiveWeek) {
+  fetch('/api/reports/weekly')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((raw) => {
+      const live = raw ? weekView(raw) : null
+      const rail = CASES.candidates.rail
+      if (live && rail) rail.week = live
+    })
+    // 拿不到就照夹具那份渲染，不静默变空白：读失败与"这周没数据"是两件事。
+    .catch(() => {})
+    .finally(() => mount())
+} else {
+  mount()
 }
 
 

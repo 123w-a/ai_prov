@@ -68,8 +68,15 @@ def _resolve_log_dir() -> Path:
 
     兜底分支的意义：换机器、HOME 只读、目录被安全软件锁住时，宁可日志写回项目内，
     也不能让「写日志」把主链路带崩（本项目的日志约定是失败一律静默）。
-    这里用 ``mkdir`` + ``os.access`` 判断，不落临时文件——本项目环境对 ``unlink``
-    有特殊处理（会被改写成重命名），探针文件反而会留垃圾。
+
+    判据是 ``_is_writable``（真写一次），**不是** ``os.access``——理由见那个函数。
+    （2026-10-15 更正：本段原先写的是"用 ``mkdir`` + ``os.access`` 判断，不落临时
+    文件"，那正是要被修掉的做法本身；探针文件写完即删，最坏只留一个删不掉的空
+    文件，代价远小于"把一个写不进的目录判成可写"。）
+
+    实测差异值得记一笔：同一台机器上，受限沙箱里运行的服务进程判
+    ``%LOCALAPPDATA%`` 不可写，而带 full-access 的交互式 shell 手动写却成功。
+    所以"我手工试过能写"**不能**推翻服务进程里的判定——两边问的不是同一个问题。
     """
     _load_dotenv_early()
     candidates: list[Path] = []
@@ -81,14 +88,38 @@ def _resolve_log_dir() -> Path:
     candidates.append(DATA_DIR)
 
     for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            if os.access(candidate, os.W_OK):
-                return candidate
-        except Exception:
-            continue
+        if _is_writable(candidate):
+            return candidate
 
     return DATA_DIR
+
+
+def _is_writable(directory: Path) -> bool:
+    """真的往里写一个文件，而不是问 ``os.access``。
+
+    2026-10-14 踩坑：``os.access(..., os.W_OK)`` 在 Windows 上**不看 ACL**，
+    只回答"这个路径存在吗"——沙箱或安全软件只拦写入时会照样返回 True，于是
+    这里选中一个实际写不进去的目录，直到 ``RotatingFileHandler`` 构造时才抛
+    ``PermissionError``，把启动链路带崩。判定可写只有一个可靠办法：写一次。
+
+    探针文件用固定名字、写完即删；删不掉也只留一个空文件（本项目环境把 unlink
+    改写成重命名，宁可留一格垃圾，也不留一次误判）。
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
+    probe = directory / ".write-probe"
+    try:
+        with open(probe, "w", encoding="utf-8") as handle:
+            handle.write("")
+    except Exception:
+        return False
+    try:
+        probe.unlink()
+    except Exception:
+        pass
+    return True
 
 
 LOG_DIR = _resolve_log_dir()

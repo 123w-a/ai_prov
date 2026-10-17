@@ -28,8 +28,11 @@ export function AskEcho({ text, at }: { text: string; at?: number | null }) {
 
   return (
     <aside className="ask-echo">
+      {/* 前缀与时间右置照预期图 result-expect.png：「你的请求：…｜今天 10:24」一行读完。
+          原文仍照录不截断（纪律 1/2/3 不变），只有版式与这行的小标签按图改。 */}
+      <span className="ask-echo-label">你的请求：</span>
       <p className="ask-echo-text">{t}</p>
-      {at ? <p className="ask-echo-stamp">记录于 {formatStamp(at, Date.now())}</p> : null}
+      {at ? <p className="ask-echo-stamp">{formatStamp(at, Date.now())}</p> : null}
     </aside>
   )
 }

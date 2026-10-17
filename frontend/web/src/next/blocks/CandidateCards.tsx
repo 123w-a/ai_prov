@@ -40,7 +40,10 @@ export function CandidateCards({
       <ul className="cand-list">
         {list.map((c) => (
           <li className="cand-card" key={c.index}>
-            <span className="cand-no">{c.index}</span>
+            {/* 显示两位补零（稿上是 01/02/03）。**只补显示**：点击回给后端的
+                仍是 c.index 原值（ResultView 拼的 `第${c.index}个`），补零值
+                绝不能进那条链路——后端认的是正文里的原序号。 */}
+            <span className="cand-no">{String(c.index).padStart(2, '0')}</span>
             <b className="cand-name">{c.name}</b>
             {/* 推荐理由：正文里本来就有（后端规则要求"菜名后接 —— 再写一句约 30 字
                 的理由"），此前被解析器丢掉了。它在预期图里就是菜名下那一行小字。

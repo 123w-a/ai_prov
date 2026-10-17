@@ -14,26 +14,40 @@
    书写面本身就是那块空间"，抽出组件时这条 flex 链断在这里，这里接回去。
 
    对结果页无副作用：那边 .composer 的父级 .result 是普通块，flex:1 不生效，
-   也不会把结果页拉长。 */
+   也不会把结果页拉长。
+
+   2026-10-10 重对版**撤回这条 flex:1**：实测它从未兑现原意——面板
+   .composer-panel 仍是内容高度（285px），多出的 265px 只是变成 composer
+   内部的空白（视觉位置与 10-04 之前完全一样），而副作用是**把示例区挤出
+   首屏**（示例 top 852，视口 900；稿里示例在 583）。稿的底部留白（示例之后
+   约 296px）本来就是构图的一部分，也是左下叶丛的落点，所以剩余高度应落在
+   末尾，不该被中段吃掉。 */
 .composer {
-  flex: 1;
+  flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-/* 结果页底部那一档：按裁决做成**低权重、静态**的书写面。
-   与正文之间用一条发丝线分隔（而不是留白或卡片），因为这条线的意思是
-   "以上是这一轮的结果，以下是你下一句话的起点"——它是分段，不是装饰。
+/* 结果页底部那一档：低权重、静态的书写面。
+   **不与结果抢焦点**这条不变：不悬浮、不加阴影、不描边发光。结果内容仍然
+   是"本轮已完成"，这里只是下一轮的开始，抢了焦点就等于让结果显得没结束。
 
-   克制点：不悬浮、不加阴影、不描边发光。结果内容本身仍然是"本轮已完成"，
-   这里只是下一轮的开始，抢了焦点就等于让结果显得没结束。 */
+   2026-10-15 改语汇（用户原话：「就那边的输入框不要横线，然后画风视觉效果和
+   整体前端差不多」）。此前这一档沿用 10-04 第三轮那套**一叠稿纸**：
+   上下发丝线定栏口 + 左侧一条装订线 + 面上按行高 27.2px 打横向格线。
+   四条线叠在同一块面上，输入区在页尾读成**表格里的一格**，而不是"可以打字的
+   地方"——用户连着两轮抱怨的就是这件事（前一轮说的是"这个输入框肯定是不好的"）。
+
+   现在它与首屏用**同一套面板语汇**：暖陶面板内嵌一块白面。分隔改由面板自身
+   与上方内容的距离承担——首屏档本来就是这么分的，那条 border-top 因此去掉，
+   否则它和面板的顶边会在 6px 内并排成两道线。 */
 .composer.is-followup {
   /* 结果页那条不撑高：它是"下一轮的起点"，不该把结果页拉长。 */
   flex: 0 0 auto;
-  margin-top: 34px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 /* 提示语压到最轻：它只是指路，不是内容。 */
@@ -42,20 +56,57 @@
   font-size: 12px;
 }
 
-/* 结果页这档的纸只有两行高（12 + 27.2×2 + 12 ≈ 78px）。
- * 首屏那张纸要吃掉卡内剩余高度，结果页不需要：它是"下一轮的起点"，
- * 一张 136–190px 的稿纸压在结果下面，会把已经完成的那一轮重新拉成主体。
- * 两行足够写"换一道"这种一句话，同时保住"这是同一张纸"的语汇。 */
-.composer.is-followup .ask-field {
-  min-height: 0;
-  max-height: none;
-  height: 78px;
+/* ── 结果页档的面板语汇（2026-10-15）──────────────────────────────────
+   与首屏 `.composer:not(.is-followup) .composer-panel` 同源（面板底
+   --entry-panel、描边 --line-strong、圆角 --radius-lg），只在**体量**上分档：
+   首屏那块是满尺寸书写台，结果页这块是"接着写一句"的浅盘，所以内外缩进
+   各收一档。首屏面板右上的枝叶与左下的碗筷**不在这里出现**——那两件是
+   首屏方向稿对这一处的构图要求，结果页没有稿，不该凭空长出来。 */
+.composer.is-followup .composer-panel {
+  background: var(--entry-panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px 10px;
 }
 
-/* 2026-10-04 第三轮：这里原本是"关掉首屏那套印刷语汇"（四角裁切标记 +
-   引导弧线）。书写面重做成编辑台之后那两样都已删除，::before 换成了
-   **左侧边距线**——它承担的是排版对齐而不是装饰，结果页同样需要，
-   所以不能再关。::after 已不存在，本块整体去掉。 */
+/* 白面：四条稿纸线在这里全部关掉，改由**四面描边**界定。
+   与首屏同一句判断——「这里是能打字的一块面」，不是一张有格线的纸。 */
+.composer.is-followup .ask-field {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  /* 高度按内容走：结果页这档 rows=1，一行文字 + 上下内边距。
+     不继承 base 的 clamp(136px,16vh,190px)（那是一整页稿纸的量），
+     也不继承它的窄屏 136px 定高（那条 @media 会在手机上把它撑成一张大纸）。 */
+  height: auto;
+  min-height: 56px;
+  max-height: none;
+  padding: 12px 14px;
+}
+
+/* 装订线是稿纸语汇的一部分，白面里没有装订侧（与首屏同一句判断）。 */
+.composer.is-followup .ask-field::before {
+  content: none;
+}
+
+.composer.is-followup .ask-input {
+  /* 格线随稿纸语汇一并关掉：它是"按行高 27.2px 画的稿纸横线"，
+     白面输入区里没有稿纸。左内边距也归零——原来的 18px 是给装订线让位的，
+     线没了，让位就没有对象。 */
+  padding: 0;
+  background-image: none;
+}
+
+/* 焦点信号：稿纸档靠装订线转 accent，面板档那条线已 content:none，
+   改由**白面自身边框**转 accent（与首屏同一句话：笔落在这块面上）。 */
+.composer.is-followup .ask-field:focus-within {
+  border-color: var(--accent);
+}
+
+/* 动作行与白面之间留一档，按钮仍在右下（.ask-go 自带 margin-left:auto）。 */
+.composer.is-followup .ask-actions {
+  margin-top: 12px;
+}
 
 /* 提交按钮跟着降一档：不填强调色，保持描边的次要形态。
    结果是这一页的主角，按钮不该比结果的标题还显眼。 */
@@ -63,3 +114,534 @@
   background: transparent;
   color: var(--ink-soft);
 }
+
+/* ── 首屏输入面板（2026-10-10 首屏方向稿，用户六条之第 6 条「输入框的背景」）──
+   设计稿 ask-expect.png 把书写面画成一块**有底有边的暖陶面板**：
+     · 面板底 = 稿内实测 #E9D9C4（令牌 --entry-panel），圆角约 12 档（--radius-lg）
+     · 面板里嵌一块白面输入区（稿 #FBF5F0 ≈ --surface #fbf6f0，差 1 阶不另开令牌）
+     · 提交钮在面板右下、全胶囊（--radius-pill）+ 箭头「开始 →」
+     · hint「一句话就够…」排在面板**上方**（AskComposer 里已提到 panel 外）
+   上一版是"一叠稿纸"（上下发丝线 + 左边距线）——那是 10-04 第三轮的裁决，
+   本轮用户全盘认可新稿，面板语汇替换稿纸语汇。**只作用于首屏档**：
+   所有选择器都带 :not(.is-followup)，结果页书写面一个字节不变。
+
+   高度不动：面板高度 = 内容高度（纸高 clamp 吃空白的逻辑仍在 .ask-field 上），
+   面板**不** flex:1 撑满——设计稿里面板是紧凑一块，它下方的空白留在面板外。 */
+.composer:not(.is-followup) .composer-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  background: var(--entry-panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px 18px;
+  /* 2026-10-11：overflow 从 hidden 改回 visible。原注释说"让伸出面板的枝根被
+     裁掉，只留探进来的那部分"——但**稿不是这样**：逐格墨迹图（assets-build.cjs
+     map 950 200 1170 400 6）显示这枝叶的墨迹落在稿 x992..1100 / y232..335，
+     而面板顶边在 y300 —— 枝叶**大半在面板外的纸面上**（y232..296），
+     只有下缘压在面板陶底上（y302..335）。裁掉伸出部分正好把稿里最显眼的
+     纸面那半枝削掉。 */
+  overflow: visible;
+  position: relative;
+  /* 给 ::before 的 z-index:-1 一个本地层叠上下文：叶画在**面板底色之上、
+     面板内容之下**——稿的层次就是"陶底上压着叶影，叶不盖字"。 */
+  isolation: isolate;
+}
+
+/* 面板右上角那枝叶（2026-10-11：恢复，并改用**从稿切片**的位图）。
+ *
+ * 这条规则的历史要写清楚，因为上一轮是**基于错误测量把它删掉的**：
+ *   第六轮的注释说"稿在主区 x840..1020/y100..330 的叶色像素 bbox 是 x844..974
+ *   y132..330"，据此认为面板右上那枝是重复渲染、整条撤掉。但那次扫描用的
+ *   判据是"亮度<175"，而稿在这一带最暗的墨是**标题文字**（「今晚这一顿，按两
+ *   个人的身体来定。」实测 y130..172、横跨 x330..1040）——它整段落进滤色带，
+ *   于是扫描量到的"叶"其实是字。真实位置见本文件上方 map 命令的输出：
+ *   叶在 x992..1100 / y232..346，与标题带（y130..172）**不重叠**。
+ *
+ * 恢复后的做法不再手绘：切片资产 branch-right.png（100×113 稿 px →
+ * 89×100.5 CSS px，源 window x975..1112/y228..346），闸门 maskIoU 0.913 /
+ * 覆盖率差 1.2% / 直方 EMD 0.0000。切片保住了稿"同一枝上浅叶与深叶交错"的
+ * 两色关系（用户 2026-10-11 明确点为差异点之一：叶子有明暗之分，不是一色）。
+ *
+ * 定位：稿的叶右端 x1096 = 面板右边框、叶顶 y239 在面板顶 y300 之上 61×S
+ * ≈ 54.3 CSS px ⇒ right:0 / top:-54.3px（两者都按切片 manifest 的 designBbox
+ * 起算，不是按印象里的墨迹边缘）。盒子即切片 bbox，所以 100%/100% 与 contain
+ * 等价（不留黑边）。 */
+.composer:not(.is-followup) .composer-panel::before {
+  content: '';
+  position: absolute;
+  top: -54.3px;
+  right: 0;
+  width: 88.9px;
+  height: 100.5px;
+  background: url('../assets/hero/branch-right.png') no-repeat right top / 100% 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* 面板外的提示语：紧贴面板上方，与面板同一段宽度。
+   2026-10-10 第六轮（画风对齐）：13px → 15px。取证是行带高度：稿的副标题
+   文字带 y193..209（高 17px）、实拍 13px 只有 13px 级；带高比 17/40 ≈ 0.43，
+   标题 34px ⇒ 副标题 ≈ 15px。原值小两号，所以"标题之下那行字像脚注"。
+
+   同一轮把**它与面板之间的间距**从 12px 放到 76px：稿的行图（.tmp-p2a/rowmap.ps1，
+   x330..1010 的"有墨行"）显示稿副标题带在 y193..208、面板内第一行字（标签）在
+   y301..318，之间只有右上一枝叶（x898..959），其余整片空白；实拍原来只隔 12px，
+   面板落在 y221。按稿的 76px 放，面板顶落到 y285 —— 与稿的 y≈280..285 对齐，
+   面板底 510+64-44（下面白面收高 44）= 530，与稿的面板底发丝线 y528 差 2px。
+   这不是"把留白调大"的审美偏好，是行图量出来的两处锚点（面板顶、面板底）。 */
+.composer:not(.is-followup) .ask-hint-brief {
+  display: block;
+  margin-bottom: 76px;
+  font-size: var(--fs-body);
+}
+
+/* 面板档的标签（设计稿「🌿 你想吃什么」）：从 12px faint 升到 --fs-data + ink——
+   稿里它是面板里清晰的一行字，不是脚注。小叶图标跟 currentColor 走。 */
+.composer:not(.is-followup) .ask-label {
+  font-size: var(--fs-data);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.06em;
+}
+
+.ask-label-leaf {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
+/* 面板内的输入区：从"稿纸的上下发丝线"换成"嵌进面板的白面"。
+   白底让输入文字与暖陶面板底分离（设计稿就是这样——底色一深一浅分两层），
+   上下发丝线与左边距线在四面围合的白面里都是多余的，去掉。
+
+   2026-10-10 第六轮：**白面收高**。base 的 `height: clamp(136px,16vh,190px)`
+   在 1366×900 实测 144px，而稿的白面（占位文字 y356..372、右边缘竖条 y300..400）
+   约 100px —— 稿的书写面是一块紧凑的浅盘，不是三行稿纸。同一次行图里，
+   稿"占位行→碗行"的间距是 356→460=104px，实拍是 294→439=145px，差的 41px
+   几乎全在白面高度上。改成本档专用 clamp(96px,11vh,120px)：900 高下 = 99px，
+   面板整体随之从 289 收到 245 —— 稿的面板（y≈285..528）是 243。
+   只作用于首屏档（.composer:not(.is-followup)），结果页书写面不动。 */
+.composer:not(.is-followup) .ask-field {
+  border-top: 0;
+  border-bottom: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  height: clamp(96px, 11vh, 120px);
+  /* 白面自己要呼吸：文字不贴边。左边距保留与标签的同栏对齐。 */
+  padding: 14px 16px;
+}
+
+.composer:not(.is-followup) .ask-field::before {
+  /* 面板档关掉左边距线（装订线是稿纸语汇的一部分，白面里没有装订侧）。 */
+  content: none;
+}
+
+.composer:not(.is-followup) .ask-input {
+  /* 文字色与行距继承 base 的定义；白面自己有 14/16 内边距，textarea 不再
+     重复给（原来的 12px 顶距是给稿纸格线对位的）。格线随稿纸语汇一并关掉——
+     它是"按行高 27.2px 画的稿纸横线"，白面输入区里没有稿纸。 */
+  padding: 0;
+  background-image: none;
+}
+
+/* 焦点信号（面板档）：稿纸档的焦点靠左边距线转 accent（.ask-field:focus-within::before），
+   面板档那条线已 content:none，焦点改由**白面自身边框**转 accent 表示——
+   "笔落在这块面上"，同一句话换了落点。 */
+.composer:not(.is-followup) .ask-field:focus-within {
+  border-color: var(--accent);
+}
+
+/* 动作行：面板内底部，按钮靠右（margin-left:auto 是 base 的 .ask-go 自带）。 */
+.composer:not(.is-followup) .ask-actions {
+  margin-top: 16px;
+}
+
+/* 首屏按钮：全胶囊 + 比描边更实的量感（设计稿「开始 →」是面板里唯一的实心块）。 */
+.composer:not(.is-followup) .ask-go {
+  border-radius: var(--radius-pill);
+  /* 2026-10-10 画风对齐：稿的按钮高约 44px（原 38px）——它是面板里唯一的实心块，
+     稿给足了分量。
+     2026-10-10 第六轮：按**实底外接框**再校一次（.tmp-p2a/measure-btn-card.ps1，
+     只统计强调色实心像素，视口坐标）：
+       稿   x823..974 (w152)  h≈46   |   实拍 x856..983 (w128)  h=50
+     即稿的按钮**更宽、略矮**。改为 13/46 → 实测高 46、宽约 144，两侧留白
+     比原来的 38 更接近稿的比例（稿的按钮比本实现宽 19%）。 */
+  padding: 13px 46px;
+}
+
+/* 面板左下的碗筷（2026-10-11：改用**从设计稿切片**的位图，替换手绘 SVG）。
+   切片来源 frontend/web/scripts/assets/assets-build.cjs（cut 档），资产在
+   src/next/assets/hero/bowl.png，盒子 181×56 稿 px → 161×49.8 CSS px
+   （S=1366/1536=0.889323）。闸门：maskIoU 0.984 / 覆盖率差 0.3% / 直方 EMD 0.0000。
+   尺寸按切片 bbox 定，所以"碗在面板左下、底板伸向右侧、底部留柔影"这三段
+   关系与稿一致；不再靠手调 stroke-width 逼近。
+
+   2026-10-12：本件是操作行的**第二泄压口**（语音说明让尽之后才轮到它，故
+   flex-shrink 取 1，与 `.ask-voice` 的 1000 一起把让位排成两级），并改
+   `contain` 等比缩小——原来 `100% 100%` 在窄盒里会把碗**横向压扁**成怪比例。
+   bowl.png 内在 181×56、盒子 161×49.8，两者比值 3.2321 / 3.2329，所以满宽时
+   contain 的画幅与 100% 100% 只差 0.04px，1366 视觉不变。 */
+.composer:not(.is-followup) .ask-dish-art {
+  flex: 0 1 auto;
+  align-self: center;
+  width: 161px;
+  height: 49.8px;
+  margin-right: auto;
+  background: url('../assets/hero/bowl.png') no-repeat left center / contain;
+  pointer-events: none;
+}
+
+/* ── 语音按钮（2026-10-12）──────────────────────────────────────────────
+   位置：`.ask-actions` 内、`.ask-go` **左边**。形状按设计稿那一行的语汇来：
+   细描边、无填充、currentColor，麦克风与同排那片叶 `svg` 同笔宽 1.4
+   （同一行里两枚图形不该是两种线重）。
+
+   几何安全线：本组高度 34px，**小于同排的碗（49.8px）**，所以
+   `.ask-actions` 的高度不变 ⇒ 首屏纸面板一个像素都不动（验收项）。
+
+   2026-10-12 修复「开始 → 跑出面板」：`.ask-actions` 是 nowrap，各件原本全是
+   flex:none，所以面板一变窄就只能整行右溢——`.ask-go` 的 margin-left:auto 在
+   负余量下归零，按钮因此被顶到面板右边界之外（1280 越界 58px，1024 越界 314px）。
+   本组是这一行的**第一泄压口**：`flex-shrink:1000` 让它先把同排那句隐私说明交给
+   `.ask-voice-priv` **已有的**省略号吃掉（那条规则本来就写着"宽度不够时省略号
+   截断，绝不换行增高"），让尽（组最小 = 麦克风 34 + gap 10 = 44px）之后才轮到碗图。
+   1366 尚有 6.56px 正余量 ⇒ 收缩根本不触发 ⇒ 冻结几何逐项不变。
+
+   `min-width: 44px` 不是随便取的：flex 项的 `min-width:auto` 会把本组钉死在
+   内容宽度（那句话 `white-space:nowrap`，min-content 就是整句 204px），所以必须
+   显式给下限才收缩得动；下限取 34（麦克风）+10（gap）= 44，即**组内只允许那句
+   说明被吃光，麦克风本身绝不被压**。 */
+.ask-voice {
+  position: relative;
+  flex: 0 1000 auto;
+  min-width: 44px; /* = .ask-voice-btn 34 + gap 10 */
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 隐私边界：音频走后端转写，不是"完全本地"，所以界面上必须有这一句。
+   它是说明不是操作，压到注记档；宽度不够时省略号截断，绝不换行增高。 */
+.ask-voice-priv {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+
+/* ── 2026-10-14：候选轮的书写面（is-followup）里这句话被省略号吃掉了 ──────
+   实测：首屏那条 204/204（不截断，冻结几何里的一项），候选轮的 followup
+   书写面窄 19.33px（同一行还有 `提问→语音→拍照→开始` 四件），这句话被压到
+   190.33 而内容需要 204，于是省略号吃掉最后两个字「识别」——隐私说明被截半句
+   是**实质性**损失，不是排版瑕疵。
+
+   只改 followup 这一个变体，首屏那条一个字都不动。允许折行：
+   `.ask-actions` 的高度由 49.8px 的碗决定，这句话折成两行是 40.78px，
+   仍然低于碗 ⇒ 行高不变、面板不增高（实测见报告）。
+   text-wrap:balance 是给"折成两行时第二行只剩一两个字"用的：这句话 17 个字，
+   贪心折行的实测是 180px + 24px（第二行两个孤字），balance 把两行折成相近长度，
+   读起来像一句被排过的注记，而不是排坏了；窄屏折到 6 行以上时浏览器自动退回
+   普通折行，不影响可用性。 */
+.composer.is-followup .ask-voice-priv {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-wrap: balance;
+}
+
+.ask-voice-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, color 0.18s;
+}
+
+.ask-voice-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ask-voice-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 录音中：实心砖红 + 图标反白 + 一圈缓慢呼吸环。
+   砖红借用既有的 --seal（它本来就是"深砖红实底 + 白字"那一对），
+   **不新增任何色值**——所以这条样式不需要动 tokens.css。 */
+.ask-voice-btn.is-rec {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: var(--seal-ink);
+  animation: ask-voice-breathe 2s ease-in-out infinite;
+}
+
+.ask-voice-btn.is-busy {
+  color: var(--ink-faint);
+  cursor: progress;
+}
+
+.ask-voice-ico {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+@keyframes ask-voice-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--seal) 45%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--seal) 0%, transparent);
+  }
+}
+
+/* 只有图标变色**不算**"看得见"：录音中另起一行字（键盘/读屏也读得到）。 */
+.ask-voice-live {
+  flex: none;
+  font-size: var(--fs-note);
+  letter-spacing: 0.04em;
+  color: var(--seal);
+}
+
+.ask-voice-live.is-busy {
+  color: var(--ink-faint);
+}
+
+/* 失败 / 空结果的说明：**浮层，不参与布局**——出现时不推挤输入框与按钮，
+   首屏纸面板高度因此不随错误状态变化（否则一次权限拒绝会把下面整块顶下去）。 */
+.ask-voice-note {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 3;
+  width: max-content;
+  max-width: 300px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--fs-note);
+  line-height: 1.55;
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-voice-btn.is-rec {
+    animation: none;
+  }
+}
+
+/* ── 拍照认食材按钮（2026-10-12）──────────────────────────────────────────
+   位置：`.ask-actions` 内、`.ask-voice` **右侧、`.ask-go` 左侧**。
+   为什么不排在语音左边：语音那行隐私说明紧贴麦克风左侧，相机插到说明左边会让
+   这行字读成相机的说明（详见 AskComposer 里的注释与局部放大图）。
+
+   几何**逐项取自同排的 `.ask-voice-btn`**（不是"看起来差不多"）：
+   34×34 / 1px `--line-strong` / `--radius-pill` / `--ink-soft` / hover 转
+   `--accent` / focus-visible 2px `--accent`。同排两枚按钮是两种量，比少一枚按钮
+   更难看——验收里用 getComputedStyle 对两者逐项取值、要求相等，就是防这一条。
+   之所以不把两边合并成一个选择器：合并要改到语音那 60 行的既有规则，
+   而本次是**增量接入**，不动已验收的按钮；同值靠上面这条约束 + 验收断言维持。
+
+   高度 34px 与语音一致、都小于同排的碗（49.8px），所以 `.ask-actions` 高度不变
+   ⇒ 面板与"开始"按钮一个像素都不动（验收项：改动前后 rect 逐项相同）。 */
+.ask-photo {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 真的 input[type=file] 不占位：它是按钮的扳机，不是界面的一部分。
+   用 display:none 而不是 visibility/opacity —— 后者仍会参与布局并把这一行撑高。 */
+.ask-photo-file {
+  display: none;
+}
+
+.ask-photo-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, color 0.18s;
+}
+
+.ask-photo-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ask-photo-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 识别中：按钮不消失（它同时是"正在忙"的唯一可见信号），只压成注记色。 */
+.ask-photo-btn.is-busy {
+  color: var(--ink-faint);
+  cursor: progress;
+}
+
+/* 图标与语音那枚同占位 17px：圆一样大，里面的图形也就该一样大。
+   Icon 组件的 svg 是 1em 见方，这里直接把盒子定死，不靠父级字号传。 */
+.ask-photo-btn .icon {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+/* 只有图标变色**不算**"看得见"：识别中另起一行字（与 `.ask-voice-live` 同款）。 */
+.ask-photo-live {
+  flex: none;
+  font-size: var(--fs-note);
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+/* 结果 / 失败说明：**浮层，不参与布局**（出现时不推挤输入框与按钮，
+   面板高度因此不随一次 502 变化）。锚点与 `.ask-voice-note` 同款；
+   两者不会同时出现（一次只有一个动作在跑），若将来同时出现，两段文字会叠在
+   一起——那时要给它们错开锚点，而不是把这一条删掉。 */
+.ask-photo-note {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 3;
+  width: max-content;
+  max-width: 320px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--fs-note);
+  line-height: 1.55;
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+/* ── 「出去吃」入口条（2026-10-12）────────────────────────────────────
+   它在 `.composer-panel` **正下方、通栏**，排在「试试这样问」与示例卡**之上**；
+   展开时由 AskView 把示例卡就地撤掉（同一位置互换），所以展开前后的构图
+   是**同一格**——示例不会被挤到折叠线下面。 */
+.ask-nearby {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-nearby-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* 高度约书写面面板（245px）的四分之一：稿的这条是"扁横向入口"，
+     不是第二张卡片。 */
+  min-height: 60px;
+  padding: 12px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--entry-panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+
+.ask-nearby-bar:hover {
+  border-color: var(--accent);
+}
+
+.ask-nearby-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ask-nearby-pin {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--accent-ink);
+}
+
+.ask-nearby-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ask-nearby-caret {
+  flex: none;
+  font-size: var(--fs-note);
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+/* 展开区的**高度护栏**：1366×900 实测（.tmp 取证见交付）——不加这条时
+   展开后 document.body.scrollHeight 1170 → 1190（列比示例卡高 20px），
+   而这一条把上限卡在 366px，展开/收起两态的 scrollHeight **严格相等**。
+   366 不是设计值，是"零净增"的实测边界：它依赖右栏三块的高度（904.34）
+   与示例卡的高度（159.5），换视口就不再精确。
+   内容更长时**内部滚动，不截断**——宁可让列表滚，也不能把版心拉长、
+   或者把某家店藏起来不说。要换成自适应得让 .ask-main 走 flex 列布局，
+   那会改动既有 margin 折叠行为（版心风险），本轮不做。 */
+.ask-nearby-body {
+  margin-top: 12px;
+  max-height: 366px;
+  overflow: auto;
+}
+
+.ask-nearby-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ask-nearby-note {
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+/* 导航外链：「去这家店」是列表的下一步，与菜系/人均同级。
+   服务房不传 navUrl ⇒ 那边不会渲染出这一节点，观感一个字节不变。 */
+.sv-rest-nav {
+  flex: none;
+  margin-left: 10px;
+  font-size: var(--fs-note);
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+

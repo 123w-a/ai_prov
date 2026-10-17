@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { MemberInput } from '../../api/client.ts'
 import { MEMBER_FIELDS, toDraft, toMemberInput, type MemberDraft } from '../data/memberDraft.ts'
+import { enterIntent } from '../data/enterToSend.ts'
 
 /**
  * 成员编辑器（新增 / 修改共用一份）。
@@ -38,6 +39,18 @@ export function MemberForm({
       onSubmit={(e) => {
         e.preventDefault()
         if (canSave) onSubmit(toMemberInput(d))
+      }}
+      /* Enter = 保存（用户原话：「按一下 enter 键就应该要开始了」）。
+         判定复用 data/enterToSend.ts，与今晚房的输入框同一份：'send' 才拦下来、
+         'newline'/'ignore' 一律放行。拦下后走 requestSubmit——它是本表单**现成的**
+         那条 onSubmit，不在这里另写一套提交逻辑（disabled 状态也照旧由 canSave 管）。
+         只认 <input>：<select>（性别）的回车是打开下拉，不能吃掉。 */
+      onKeyDown={(e) => {
+        if (!(e.target instanceof HTMLInputElement)) return
+        if (enterIntent(e.nativeEvent) !== 'send') return
+        e.preventDefault()
+        if (!canSave) return
+        e.currentTarget.requestSubmit()
       }}
     >
       <div className="mf-grid">

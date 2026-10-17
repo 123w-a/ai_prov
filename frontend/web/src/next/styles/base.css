@@ -5,26 +5,26 @@
 html,
 body {
   margin: 0;
-  /* ── 地板（2026-10-01 解冻 → 2026-10-04 第二轮）────────────────
-   * 三层叠，顺序即上下关系（CSS 里第一个在最上）：
-   *   ① --paper  纸纹，最上，0.035 不透明度的噪点
-   *   ② --grid   图纸网格，居中
-   *   ③ --room-wash 房间底光，最下，**半透明**
-   * 最底下是 background-color 的 --bg-deep（比原来的 --bg 沉一档）。
+  /* ── 地板（2026-10-01 解冻 → 2026-10-04 第二轮 → 2026-10-10 第四轮）──
+   * 2026-10-10 用户裁决「网格彻底去掉」：三层里撤掉 --grid，只剩
+   *   ① --paper  纸纹，最上，0.035 不透明度的噪点（保留：纸的质感，不是格子）
+   *   ② --room-wash 房间底光，最下，**半透明**
+   * 最底下是 background-color 的 --bg-deep。
    *
-   * wash 的半透明是这轮的关键：它在顶部近似不透明，把网格盖住，
-   * 页头区域因此还是干净的；越往下越透明，网格与更沉的底露出来。
-   * 三层都 fixed：滚动时内容在动、光与网格不动，进深感才是真的
-   * （这是投影，不是贴图）。色值全部在 tokens.css，本文件只引 token
-   * （check-layers d 条）。 */
+   * 这是对 10-08「根本没有页面背景」的一次方向修正，依据是设计稿
+   * ask-expect.png 的像素实测：稿的页纸底 rgb(248,242,234) 是**均匀纸面**，
+   * 采样点上没有格子线；稿的"背景感"由**叶饰**（右上大枝、左下大丛）承担，
+   * 不由网格承担。10-08 那轮把网格从 3.5% 加到 8.5% 再 11%，是把"背景"
+   * 误解成了"格子"。
+   *
+   * ⚠️ background-image / -attachment / -size 三个值列**必须同步增减**：
+   * 注释里记着的旧坑是层数与值数不匹配时整列回落（漏一个 size 会让下一层
+   * 掉回 120px 瓦片）。撤掉 --grid 后由 4 层变 2 层（--grid 本身是两层渐变）。 */
   background-color: var(--bg-deep);
-  background-image: var(--paper), var(--grid), var(--room-wash);
-  background-attachment: fixed, fixed, fixed, fixed;
-  /* 四个尺寸值对应四层：纸纹 120px、网格横/纵两层各自 56px（必须与
-   * --grid-size 一致，否则瓦片边界与 56px 周期不整除、接缝处会挤出碎线）、
-   * wash 铺满。这一条是 getComputedStyle 读出来的：--grid 是**两层**渐变，
-   * 漏一个值就会让第 4 层回落成 120px 瓦片。 */
-  background-size: 120px 120px, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size), cover;
+  background-image: var(--paper), var(--room-wash);
+  background-attachment: fixed, fixed;
+  /* 两个尺寸值对应两层：纸纹 120px、wash 铺满。 */
+  background-size: 120px 120px, cover;
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -137,7 +137,11 @@ body {
    * 仍然只改视觉不挪 DOM：.ask-main 在文档里排前面，屏幕阅读器的朗读顺序与 Tab
    * 顺序都还是「主内容优先」，眼睛看到的才是预期图的栏序；窄屏落回 block 时按
    * DOM 顺序，依旧是主卡在上、窄栏在下，同样成立。 */
-  grid-template-columns: minmax(0, 1fr) var(--rail, 278px);
+  /* 2026-10-09：原写 `var(--rail, 278px)`，而 --rail 是**左导航**的宽度，
+   * 于是这一栏拿到的从来不是 fallback 278，而是左导航的值。
+   * 左导航 208→192 时它跟着变 192，19px 的「按谁的档案来定」当场折行才暴露。
+   * 改用语义正确的 --side（见 tokens.css）。 */
+  grid-template-columns: minmax(0, 1fr) var(--side, 240px);
   /* ── 2026-10-01 解冻：两栏等高 ──
    * 原来 align-items:start 让左右各按自身内容定高，主区那张"纸"只占
    * 顶部三分之一、底部空出 400px 白地——那正是"家具没摆好"的直接原因。
@@ -150,19 +154,19 @@ body {
 .ask-main {
   grid-area: 1 / 1; /* 行也要钉死：只写 grid-column 时 .ask-side 会被自动放置挪到第二行 */
   min-width: 0;
-  /* ── 家具：主区容器（2026-10-01 解冻）───────────────────
-   * 从"裸排在纸上的一段文字"改成一张**有边、有光、有底**的卡片。
-   * 三件套缺一不可：亮一档的 --surface 让它从背景浮起，--shadow-paper
-   * 给它落地的光，--surface-line 描出边界。层次来自明度与光，
-   * 不碰任何语义色。圆角用 --radius-card（14px），比旧 3px 明显，
-   * 是解冻后第一处形态变化。 */
+  /* ── 2026-10-10 设计稿重对版：主区**不再是浮起的大卡** ──────────
+   * 设计稿里标题、输入面板、示例都直接坐在页面纸底上——没有包住整片的
+   * 边、光与圆角，层级由「纸底 → 面板陶底 → 示例陶底 + 右栏亮卡」的明度
+   * 差承担。10-01 解冻时的"家具三件套"（bg/border/shadow）属于旧稿的
+   * 大白卡形态，新稿（用户全盘认可）里没有，按退场处理；撑满等高
+   * （stretch 职责）与 flex 纵排结构不变，padding 留内容呼吸。 */
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--surface-line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-paper);
-  padding: 32px 44px 44px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 10px 24px 40px 32px;
 }
 
 .ask-side {
@@ -180,66 +184,49 @@ body {
 
 .ask-lead {
   margin: 0 0 var(--s3);
-  /* ── 篇首图形（2026-10-05 用户裁决：要"更具体的图形，而不是普通小玩意"）
-   * 由 lave1 的设计师模型（gpt-image-2）出稿，本处是按选定构图的矢量重绘。
-   * 左侧 52px 图形 + 66px 文字缩进：**不动字号、字重、字体**——40px 宋体已经够重，
-   * "高级"来自图形的体量与克制，不是把标题加大加粗。
-   * 上一版是"栏口线 + 朱红回纹小章"，被用户判为"普通小玩意"：抽象符号承载不了
-   * "具体图形"的期待，所以这次换成可辨认的物件形象。 */
-  position: relative;
-  padding-left: 66px;
-  /* 字体四件套与结果页 .dish-name 逐字对齐，修的是「同一产品首屏黑体、
-   * 结果页宋体」的断裂——那才是「看着素」的第一来源。
-   * 字重必须是 400、不能沿用原来的 600：Windows 上 SimSun 只有 400 一档，
-   * 给它 600 会触发**合成粗体**（同套字形向右下偏移重绘，发虚糊边），
-   * 而 stroke 是沿轮廓描一圈、不产生第二份字形。font-synthesis:none 是前提，
-   * 不关掉它浏览器照样合成，stroke 就白加了。详见 result-v3.css 的 .dish-name。 */
+  /* ── 2026-10-10 设计稿重对版：标题回到**纯文字、左对齐、自然断行** ──────
+   * ① 删 padding-left: 66px——它是给 10-05 那枚碗筷篇首图形让位的；图形已按
+   *    新稿退场，图形走了缩进还在，标题被整体右推 66px，看着像居中。
+   * ② 删 text-wrap: balance——稿是自然断行（第一行「今晚这一顿，按两个人的
+   *    身体」、第二行「来定。」）；balance 会把两行排匀，断位与稿不符。
+   * ③ 2026-10-10 二次校正：**不加 max-width**。放大图 design-A「标题行」格
+   *    显示稿的标题是**一行**（「今晚这一顿，按两个人的身体来定。」完整排一行，
+   *    940px 宽区域内），字号约 34px。我先前的 40px + max-width 13.6em 把标题
+   *    逼成两行，方向是反的——稿的标题更小、更安静，一行读完。
+   * 字号/字重/字体/字距四件套的其余三项不动：宋体 + stroke 是既定的"高级"来源。
+   *
+   * 2026-10-10 第六轮（用户：「画风也不一致，似乎不是一个层面的前端视觉」）：
+   * **字重不足**是这一条的主要来源。取证方式是把稿与实拍放在**同一像素密度**下
+   * 逐行统计"墨量"（.tmp-p2a/rowprofile.ps1 + clusters.ps1）：
+   *   标题行带高   稿 40px（y124..163）  |  实拍 40px（y160..199）  ← 字号一致
+   *   带内墨量     稿 23.7%             |  实拍 16.4%              ← 笔画细 45%
+   *   行带高度相同而墨量差 45% ⇒ 差的是**笔画粗细**，不是字号（字号这条已排除）。
+   * stroke 0.5 → 0.8px 即按这个比例补：SimSun 无粗体档、font-synthesis:none 又
+   * 挡掉合成粗体，能加粗细的只剩 text-stroke 这一条路。 */
   font-family: var(--serif);
-  font-size: clamp(26px, 4.4vw, 40px);
+  font-size: clamp(24px, 3.4vw, 34px);
   font-weight: 400;
   font-synthesis: none;
-  -webkit-text-stroke: 0.5px currentColor;
+  /* 2026-10-10 第六轮：0.5 → 0.8px（依据见上，稿的笔画比本实现粗约 45%）。 */
+  -webkit-text-stroke: 0.8px currentColor;
   line-height: 1.24;
   /* 中文不该吃西文的负字距：-0.025em 是给拉丁大标题收紧用的，落到汉字上
    * 会让笔画彼此相碰（40px 时尤其明显）。汉字取微正字距，读起来才透气。 */
   letter-spacing: 0.01em;
-  /* balance 修的是孤字行：标题原来在 40px 下把「定。」单独顶到第二行，
-   * 两行长度悬殊。balance 让浏览器自己把两行排匀（一行放不下时才生效）。 */
-  text-wrap: balance;
+  /* 2026-10-10 重对版：**删掉 text-wrap: balance**（原注释见下）。
+   * 它会把两行排匀（实测把「两」拉到第一行、得到「今晚这一顿，按两 / 个人的
+   * 身体来定。」），而稿是自然断行「今晚这一顿，按两个人的身体 / 来定。」。
+   * 原注释保留在案：balance 原本修的是孤字行，新稿的断位本身就是"长行 + 短行"，
+   * 不再需要它。 */
+  text-wrap: wrap;
   color: var(--ink);
 }
 
-/* 篇首图形：绝对定位在文字左侧、不参与行盒，所以不影响 balance 的换行计算。 */
-.ask-lead-art {
-  position: absolute;
-  left: 0;
-  top: 2px;
-  width: 52px;
-  height: 52px;
-  /* 与 em 同色（--accent）：图形与强调文字共用一个色，整页是多一份呼应，
-     而不是多引入一种颜色。 */
-  color: var(--accent);
-  pointer-events: none;
-}
-
-/* 卡片右上角的菜篮：设计师（lave1 / gpt-image-2）的 P2 稿，**直接用位图**，不再矢量重绘。
-   我按同一张稿手绘了六版 path，篮身的扁度、提手的扁度和菜的大小始终追不上原稿——
-   与其交付一个"像但不如"的仿作，不如用设计师给的图。
-   资源在 public/next-basket.png（472×188 @2x，缩到 236×94 显示）；出图时已把线条
-   重新着色成 --accent 的精确值 rgb(169,111,78)，所以它与左侧碗筷、与 em 仍是同一个色，
-   不额外引入颜色（这也是当初不选位图的顾虑，现在已经解决）。
-   锚在 .ask-lead 上而非 .ask-main：后者是 flex 纵向容器且为 static，
-   图形若走流会占掉垂直空间、把整卡往下推。 */
-.ask-aside-art {
-  position: absolute;
-  /* 尺寸是照着那片空白的实际形状定的：标题两行右侧的空白实测 246×99（约 2.5:1），
-     所以用 236×94 的横条画幅、右边对齐内容区右边。 */
-  top: 2px;
-  right: 0;
-  width: 236px;
-  height: 94px;
-  pointer-events: none;
-}
+/* 篇首图形与右上菜篮位图的两条规则**已删**（2026-10-10 重对版）：
+ * .ask-lead-art（碗筷 52px 绝对定位）与 .ask-aside-art（next-basket.png 236×94）
+ * 对应的 DOM 已按新稿移除，规则留着就是死代码——它们还会让后来的人以为
+ * 标题左侧/右侧仍该有图形。新稿的图形氛围由页面级叶饰承担
+ * （右上 .ask-main::before、左下 .starter::after）。 */
 
 .ask-lead em {
   font-style: normal;
@@ -410,6 +397,21 @@ body {
   padding: 15px 20px 14px;
   border: 1px solid var(--line);
   background: var(--bg-raise);
+  /* 2026-10-08 照预期图一行读完：「你的请求：原话……｜今天 10:24」。
+     三列 grid：标签 + 原文（长就折在本列内，照录不截断）+ 时间右置同行。 */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 4px;
+  row-gap: 8px;
+  align-items: baseline;
+}
+
+/* 前缀小标签：它是版式的一部分（不是用户的话、也不是模型的话），弱化处理。 */
+.ask-echo-label {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  white-space: nowrap;
 }
 
 /* 四角裁切标记：8 层渐变各画一段线（四角 × 横竖各 11px）。
@@ -447,14 +449,28 @@ body {
   color: var(--ink);
 }
 
-/* 记录时刻：等宽数字小字。它是账目不是装饰，所以走 faint。 */
+/* 记录时刻：等宽数字小字，右置第三列（预期图的「今天 10:24」）。
+   它是账目不是装饰，所以走 faint；没有时刻时第三列不存在，前两列不受影响。 */
 .ask-echo-stamp {
-  margin: 9px 0 0;
+  margin: 0;
+  grid-column: 3;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   letter-spacing: 0.05em;
+  white-space: nowrap;
   color: var(--ink-faint);
+}
+
+/* 窄屏：时间跟在原文后没地方放，落回单列——标签、原文、时间依次堆叠。 */
+@media (max-width: 720px) {
+  .ask-echo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ask-echo-stamp {
+    grid-column: auto;
+  }
 }
 
 /* ── 操作行（2026-10-01 解冻 → 2026-10-04 改版）────────────────
@@ -705,17 +721,10 @@ body {
   font-weight: 600;
 }
 
-.shell-tab.is-on::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: 4px;
-  width: 20px;
-  height: 2px;
-  margin-left: -10px;
-  border-radius: 1px;
-  background: var(--accent);
-}
+/* `.shell-tab.is-on::after`（横排顶栏时代那道 20×2 的下划线）已删除：2026-10-11
+   用户裁决导航选中项不再有任何形状标记，稿上收藏选中态只有「浅陶圆角块 + 砖红
+   图标」。竖栏里 rail.css 曾用同名规则把它改成左缘竖条，那条也已一并删除——
+   只删 rail.css 那条会让这道横线原地露出来（content 定义在本文件）。 */
 
 /* 右侧上下文与左侧信息之间立一根发丝线：原来它只靠 margin-left:auto
  * 飘在最右，与四个房间之间没有任何结构关系。 */

@@ -1,0 +1,856 @@
+{
+  "scale": 0.8893229166666666,
+  "source": "ask-expect.png 1536x1024",
+  "howTo": "node frontend/web/scripts/assets/assets-build.cjs cut",
+  "navIconsSource": "nav-* 五项：nav-tonight/nav-weekly/nav-fav/nav-svc 切自 .tmp-img/design-round/profile-expect-v5.png，nav-profile 切自 fav-expect-v4.png（profile 稿里该项压在选中底块上且是加深色，故换稿取同款未选中态）；产出脚本 .tmp-nav/nav-slice.cjs（assets-build.cjs 的可传源副本，算法与闸门同一份）",
+  "elements": [
+    {
+      "id": "bowl",
+      "file": "bowl.png",
+      "note": "面板左下角的碗（碗口/碗身/筷子/底板/柔影）",
+      "designBbox": {
+        "x": 322,
+        "y": 536,
+        "w": 181,
+        "h": 56
+      },
+      "cssWidth": 160.97,
+      "cssHeight": 49.8,
+      "bytes": 19012,
+      "gate": {
+        "maskIoU": 0.9843,
+        "coverageDiff": 0.0031,
+        "centroidShift": [
+          -0.2,
+          0.12
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "branch-right",
+      "file": "branch-right.png",
+      "note": "面板右上角那枝叶（同一枝上浅叶与深叶交错）",
+      "designBbox": {
+        "x": 996,
+        "y": 239,
+        "w": 100,
+        "h": 113
+      },
+      "cssWidth": 88.93,
+      "cssHeight": 100.49,
+      "bytes": 19136,
+      "gate": {
+        "maskIoU": 0.9134,
+        "coverageDiff": 0.0118,
+        "centroidShift": [
+          -0.7,
+          -0.83
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "vine-main-bl",
+      "file": "vine-main-bl.png",
+      "note": "主区左下叶（被页底裁断；极淡，单色背景+单独降阈值）",
+      "designBbox": {
+        "x": 252,
+        "y": 942,
+        "w": 80,
+        "h": 82
+      },
+      "cssWidth": 71.15,
+      "cssHeight": 72.92,
+      "bytes": 9084,
+      "gate": {
+        "maskIoU": 0.912,
+        "coverageDiff": 0.0075,
+        "centroidShift": [
+          -0.91,
+          0.45
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "vine-nav-bl",
+      "file": "vine-nav-bl.png",
+      "note": "导航列左下藤（与主区那枝明暗不同）",
+      "designBbox": {
+        "x": 5,
+        "y": 892,
+        "w": 136,
+        "h": 132
+      },
+      "cssWidth": 120.95,
+      "cssHeight": 117.39,
+      "bytes": 28374,
+      "gate": {
+        "maskIoU": 0.9814,
+        "coverageDiff": 0.003,
+        "centroidShift": [
+          -0.04,
+          -0.11
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "sprig-top-l",
+      "file": "sprig-top-l.png",
+      "note": "主区左上、分隔线右侧的小枝",
+      "designBbox": {
+        "x": 281,
+        "y": 21,
+        "w": 41,
+        "h": 34
+      },
+      "cssWidth": 36.46,
+      "cssHeight": 30.24,
+      "bytes": 1913,
+      "gate": {
+        "maskIoU": 0.9351,
+        "coverageDiff": 0.0036,
+        "centroidShift": [
+          1.23,
+          1.15
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "icon-1",
+      "file": "icon-1.png",
+      "note": "示例图标 1（鱼）",
+      "designBbox": {
+        "x": 325,
+        "y": 719,
+        "w": 34,
+        "h": 32
+      },
+      "cssWidth": 30.24,
+      "cssHeight": 28.46,
+      "bytes": 3347,
+      "gate": {
+        "maskIoU": 0.9901,
+        "coverageDiff": 0.0016,
+        "centroidShift": [
+          -0.01,
+          0
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "icon-2",
+      "file": "icon-2.png",
+      "note": "示例图标 2（碗）",
+      "designBbox": {
+        "x": 537,
+        "y": 719,
+        "w": 35,
+        "h": 31
+      },
+      "cssWidth": 31.13,
+      "cssHeight": 27.57,
+      "bytes": 3163,
+      "gate": {
+        "maskIoU": 0.9594,
+        "coverageDiff": 0.0242,
+        "centroidShift": [
+          -0.14,
+          -0.31
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "icon-3",
+      "file": "icon-3.png",
+      "note": "示例图标 3（西兰花）",
+      "designBbox": {
+        "x": 743,
+        "y": 719,
+        "w": 32,
+        "h": 32
+      },
+      "cssWidth": 28.46,
+      "cssHeight": 28.46,
+      "bytes": 2982,
+      "gate": {
+        "maskIoU": 0.9953,
+        "coverageDiff": 0.0035,
+        "centroidShift": [
+          -0.02,
+          0.03
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "icon-4",
+      "file": "icon-4.png",
+      "note": "示例图标 4（汤碗）",
+      "designBbox": {
+        "x": 952,
+        "y": 719,
+        "w": 33,
+        "h": 31
+      },
+      "cssWidth": 29.35,
+      "cssHeight": 27.57,
+      "bytes": 2933,
+      "gate": {
+        "maskIoU": 0.9437,
+        "coverageDiff": 0.0383,
+        "centroidShift": [
+          -0.05,
+          -0.36
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "card-leaf-1",
+      "file": "card-leaf-1.png",
+      "note": "右栏卡1（按谁的档案来定）右上角叶",
+      "designBbox": {
+        "x": 1461,
+        "y": 41,
+        "w": 47,
+        "h": 43
+      },
+      "cssWidth": 41.8,
+      "cssHeight": 38.24,
+      "bytes": 4476,
+      "gate": {
+        "maskIoU": 0.7862,
+        "coverageDiff": 0.0451,
+        "centroidShift": [
+          -1.41,
+          0.44
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "card-leaf-2",
+      "file": "card-leaf-2.png",
+      "note": "右栏卡2（本周）右上角叶",
+      "designBbox": {
+        "x": 1460,
+        "y": 354,
+        "w": 48,
+        "h": 44
+      },
+      "cssWidth": 42.69,
+      "cssHeight": 39.13,
+      "bytes": 4395,
+      "gate": {
+        "maskIoU": 0.7714,
+        "coverageDiff": 0.0521,
+        "centroidShift": [
+          -0.11,
+          0.31
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "card-leaf-3",
+      "file": "card-leaf-3.png",
+      "note": "右栏卡3（冰箱）右上角叶",
+      "designBbox": {
+        "x": 1460,
+        "y": 812,
+        "w": 48,
+        "h": 44
+      },
+      "cssWidth": 42.69,
+      "cssHeight": 39.13,
+      "bytes": 4371,
+      "gate": {
+        "maskIoU": 0.8696,
+        "coverageDiff": 0.0354,
+        "centroidShift": [
+          -1.16,
+          0.1
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-tonight",
+      "file": "nav-tonight.png",
+      "note": "导航图标·今晚这一顿（房子）；源 profile-expect-v5.png",
+      "designBbox": {
+        "x": 40,
+        "y": 135,
+        "w": 24,
+        "h": 24
+      },
+      "cssWidth": 21.34,
+      "cssHeight": 21.34,
+      "bytes": 2083,
+      "gate": {
+        "maskIoU": 0.9659,
+        "coverageDiff": 0.0039,
+        "centroidShift": [
+          -0.01,
+          0.05
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-weekly",
+      "file": "nav-weekly.png",
+      "note": "导航图标·周报（折线图）；源 profile-expect-v5.png",
+      "designBbox": {
+        "x": 40,
+        "y": 268,
+        "w": 23,
+        "h": 23
+      },
+      "cssWidth": 20.45,
+      "cssHeight": 20.45,
+      "bytes": 1946,
+      "gate": {
+        "maskIoU": 0.9126,
+        "coverageDiff": 0.0356,
+        "centroidShift": [
+          -0.15,
+          -0.17
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-fav",
+      "file": "nav-fav.png",
+      "note": "导航图标·收藏（小星星，用户点名）；源 profile-expect-v5.png 未选中态",
+      "designBbox": {
+        "x": 39,
+        "y": 334,
+        "w": 25,
+        "h": 24
+      },
+      "cssWidth": 22.23,
+      "cssHeight": 21.34,
+      "bytes": 2042,
+      "gate": {
+        "maskIoU": 0.9848,
+        "coverageDiff": 0.011,
+        "centroidShift": [
+          -0.07,
+          0.02
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-svc",
+      "file": "nav-svc.png",
+      "note": "导航图标·服务（心形）；源 profile-expect-v5.png 未选中态",
+      "designBbox": {
+        "x": 40,
+        "y": 401,
+        "w": 24,
+        "h": 23
+      },
+      "cssWidth": 21.34,
+      "cssHeight": 20.45,
+      "bytes": 1942,
+      "gate": {
+        "maskIoU": 0.9461,
+        "coverageDiff": 0.0042,
+        "centroidShift": [
+          -0.07,
+          -0.01
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-profile",
+      "file": "nav-profile.png",
+      "note": "导航图标·身体档案（人像）；源 fav-expect-v4.png 未选中态（profile 稿里这枚压在选中底块上、且是加深色，故选同画风的收藏稿取未选中态）",
+      "designBbox": {
+        "x": 40,
+        "y": 201,
+        "w": 22,
+        "h": 24
+      },
+      "cssWidth": 19.57,
+      "cssHeight": 21.34,
+      "bytes": 1841,
+      "gate": {
+        "maskIoU": 0.9355,
+        "coverageDiff": 0,
+        "centroidShift": [
+          -0.22,
+          -0.13
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "nav-profile-on",
+      "file": "nav-profile-on.png",
+      "note": "导航图标（选中态）·身体档案（人像加深版）；稿上真实像素，源 profile-expect-v5.png 的当前项",
+      "designBbox": {
+        "x": 40,
+        "y": 201,
+        "w": 23,
+        "h": 24
+      },
+      "cssWidth": 20.45,
+      "cssHeight": 21.34,
+      "bytes": 1918,
+      "gate": {
+        "maskIoU": 0.9784,
+        "coverageDiff": 0,
+        "centroidShift": [
+          -0.04,
+          -0.05
+        ],
+        "labHistEMD": 0.0005
+      }
+    },
+    {
+      "id": "nav-fav-on",
+      "file": "nav-fav-on.png",
+      "note": "导航图标（选中态）·收藏（五角星加深版，用户点名的那枚）；稿上真实像素，源 fav-expect-v4.png 的当前项",
+      "designBbox": {
+        "x": 38,
+        "y": 333,
+        "w": 26,
+        "h": 24
+      },
+      "cssWidth": 23.12,
+      "cssHeight": 21.34,
+      "bytes": 2061,
+      "gate": {
+        "maskIoU": 0.9533,
+        "coverageDiff": 0.0164,
+        "centroidShift": [
+          -0.04,
+          0.03
+        ],
+        "labHistEMD": 0.0045
+      }
+    },
+    {
+      "id": "nav-svc-on",
+      "file": "nav-svc-on.png",
+      "note": "导航图标（选中态）·服务（心形加深版）；稿上真实像素，源 service-expect-v5.png 的当前项",
+      "designBbox": {
+        "x": 39,
+        "y": 402,
+        "w": 25,
+        "h": 23
+      },
+      "cssWidth": 22.23,
+      "cssHeight": 20.45,
+      "bytes": 2086,
+      "gate": {
+        "maskIoU": 0.9623,
+        "coverageDiff": 0.0078,
+        "centroidShift": [
+          0.04,
+          0.02
+        ],
+        "labHistEMD": 0.002
+      }
+    },
+    {
+      "id": "nav-tonight-on",
+      "file": "nav-tonight-on.png",
+      "note": "导航图标（选中态）·今晚这一顿 —— 【推导，非稿上像素】稿里这一项没有选中态样本；它的未选中位图切自 profile-expect-v5.png，故按**该稿自身**实测的选中/未选中色差套色生成：描边段 R×1.261 G×0.904 B×0.670、填充段 R×0.976 G×0.863 B×0.788（按亮度分段线性过渡）；alpha 与几何完全沿用未选中版，未做任何形态推定。",
+      "derived": true,
+      "derivedFrom": "nav-tonight.png",
+      "colorShift": {
+        "strokeRatio": [
+          1.261024062802306,
+          0.9038232614012713,
+          0.6700275743461487
+        ],
+        "fillRatio": [
+          0.9761192246848974,
+          0.862656979205059,
+          0.7883976149279862
+        ],
+        "method": "per-pixel, brightness-segmented per-channel multiplication"
+      },
+      "designBbox": {
+        "x": 40,
+        "y": 135,
+        "w": 24,
+        "h": 24
+      },
+      "cssWidth": 21.34,
+      "cssHeight": 21.34,
+      "bytes": 2093,
+      "gate": {
+        "derived": true,
+        "note": "推导产物：无独立源像素，稿上闸门（maskIoU/覆盖率差/EMD）不适用"
+      }
+    },
+    {
+      "id": "nav-weekly-on",
+      "file": "nav-weekly-on.png",
+      "note": "导航图标（选中态）·周报 —— 【推导，非稿上像素】稿里这一项没有选中态样本；它的未选中位图切自 profile-expect-v5.png，故按**该稿自身**实测的选中/未选中色差套色生成：描边段 R×1.261 G×0.904 B×0.670、填充段 R×0.976 G×0.863 B×0.788（按亮度分段线性过渡）；alpha 与几何完全沿用未选中版，未做任何形态推定。",
+      "derived": true,
+      "derivedFrom": "nav-weekly.png",
+      "colorShift": {
+        "strokeRatio": [
+          1.261024062802306,
+          0.9038232614012713,
+          0.6700275743461487
+        ],
+        "fillRatio": [
+          0.9761192246848974,
+          0.862656979205059,
+          0.7883976149279862
+        ],
+        "method": "per-pixel, brightness-segmented per-channel multiplication"
+      },
+      "designBbox": {
+        "x": 40,
+        "y": 268,
+        "w": 23,
+        "h": 23
+      },
+      "cssWidth": 20.45,
+      "cssHeight": 20.45,
+      "bytes": 1963,
+      "gate": {
+        "derived": true,
+        "note": "推导产物：无独立源像素，稿上闸门（maskIoU/覆盖率差/EMD）不适用"
+      }
+    },
+    {
+      "id": "fv-title-star",
+      "file": "fv-title-star.png",
+      "note": "页头「收藏」左侧大号砖红星形图标",
+      "designBbox": {
+        "x": 304,
+        "y": 104,
+        "w": 33,
+        "h": 33
+      },
+      "cssWidth": 29.35,
+      "cssHeight": 29.35,
+      "bytes": 3256,
+      "gate": {
+        "maskIoU": 0.9937,
+        "coverageDiff": 0.0016,
+        "centroidShift": [
+          -0.06,
+          0.04
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-sub-icon",
+      "file": "fv-sub-icon.png",
+      "note": "副标题前的小图标（一对小碗叠放）",
+      "designBbox": {
+        "x": 305,
+        "y": 158,
+        "w": 28,
+        "h": 19
+      },
+      "cssWidth": 24.9,
+      "cssHeight": 16.9,
+      "bytes": 1913,
+      "gate": {
+        "maskIoU": 0.8052,
+        "coverageDiff": 0.0455,
+        "centroidShift": [
+          -0.86,
+          -0.51
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-search-glass",
+      "file": "fv-search-glass.png",
+      "note": "搜索框左侧放大镜图标",
+      "designBbox": {
+        "x": 908,
+        "y": 227,
+        "w": 18,
+        "h": 18
+      },
+      "cssWidth": 16.01,
+      "cssHeight": 16.01,
+      "bytes": 1004,
+      "gate": {
+        "maskIoU": 0.875,
+        "coverageDiff": 0.05,
+        "centroidShift": [
+          0.22,
+          -0.05
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-bookmark",
+      "file": "fv-bookmark.png",
+      "note": "「收藏于 …」行左侧书签图标",
+      "designBbox": {
+        "x": 317,
+        "y": 552,
+        "w": 13,
+        "h": 16
+      },
+      "cssWidth": 11.56,
+      "cssHeight": 14.23,
+      "bytes": 857,
+      "gate": {
+        "maskIoU": 0.9722,
+        "coverageDiff": 0.025,
+        "centroidShift": [
+          -0.03,
+          -0.1
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-card-leaf",
+      "file": "fv-card-leaf.png",
+      "note": "卡片配图右上角的角叶（压在图片上，非压卡片）",
+      "designBbox": {
+        "x": 410,
+        "y": 308,
+        "w": 94,
+        "h": 80
+      },
+      "cssWidth": 83.6,
+      "cssHeight": 71.15,
+      "bytes": 23727,
+      "gate": {
+        "maskIoU": 0.9825,
+        "coverageDiff": 0.008,
+        "centroidShift": [
+          -0.49,
+          -0.17
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-mem-avatar",
+      "file": "fv-mem-avatar.png",
+      "note": "成员行左侧头像圆（浅底 + 人像剪影）",
+      "designBbox": {
+        "x": 1196,
+        "y": 238,
+        "w": 30,
+        "h": 34
+      },
+      "cssWidth": 26.68,
+      "cssHeight": 30.24,
+      "bytes": 2699,
+      "gate": {
+        "maskIoU": 1,
+        "coverageDiff": 0,
+        "centroidShift": [
+          0,
+          0
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-fridge-gar",
+      "file": "fv-fridge-gar.png",
+      "note": "冰箱行·大蒜",
+      "designBbox": {
+        "x": 1202,
+        "y": 749,
+        "w": 54,
+        "h": 25
+      },
+      "cssWidth": 48.02,
+      "cssHeight": 22.23,
+      "bytes": 3220,
+      "gate": {
+        "maskIoU": 0.8401,
+        "coverageDiff": 0.0154,
+        "centroidShift": [
+          -0.34,
+          -0.36
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-rail-icon-1",
+      "file": "fv-rail-icon-1.png",
+      "note": "「按成员推荐」卡头圆形图标。窗口实测：图形 x1192..1225、标题文字 x1242..1299（列段统计），故左界取 1190 保住图形左缘、右界 1242 不碰文字",
+      "designBbox": {
+        "x": 1192,
+        "y": 238,
+        "w": 34,
+        "h": 34
+      },
+      "cssWidth": 30.24,
+      "cssHeight": 30.24,
+      "bytes": 3007,
+      "gate": {
+        "maskIoU": 1,
+        "coverageDiff": 0,
+        "centroidShift": [
+          0,
+          0
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-rail-icon-2",
+      "file": "fv-rail-icon-2.png",
+      "note": "「共同忌口」卡头圈叉图标。图形 x1192..1214、文字 x1232..，故右界 1242",
+      "designBbox": {
+        "x": 1196,
+        "y": 596,
+        "w": 23,
+        "h": 25
+      },
+      "cssWidth": 20.45,
+      "cssHeight": 22.23,
+      "bytes": 1987,
+      "gate": {
+        "maskIoU": 0.8207,
+        "coverageDiff": 0.0588,
+        "centroidShift": [
+          0.46,
+          0.63
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-rail-icon-3",
+      "file": "fv-rail-icon-3.png",
+      "note": "「冰箱现有食材」卡头方盒图标。图形 x1196..1218、文字 x1242..",
+      "designBbox": {
+        "x": 1196,
+        "y": 646,
+        "w": 25,
+        "h": 26
+      },
+      "cssWidth": 22.23,
+      "cssHeight": 23.12,
+      "bytes": 2112,
+      "gate": {
+        "maskIoU": 0.9114,
+        "coverageDiff": 0,
+        "centroidShift": [
+          0.01,
+          -0.05
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-fridge-egg",
+      "file": "fv-fridge-egg.png",
+      "note": "冰箱行·鸡蛋。列段实测：图形 x1196..1220、文字「鸡蛋」x1242..，故左右界取 1190 / 1242",
+      "designBbox": {
+        "x": 1196,
+        "y": 646,
+        "w": 25,
+        "h": 26
+      },
+      "cssWidth": 22.23,
+      "cssHeight": 23.12,
+      "bytes": 2118,
+      "gate": {
+        "maskIoU": 0.8981,
+        "coverageDiff": 0,
+        "centroidShift": [
+          -0.07,
+          0.05
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-fridge-broc",
+      "file": "fv-fridge-broc.png",
+      "note": "冰箱行·西兰花。图形 x1195..1220、文字 x1242..",
+      "designBbox": {
+        "x": 1195,
+        "y": 699,
+        "w": 26,
+        "h": 23
+      },
+      "cssWidth": 23.12,
+      "cssHeight": 20.45,
+      "bytes": 2129,
+      "gate": {
+        "maskIoU": 0.9455,
+        "coverageDiff": 0.0316,
+        "centroidShift": [
+          -0.04,
+          -0.2
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "fv-fridge-nood",
+      "file": "fv-fridge-nood.png",
+      "note": "冰箱行·面条。图形 x1196..1220、文字 x1242..。**稿上冰箱只有这三行**（行段实测 y648..667 / y700..721 / y750..772，其后 y800 是卡片下边线）——真实数据的第四样「大蒜」在稿上没有对应图形，页面上那格留空、文字仍与前三行左缘对齐",
+      "designBbox": {
+        "x": 1196,
+        "y": 749,
+        "w": 25,
+        "h": 25
+      },
+      "cssWidth": 22.23,
+      "cssHeight": 22.23,
+      "bytes": 1967,
+      "gate": {
+        "maskIoU": 0.9444,
+        "coverageDiff": 0.0069,
+        "centroidShift": [
+          0.08,
+          -0.11
+        ],
+        "labHistEMD": 0
+      }
+    },
+    {
+      "id": "wk-title-flower",
+      "file": "wk-title-flower.png",
+      "note": "weekly page-header 4-petal flower seal (design bbox x281..324 y43..87)",
+      "designBbox": {
+        "x": 282,
+        "y": 44,
+        "w": 42,
+        "h": 42
+      },
+      "cssWidth": 37.35,
+      "cssHeight": 37.35,
+      "bytes": 4567,
+      "gate": {
+        "maskIoU": 0.9898,
+        "coverageDiff": 0.0042,
+        "centroidShift": [
+          -0.01,
+          0
+        ],
+        "labHistEMD": 0
+      }
+    }
+  ]
+}

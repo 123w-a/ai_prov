@@ -29,6 +29,14 @@ class ModelProviderTest(unittest.TestCase):
         self.assertNotIsInstance(model, ChatDeepSeek)
 
     def test_vision_defaults_to_qwen_openai_compatible_adapter(self):
+        """provider=qwen 一定走 OpenAI 兼容适配器，绝不落到 ChatDeepSeek。
+
+        只钉**适配器类型**，不钉型号名：型号由 `.env` 的 `VISION_MODEL_NAME` 决定，
+        而它在 `configs.py` 的 import 阶段就被固化进 `VISION_CONFIGS` —— `patch.dict`
+        改不动一个已经算好的字典，`get_vision_llm` 里那句动态读取又只在参数为 None
+        时才兜底。所以钉型号名等于在断言"本机 .env 长什么样"，换台机器就红
+        （2026-10-14 实测：本机设的是 qwen3-vl-plus，这条断言红了，而功能是好的）。
+        型号那一层改由下面那条「参数优先」来钉。"""
         model = get_vision_llm()
 
         self.assertIsInstance(model, ChatOpenAI)
@@ -39,6 +47,12 @@ class ModelProviderTest(unittest.TestCase):
             model.model_name.startswith("qwen"),
             f"视觉模型应为 Qwen 系，实际为 {model.model_name!r}",
         )
+
+    def test_vision_model_name_can_be_overridden_per_call(self):
+        """显式传 model_name 时以参数为准（调用期入参优先于 import 期固化值）。"""
+        model = get_vision_llm(model_name="vision-explicit-fixture")
+
+        self.assertEqual(model.model_name, "vision-explicit-fixture")
 
 
 class SummaryModelTest(unittest.TestCase):

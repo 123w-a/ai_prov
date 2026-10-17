@@ -33,12 +33,17 @@ import { AskView } from '../views/AskView.tsx'
 const SESSION_KEY = 'xiaoshan.sessionId'
 const RUN_KEY = 'xiaoshan.lastRun'
 
-/**
- * 默认话术必须来自真实档案。上一版这里写的是「我爸血压高，做个全家都能吃的」——
- * 那句是我自己编的，档案里根本没有爸爸、也没有高血压，只有小美（孕期）和我（增肌）。
- * 一个会把不存在的家人写进默认输入框的前端，等于在教用户相信系统知道它其实不知道的事。
+/* 2026-10-12 用户裁决：**不再预填任何固定问句**。
+ *
+ * 被删掉的那句固定问句（原话不再于本仓任何位置复述，避免 grep 误判为未删）
+ * 自身就是上一版留下的同一个错误的下一形态：上一版编的是不存在的家人（爸爸/高血压），
+ * 这一版改为把**真实家人的姓名与身体状况**（小美 / 怀孕 / 我 / 增肌）硬编码进输入框默认值——
+ * 名字来自档案、句子却来自代码，两者一旦分叉，页面就会替用户说出他没说过、系统也不知道的话。
+ * 用户要求这处固定问句不再出现，故整条默认话术链路一起退场：输入框一律从空开始，
+ * 恢复存档 / 切换会话 / 从收藏房回来时，**只用真实存下来的那句原话**；没有就留空。
+ * 「试试这样问」的四张示例卡不受影响——它们仍是用户点击后才填进去的引导（四个不同起点，
+ * 不含人名、不含病名），不是任何人的默认话术。
  */
-const DEFAULT_TEXT = '今晚想用冰箱里的东西做一顿，我增肌、小美怀孕，做个我们俩都能吃的。'
 
 /**
  * 会话只建一次：刷新要接回原来那条。
@@ -83,7 +88,7 @@ function loadRun(): { run: RunState; text: string } | null {
     if (r.status === 'succeeded') {
       // 打 archive 标记：从存档恢复的结果页不知道★/赞踩期间有没有被改过（比如
       // 刷新前刚在收藏房取消了收藏），必须回查会话才敢显示真实状态。
-      return { run: { ...r, archive: true }, text: parsed.text ?? DEFAULT_TEXT }
+      return { run: { ...r, archive: true }, text: parsed.text ?? '' }
     }
     if (r.status === 'running') {
       // 页面在跑的过程中被关掉或刷新了：流已经断了，但已经记下来的过程全都是真的。
@@ -91,7 +96,7 @@ function loadRun(): { run: RunState; text: string } | null {
       // 用 localstorage 里真实存下来的 orphanCause，别在这里猜用户做过什么。
       return {
         run: { ...r, orphaned: true, orphanCause: r.orphanCause ?? 'left' },
-        text: parsed.text ?? DEFAULT_TEXT,
+        text: parsed.text ?? '',
       }
     }
     return null
@@ -100,10 +105,46 @@ function loadRun(): { run: RunState; text: string } | null {
   }
 }
 
+/** 上一顿选了谁（2026-10-15）：只存"选了谁"，不存"确认过没有"。 */
+const CREW_KEY = 'dsh.tonight.crew'
+
+/**
+ * 读上次的用餐人，作为这一顿的**默认勾选**。
+ *
+ * 这条是为了不折磨常见情况：家里两个人吃、或者还是昨天那几位，不该每次进来
+ * 都重新点一遍。注意它只是**预勾选**，不是"已确认"——用户仍然要按确认键，
+ * 那一步是「先定这一顿谁吃，再写想吃什么」这个顺序的落点，不能被省掉。
+ *
+ * 读不出来（首次进来 / 存储被禁 / 手改过）一律返回空数组：默认勾错人比默认
+ * 不勾更糟——前者会让用户在没看清的情况下把饭记到别人头上。
+ */
+function loadCrew(): string[] {
+  try {
+    const raw = window.localStorage.getItem(CREW_KEY)
+    const arr: unknown = raw ? JSON.parse(raw) : null
+    if (!Array.isArray(arr)) return []
+    return arr.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+/** 记下这一顿的用餐人，供下一顿预勾选。存不进去只影响下次的默认值，不影响这一顿。 */
+function saveCrew(names: string[]): void {
+  try {
+    window.localStorage.setItem(CREW_KEY, JSON.stringify(names))
+  } catch {
+    /* 隐私模式 / 配额满：静默。这里没有任何需要告诉用户的事，
+       因为这一顿的归属已经随请求发出去了，没丢。 */
+  }
+}
+
 export default function TonightApp() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
-  const [text, setText] = useState(() => loadRun()?.text ?? DEFAULT_TEXT)
+  // 输入框一律从空开始（2026-10-12 用户裁决，理由见本文件顶部那段注释）：
+  // 有真实存档就用存档里那句话，没有就留空——不再有代码自带的默认问句。
+  const [text, setText] = useState(() => loadRun()?.text ?? '')
   const [run, setRun] = useState<RunState>(() => loadRun()?.run ?? EMPTY_RUN)
   // 历史会话侧栏（B 批次③，lave 方案 A）：列表只读 fetchSessions()；
   // 面板形态见 blocks/SessionRail.tsx 的头注释（常驻按钮 + 左浮层，不推挤主区）。
@@ -112,18 +153,29 @@ export default function TonightApp() {
   const [railLoading, setRailLoading] = useState(false)
   const [railError, setRailError] = useState<string | null>(null)
   const [railNotice, setRailNotice] = useState<string | null>(null)
+  /* 本餐用餐人（2026-10-15）。刻意拆成两个 state，它们的生命周期不一样：
+     · `crewPicked` = 选了谁 → 持久化，下一顿默认沿用（loadCrew/saveCrew）；
+     · `crewConfirmed` = 这一步确认过没有 → **只在内存里**，每次进首屏都重来。
+     用户要的是「确认好这一顿是谁吃才开始写」，所以"已确认"不该跨刷新活着：
+     刷新之后又是一顿新的饭，该重新定一次。 */
+  const [crewPicked, setCrewPicked] = useState<string[]>(() => loadCrew())
+  const [crewConfirmed, setCrewConfirmed] = useState(false)
   const startedAt = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   /** 定时存档用的最新值引用，避免把存档 effect 挂到每一批 token 上。 */
   const runRef = useRef(run)
   const textRef = useRef(text)
+  const crewRef = useRef(crewPicked)
   runRef.current = run
   textRef.current = text
+  crewRef.current = crewPicked
 
   const { family, fridge } = useHousehold()
   // 首屏四块的另两块（本周 + 待确认）。家庭与冰箱仍走 useHousehold，
   // 与等待页共用同一份读取；推导（纯函数）在下面一次算好。
-  const { weekly, candidates } = useFirstScreen()
+  // readError：这两块读失败的原因（useFirstScreen 会退避重读直到读到），
+  // 往右栏透传——不能让"后端在重启"和"本周真没有记录"在页面上长得一样。
+  const { weekly, candidates, readError: firstScreenError } = useFirstScreen()
   const fam = familyRows(family)
   const week = weekView(weekly)
   const cand = candidateView(pendingCandidate(candidates))
@@ -270,6 +322,11 @@ export default function TonightApp() {
           sessionId,
           message,
           wantImage: false,
+          // 本餐用餐人（2026-10-15）。走 ref 取最新值，**不**把 crewPicked 加进
+          // 下面 useCallback 的依赖：那会让 send 每勾一次人就变成一个新函数，
+          // 首屏所有绑了它的按钮跟着重挂。与 textRef/runRef 同一套理由。
+          // 空数组时后端收不到这个字段 ⇒ 不写 members 键 ⇒ 这一顿记为未归属。
+          members: crewRef.current,
           // 图片轮三件套：钉到这条卡的这条记录（后端按 record+index 找，不吃菜名
           // 相似度的亏）。普通轮不带——后端只在三件套齐时走钉卡分支。
           ...(img && target
@@ -486,9 +543,10 @@ export default function TonightApp() {
    *    面板顶部同时给出明确文案（「是被取消，不是失败」）。
    *  2 sessionId 要同步写回 localStorage：ensureSession 刷新时读的是缓存，
    *    不写的话切了也白切，一刷新就回到旧会话。
-   *  3 恢复只按该会话**真实存了什么**走：answer 是 JSON 字符串，parse 成功
-   *    才恢复成只读详情（restored=true，动作条按契约隐藏）；parse 失败或
-   *    本就没有 answer → 回提问态，绝不编造详情。
+   *  3 恢复只按该会话**真实存了什么**走：answer 是 JSON 字符串时 parse 成功
+   *    才恢复成只读详情（restored=true，动作条按契约隐藏）；parse 失败说明
+   *    这一轮落库的是**正文本身**（候选轮/纯散文轮），按正文恢复成 prose 结果；
+   *    只有 answer 为空才回提问态，绝不编造详情。
    *  4 点当前会话不折腾（不触发取消、不重置界面）。
    */
   const pickSession = useCallback(
@@ -522,15 +580,21 @@ export default function TonightApp() {
       const s = railSessions.find((x) => x.session_id === sid)
       const msgs = s?.messages ?? []
       const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+      const raw = last?.answer ?? ''
       let detail: ChefAnswer | null = null
-      if (last?.answer) {
+      let prose = ''
+      if (raw) {
         try {
-          detail = JSON.parse(last.answer) as ChefAnswer
+          detail = JSON.parse(raw) as ChefAnswer
         } catch {
+          // 这一轮落库的就是正文本身（候选轮/纯散文轮不产出结构化 JSON）。
+          // 它不是「没有内容」，而是「内容不是卡片」——按正文恢复；
+          // 否则用户点开历史只会看到一个空的提问页，像是这一轮从没答过。
           detail = null
+          prose = raw
         }
       }
-      setText(last?.user_text || DEFAULT_TEXT)
+      setText(last?.user_text || '')
       setRun(
         detail
           ? {
@@ -540,7 +604,15 @@ export default function TonightApp() {
               answer: detail,
               restored: true,
             }
-          : EMPTY_RUN,
+          : prose
+            ? {
+                ...EMPTY_RUN,
+                status: 'succeeded',
+                request: last?.user_text ?? '',
+                body: prose,
+                restored: true,
+              }
+            : EMPTY_RUN,
       )
       setRailOpen(false)
     },
@@ -589,7 +661,7 @@ export default function TonightApp() {
       abortRef.current?.abort()
       abortRef.current = null
       localStorage.removeItem(RUN_KEY)
-      setText(d.ask || DEFAULT_TEXT)
+      setText(d.ask || '')
       setRun(
         d.detail
           ? {
@@ -614,7 +686,7 @@ export default function TonightApp() {
       <header className="tn-head">
         <span className="tn-brand">小膳管家</span>
         <span className="tn-dot" />
-        <h1 className="tn-title">今晚这一顿</h1>
+        <h1 className="tn-title">今天吃什么</h1>
         {/* 历史侧栏的常驻入口：只在今晚房（本组件）渲染，打开时顺手刷新列表。 */}
         <button
           type="button"
@@ -643,6 +715,36 @@ export default function TonightApp() {
           week={week}
           cand={cand}
           fridge={fridgeBox}
+          readErr={firstScreenError}
+          /* 本餐用餐人（2026-10-15）：值 + 三个动作打包成一个对象。
+             只在成员真的读出来、且至少有一位时才给——成员读不出来时给 null，
+             AskView 那边就不设关卡（读不到人不能把首屏整个锁死）。
+             `picked` 顺手过滤掉档案里已经删掉的名字：成员被移除后，localStorage
+             里还留着他的名字，不该再显示成"选中"。 */
+          crew={
+            fam && fam.members.length > 0
+              ? {
+                  picked: crewPicked.filter((n) => fam.members.some((m) => m.name === n)),
+                  confirmed: crewConfirmed,
+                  onToggle: (name: string) =>
+                    setCrewPicked((prev) =>
+                      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name],
+                    ),
+                  /* 全选 / 清空。判据用"已选人数是否等于成员总数"而不是另存一个
+                     boolean——那个 boolean 会在成员被增删时与真实选择脱节。
+                     注意这里判的是**当前**选择，所以在 crewPicked 已是全员时清空。 */
+                  onSelectAll: () =>
+                    setCrewPicked((prev) =>
+                      prev.length === fam.members.length ? [] : fam.members.map((m) => m.name),
+                    ),
+                  onConfirm: () => {
+                    setCrewConfirmed(true)
+                    saveCrew(crewPicked)
+                  },
+                  onEdit: () => setCrewConfirmed(false),
+                }
+              : null
+          }
         />
       )}
 
@@ -666,6 +768,7 @@ export default function TonightApp() {
           fam={fam}
           week={week}
           fridge={fridgeBox}
+          readErr={firstScreenError}
         />
       )}
 
@@ -683,6 +786,12 @@ export default function TonightApp() {
     </div>
   )
 }
+
+
+
+
+
+
 
 
 

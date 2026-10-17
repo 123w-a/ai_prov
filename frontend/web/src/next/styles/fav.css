@@ -13,9 +13,18 @@
  * 语义色照周报的规矩：只用在点与文字上，绝不铺底。
  */
 .fv {
-  max-width: 1010px;
-  margin: 0 auto;
-  padding: 40px 24px 96px;
+  /* ── 2026-10-12 第八轮：max-width 1010 + auto 居中删除（第二处偏移源）────
+   * 这两行是**旧版心遗留**（1010 = --content 还是 1010 那轮的版心宽）：
+   *   · 统一层起来后 .fv 是 `.shell-room > section`（SECTION.fv）的子元素，
+   *     父容器 padding box 实测 1058.5（纸面板 1111.1 − 左 36.5 − 右 16.1），
+   *     而 max-width 1010 把它裁掉 48.5，于是 `margin: 0 auto` 再把它右推
+   *     24.25 —— 实测 .fv-body 左缘 280.89（= 卡片列 280.89 也右偏），
+   *     右栏右缘 1339.39 而非纸面板内缘 1345。
+   *   · 删除后 .fv 宽 = 1058.5（块级自动填满父 padding box），右栏随之
+   *     贴到纸面板内缘：1069..1345，与稿的 1069..1344.7 对齐。
+   * 与本房第七轮的"水平内距归零"是同一件事的两半：那一半去掉了内距偏移，
+   * 这一半去掉容器宽度偏移，合起来卡片列左缘才等于稿的 270.4。 */
+  padding: 40px 0 96px;
 }
 
 /* 门牌竖条：与周报房 .wk-h、服务房 .sv-h 同族（2026-10-01 画风解冻）。 */
@@ -124,6 +133,8 @@
   gap: var(--s2);
 }
 
+/* 卡片：一轮先取消卡内 padding 与圆角裁切（角叶与配图都要贴边），
+   具体几何由 fav-cards.css 按稿给。 */
 .fv-item {
   background: var(--surface);
   border: 1px solid var(--surface-line);
@@ -149,6 +160,8 @@
   cursor: pointer;
 }
 
+/* 配图：第一轮是满宽 16:10 出血；fav-cards.css 按稿改成内嵌 4:3 圆角
+   （稿实测 188×134 稿px = 167.2×119.2 CSS，比例 1.403）。 */
 .fv-thumb {
   width: 116px;
   height: 66px;
@@ -157,6 +170,7 @@
   flex: none;
 }
 
+/* 卡片文字块：左内边距与菜名左缘取齐。 */
 .fv-main {
   flex: 1;
   min-width: 0;
@@ -187,12 +201,14 @@
   white-space: nowrap;
 }
 
+/* 引导语（既有功能，稿上没有）：与文字块同内边距。 */
 .fv-go {
   flex: none;
   font-size: 12.5px;
   color: var(--ink-faint);
 }
 
+/* 动作行（赞/踩/忘掉/取消，既有功能，稿上没有）：垫在卡底。 */
 .fv-acts {
   display: flex;
   flex-wrap: wrap;
@@ -247,4 +263,315 @@
 @media (max-width: 720px) {
   .fv-open { flex-wrap: wrap; }
   .fv-go { flex: none; margin-left: auto; }
+}
+
+/* 页头容器：星形标题 + 副标题两行，纵向排、间距 4px。
+   稿实测这两行的墨迹带是 y91..150 与 y158..177（bandprobe 行剖面，
+   THR=8 / MINRUN=3），带间空 8 稿px ≈ 7.1 CSS —— 由 .fv-h 的 margin-bottom
+   与 .fv-sub 的 margin-bottom 共同给出，这里只做纵向堆叠。 */
+.fv-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 工具行：左胶囊、右搜索框，两端对齐（稿实测胶囊左缘 稿x304 → 270.4 CSS，
+   搜索框右缘 稿x1168 → 1038.7 CSS，正好是内容区左右边界，所以 justify-content
+   用 space-between 而不是 gap 拼）。 */
+.fv-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--s2);
+}
+
+/* 胶囊组：默认 gap 8px（会被 fav-cards.css 按稿改成 24.9px）。 */
+.fv-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 筛选胶囊：默认安静描边，选中的那条才吃主色（与今晚这一顿的分类行同口径）。
+   fav-cards.css 里有照稿的一层覆盖（高 36.5、未选无描边、gap 24.9）。 */
+.fv-pill {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.fv-pill:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.fv-pill[data-on='true'] {
+  color: var(--surface);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 搜索框：默认形态（fav-cards.css 有照稿的覆盖层：高 41.8、圆角胶囊、
+   左侧为放大镜留 41.9px）。 */
+.fv-search {
+  flex: 1 1 220px;
+  max-width: 320px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.fv-search::placeholder {
+  color: var(--ink-faint);
+}
+
+.fv-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s2);
+}
+
+.fv-item {
+  padding: 0;
+  overflow: hidden;
+}
+
+.fv-open {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  height: 100%;
+  padding: 0 0 14px;
+}
+
+.fv-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 10;
+  border-radius: 0;
+}
+
+.fv-main {
+  padding: 0 14px;
+}
+
+.fv-go {
+  padding: 0 14px;
+}
+
+.fv-acts {
+  margin-top: auto;
+  padding: 12px 14px 0;
+}
+
+.fv {
+  display: grid;
+  /* ── 2026-10-11 第七轮：右栏轨道 284 → 276、列间距 18 → 8.1（照稿）────
+   * 稿 fav-expect-v4 右栏 x1202..1512 → CSS 1069..1344.7，宽 276。
+   * 容器左缘 270.4（卡片列左缘）、纸面板右内缘 1345：
+   *   270.4 + 左列 + 8.1 + 276 = 1345 ⇒ 左列 = 790.5，右栏左缘 1069 ✓
+   * 旧值 284 是 10-11 第二轮按"右栏容器含阴影带"量的，本轮统一到卡片外缘。 */
+  grid-template-columns: minmax(0, 1fr) 276px;
+  align-items: start;
+  gap: 22px 8.1px;
+}
+
+.fv-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 右栏容器：三块卡纵向排。 */
+.fv-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+/* 右栏卡片：稿实测 x1202..1512（276 CSS 宽），三块卡竖排、间距 20 稿px。
+   fav-cards.css 里有照稿的覆盖层（padding 10.7/14/16、卡头图标 + 文字同排）。 */
+.fv-rail-card {
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+}
+
+/* 卡头：稿上是「图标 + 标题」同排（三块的图标都落在 稿x1214..1250）。 */
+.fv-rail-h {
+  margin: 0 0 10px;
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+/* 右栏列表：成员块与冰箱行各自的间距由条目自己带。 */
+.fv-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 右栏条目默认字号（稿上成员行与冰箱行同档）。 */
+.fv-rail-mem,
+.fv-rail-item {
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+}
+
+/* 卡脚小注（既有文案，稿上没有）。 */
+.fv-rail-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* 「共同忌口」的正文：真实数据是「芹菜」（familyRows().shared）。 */
+.fv-rail-body {
+  margin: 0;
+  font-size: var(--fs-data, 13.5px);
+  color: var(--ink);
+}
+
+.fv-item {
+  position: relative;
+}
+
+.fv-item::after {
+  content: '';
+  position: absolute;
+  top: 10.7px;
+  right: 3.6px;
+  width: 42.7px;
+  height: 39.1px;
+  background: url('../assets/hero/card-leaf-2.png') no-repeat right top / 100% 100%;
+  pointer-events: none;
+}
+
+.fv-main,
+.fv-go {
+  padding-right: 14px;
+}
+
+/* 那一轮的时间（不是收藏时间，见 FavEntry.turnedAt 注释）。 */
+.fv-turn {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* ══ 2026-10-11 卡片内结构照 fav-expect-v4 稿逐元素重建 ═══════════════════
+ *
+ * 全部几何来自 assets-build.cjs map 对稿的墨迹分格读数（稿 1536×1024，
+ * 换算 S = 1366/1536 = 0.8893），不是目测。稿上单张卡（第一列、x302..495 /
+ * y304..604）从上往下量到：
+ *
+ *   配图      x308..488 · y313..449    180×136 稿px  → 160.1×120.9 CSS
+ *   菜名行    x316..458 · y460..484    行高 24 稿px  → 21.3 CSS（字号 17px = 既有）
+ *   胶囊行    y498..518                行高 21 稿px  → 18.7 CSS
+ *   发丝线    y537..538                2 稿px 厚 → 1 CSS
+ *   元信息    x316..440 · y550..588    两行，行高 18 稿px → 16 CSS
+ *
+ * 六段间距各不相同（配图→菜名 11、菜名→胶囊 14、胶囊→线 19、线→元信息 12、
+ * 元信息行间 4、末行→卡底 16 稿px），所以 .fv-open 的统一 gap 归零，
+ * 改由各段自己带 margin——gap 只能给一个值，量出来不是同一个数。 */
+.fv-open {
+  gap: 0;
+}
+
+.fv-main {
+  margin-top: 10px; /* 配图底 → 菜名顶：11 稿px，取 9.8 */
+  gap: 0; /* 菜名与胶囊的间距由 .fv-tags 自己带（14 稿px），不走 gap */
+}
+
+/* 标签胶囊行。量出来的形状：浅米实底、无描边、小圆角、单色文字。
+ * 尺寸是反推的：稿上「高蛋白」胶囊 39.1×18.7 CSS，三个汉字在 11px 字号下
+ * 占 33px，余 6.1px 归左右内边距；高 18.7 = 字 11 + 上下各 3.85。
+ * 圆角 4.4px 是 cell=1 的墨迹图上数出来的（左上角圆弧跨 5 稿px × 5 稿px）。 */
+.fv-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px; /* 稿 11 稿px ≈ 9.8 */
+  margin-top: 12px; /* 菜名底 → 胶囊顶：14 稿px ≈ 12.5 */
+}
+
+.fv-tag {
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ink-soft); /* 稿上胶囊文字实测 rgb(124,103,85) ≈ --ink-soft #63523c */
+  background: var(--surface-2); /* 稿上胶囊底实测 rgb(244,236,224) ≈ --surface-2 #f4eee4 */
+  border-radius: 4.4px;
+  padding: 3.85px 3.3px;
+}
+
+.fv-tag[data-level='yellow'] {
+  color: var(--accent-ink);
+}
+
+.fv-tag[data-level='red'] {
+  color: var(--bad);
+}
+
+.fv-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3.6px; /* 元信息两行之间：4 稿px */
+  margin: 16.9px 14px 0; /* 胶囊底 → 线：19 稿px ≈ 16.9 */
+  padding-top: 10.7px; /* 线 → 元信息首行：12 稿px ≈ 10.7 */
+  border-top: 1px solid color-mix(in srgb, var(--line) 22%, transparent);
+}
+
+.fv-meta .fv-turn,
+.fv-meta .fv-from {
+  line-height: 1.28; /* 稿上行高 18 稿px = 16 CSS，字号 12.5 → 1.28 */
+}
+
+.fv-ask {
+  margin-top: 10px;
+  padding: 0 14px;
+}
+
+.fv-go {
+  margin-top: 10px;
+}
+
+.fv-acts {
+  gap: 6px;
+  flex-wrap: nowrap; /* 一行放得下：内容区 137.5px ÷ 4 ≈ 31px，「忘掉」二字 23px */
+  padding: 0 14px;
+}
+
+.fv-acts .fv-btn {
+  flex: 0 0 auto; /* 不做等宽平分：平分后每个 29.38px，「忘掉」二字 23px 会被挤成两行 */
+  font-size: 11.5px;
+  line-height: 1.3; /* 不设的话会继承正文的大行高，按钮被撑到 38px 高 */
+  white-space: nowrap;
+  padding: 3px 4px;
+}
+
+/* ⚠ 2026-10-11：收掉文字区那条 56px 右留白（回滚就是把 14px 改回 56px 一处）。
+ * 那条留白是横版卡片的配套：改版前 .fv-open 是 flex 横排，角叶挂卡片右上角、
+ * 正好压在文字那一侧。现在卡片竖排，角叶整枚落在配图之内，够不到文字。 */
+.fv-main,
+.fv-go {
+  padding-right: 14px;
 }
