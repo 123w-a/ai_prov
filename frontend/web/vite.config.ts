@@ -23,8 +23,6 @@ export default defineConfig({
   },
   server: {
     port: 5178,
-    // 端口被占用时直接报错退出，不自动漂移到 5179（避免"旧实例占着 5178、新实例偷偷跑 5179"）
-    strictPort: true,
     // host:true ⇒ 同时监听 0.0.0.0 与 ::。
     // 不加这行时 Vite 只绑 IPv6 回环 ::1（实测 Get-NetTCPConnection 只有一行 ::1），
     // 于是 http://127.0.0.1:5178 直接连接被拒；本机 localhost 恰好先解析到 ::1，

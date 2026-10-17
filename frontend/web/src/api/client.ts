@@ -107,8 +107,6 @@ export async function previewService(
 export interface ChatHandlers {
   onWorking?: () => void
   onToken: (token: string) => void
-  /** 护栏打回重生成：丢弃本气泡已累积的正文，只保留重生成后的版本。 */
-  onReset?: () => void
   onStructuring: () => void
   onAnswer: (answer: ChefAnswer) => void
   onStage?: (stage: string) => void
@@ -202,7 +200,6 @@ export async function sendChat(
         handlers.onToken(event.token)
       }
       else if (event.structuring) handlers.onStructuring()
-      else if (event.reset) handlers.onReset?.()
       else if (event.answer) handlers.onAnswer(event.answer as ChefAnswer)
       else if (typeof event.stage === 'string') handlers.onStage?.(event.stage)
       else if (event.finish) handlers.onFinish?.(event as { session_id?: string; record_id?: number })
@@ -286,7 +283,6 @@ export interface MemoryCandidate {
   scope: 'always' | 'once'
   source_text: string
   status: 'pending' | 'once' | 'confirmed' | 'dismissed'
-  is_new_member?: boolean
 }
 
 /**

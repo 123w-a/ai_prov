@@ -18,7 +18,6 @@ import type { ChatStreamEvent } from './data/chatStream.ts'
 
 const STAGE_LABEL: Record<StreamStage, string> = {
   thinking: '思考中',
-  initializing: '初始化中',
   writing: '撰写中',
   searching: '查证中',
   auditing: '审核中',

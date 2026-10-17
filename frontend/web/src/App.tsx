@@ -22,7 +22,6 @@ import { ServicePreview } from './components/ServicePreview'
 import { WeeklyReportPage } from './components/WeeklyReportPage'
 import { FavoritesPanel } from './components/FavoritesPanel'
 import { SessionSidebar } from './components/SessionSidebar'
-import { applyStreamedOpening, mergeSyncedAnswer } from './answerMerge'
 // P1: sidebar hosts FamilyPanel (member switcher + profiles)
 import type {
   ChatMessage,
@@ -36,20 +35,10 @@ import type {
 
 function parseHistoryAnswer(raw: string | undefined): ChefAnswer | null {
   if (!raw) return null
-  const trimmed = raw.trim()
-  // 历史里绝大多数回答是纯文本正文，只有控制 JSON 才需要解析成结构化答案。
-  // 先按首字符快速跳过纯文本，避免对每一条历史消息都尝试 JSON.parse。
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
   try {
-    const parsed: unknown = JSON.parse(trimmed)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const candidate = parsed as ChefAnswer
-      // 完整菜谱包（recipes 数组）与无 recipes 的结构化包（安全拒绝、成员判定等，
-      // 只有 opening）都要被识别成 answer：否则历史加载会走 `record.answer || ''`
-      // 分支，把整坨 JSON 原文当正文渲染，前端直接露出原始 JSON。
-      if (Array.isArray(candidate.recipes) || typeof candidate.opening === 'string') {
-        return normalizeChefAnswer(candidate)
-      }
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as ChefAnswer).recipes)) {
+      return normalizeChefAnswer(parsed as ChefAnswer)
     }
   } catch {
     // 历史数据可能是旧版纯文本回答。
@@ -87,7 +76,6 @@ function normalizeChefAnswer(answer: ChefAnswer): ChefAnswer {
   return {
     ...raw,
     opening: typeof raw.opening === 'string' ? raw.opening : '',
-    opening_authoritative: Boolean(raw.opening_authoritative),
     recipes,
     image_url: typeof raw.image_url === 'string' ? raw.image_url : null,
     image_ai_generated: Boolean(raw.image_ai_generated),
@@ -252,6 +240,32 @@ function answerHasImage(answer?: ChefAnswer | null): boolean {
   return (answer.recipes ?? []).some((recipe) => Boolean(recipe.image_url))
 }
 
+function mergeSyncedAnswer(localAnswer: ChefAnswer | null | undefined, serverAnswer: ChefAnswer | null | undefined): ChefAnswer | null | undefined {
+  if (!serverAnswer) return localAnswer
+  if (!localAnswer) return serverAnswer
+  const serverRecipes = serverAnswer.recipes ?? []
+  const localRecipes = localAnswer.recipes ?? []
+  const recipes = serverRecipes.map((recipe, index) => {
+    const localRecipe = localRecipes[index]
+    if (!localRecipe) return recipe
+    return {
+      ...recipe,
+      image_url: recipe.image_url ?? localRecipe.image_url ?? null,
+      image_ai_generated: recipe.image_ai_generated ?? localRecipe.image_ai_generated ?? false,
+      image_note: recipe.image_note || localRecipe.image_note || '',
+    }
+  })
+  const merged: ChefAnswer = {
+    ...serverAnswer,
+    recipes,
+    image_url: serverAnswer.image_url ?? localAnswer.image_url ?? null,
+    image_ai_generated: serverAnswer.image_ai_generated ?? localAnswer.image_ai_generated ?? false,
+    image_note: serverAnswer.image_note || localAnswer.image_note || '',
+    image_requested: serverAnswer.image_requested ?? localAnswer.image_requested,
+  }
+  return merged
+}
+
 function mergeSyncedMessage(localMessage: ChatMessage, serverMessage: ChatMessage): ChatMessage {
   if (localMessage.role !== 'assistant') return serverMessage
   if (localMessage.imageCancelled) {
@@ -336,11 +350,7 @@ function hasPendingRecipeImages(answer: ChefAnswer, patch?: PendingImagePatch | 
   if (recipes.length === 0) return false
   return recipes.some((recipe, index) => {
     const imagePatch = patch?.images.find((item) => item.index === index)
-    // 第一道菜的图片和图注同时兼容顶层字段；模型在搜图失败时会先写
-    // answer.image_note，不能因为菜谱项里为空就继续无限显示“正在配图”。
-    const hasImage = Boolean(recipe.image_url || imagePatch?.url || (index === 0 && answer.image_url))
-    const hasNote = Boolean(recipe.image_note || (index === 0 && answer.image_note))
-    return !hasImage && !failedIndexes.has(index) && !hasNote
+    return !recipe.image_url && !imagePatch?.url && !failedIndexes.has(index) && !recipe.image_note
   })
 }
 
@@ -614,16 +624,6 @@ export default function App() {
                 message.id === assistantId ? { ...message, stage: 'thinking' } : message,
               ),
             })),
-          onReset: () =>
-            cancelledImageTurnsRef.current[assistantId]
-              ? undefined
-              :
-            setMessagesBySession((current) => ({
-              ...current,
-              [sessionId!]: (current[sessionId!] ?? []).map((message) =>
-                message.id === assistantId ? { ...message, text: '' } : message,
-              ),
-            })),
           onToken: (token) =>
             cancelledImageTurnsRef.current[assistantId]
               ? undefined
@@ -668,9 +668,13 @@ export default function App() {
                 const normalizedAnswer = normalizeChefAnswer(answer)
                 // 结构化链可能退回短兜底句；流式正文才是用户刚刚看到的完整讲解。
                 // 结构化卡片接管展示后，把流式正文放入 opening，避免卡片与流式正文重复显示。
-                const answerWithOpening = streamedText
-                  ? applyStreamedOpening(normalizedAnswer, streamedText)
-                  : normalizedAnswer
+                const answerWithOpening =
+                  streamedText &&
+                  (!normalizedAnswer.opening ||
+                    normalizedAnswer.opening === '已按你的要求整理好这一道，完整做法见图卡。' ||
+                    streamedText.length > normalizedAnswer.opening.length + 80)
+                    ? { ...normalizedAnswer, opening: streamedText }
+                    : normalizedAnswer
                 // normalizeChefAnswer 会把缺失字段归一成 false，所以不能再用
                 // `?? turnWantsImage` 判断。只要本轮已经打开配图门，就必须等图完成后再挂卡片。
                 const answerWantsImage = Boolean(answerWithOpening.image_requested || turnWantsImage)
@@ -678,14 +682,9 @@ export default function App() {
                   ? applyPendingImagePatch(answerWithOpening, pendingImagePatchRef.current[assistantId])
                   : stripAnswerImages(answerWithOpening)
                 const imagePending = answerWantsImage && hasPendingRecipeImages(patchedAnswer, pendingImagePatchRef.current[assistantId])
-                // 安全拒绝/澄清类结构化答案可能没有 recipes。此时 RecipeCard 会按设计
-                // 不渲染，但 opening 仍是用户必须看到的正文，不能随 answer 接管一起清空。
-                const visibleAnswerText = patchedAnswer.recipes.length === 0
-                  ? patchedAnswer.opening || patchedAnswer.chef_tip || ''
-                  : ''
                 return {
                   ...message,
-                  text: visibleAnswerText,
+                  text: '',
                   answer: patchedAnswer,
                   streaming: false,
                   imagePending,
@@ -1104,8 +1103,6 @@ export default function App() {
                     const candidates = await fetchPendingMemoryCandidates(activeSession.session_id)
                     setMemoryCandidates((current) => ({ ...current, [activeSession.session_id]: candidates }))
                   }
-                } catch (error) {
-                  setAppError(error instanceof Error ? error.message : '加入长期画像失败，请稍后重试')
                 } finally {
                   setMemoryBusyId(null)
                 }
@@ -1118,8 +1115,6 @@ export default function App() {
                     ...current,
                     [activeSession?.session_id ?? '']: (current[activeSession?.session_id ?? ''] ?? []).filter((item) => item.id !== candidateId),
                   }))
-                } catch (error) {
-                  setAppError(error instanceof Error ? error.message : '仅本次记住失败，请稍后重试')
                 } finally {
                   setMemoryBusyId(null)
                 }

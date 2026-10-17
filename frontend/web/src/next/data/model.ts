@@ -20,7 +20,6 @@ import type { ChefAnswer, StreamStage } from '../../types.ts'
 /** 后端 stage 枚举的中文说法。只翻译，不发明。七种一个都不能漏——用 Record 逼穷尽。 */
 const STAGE_LABEL: Record<StreamStage, string> = {
   thinking: '思考',
-  initializing: '初始化',
   writing: '撰写',
   searching: '查证',
   auditing: '核对',
@@ -52,7 +51,6 @@ export function stageLabel(stage: StreamStage): string {
  */
 const STAGE_PHRASE: Record<StreamStage, string> = {
   thinking: '想这顿饭怎么安排',
-  initializing: '初始化本轮决策服务',
   writing: '把做法写清楚',
   searching: '查证这顿饭的做法',
   auditing: '核对食材与家庭偏好',
