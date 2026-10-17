@@ -603,6 +603,19 @@ class TestNormalization(unittest.TestCase):
             )
         self.assertEqual(dishes, ["清炒青菜"])
 
+    def test_safe_suggestions_honor_chronic_conditions(self):
+        candidates = [
+            ("油焖大虾", "虾 盐"),
+            ("清炒青菜", "青菜 盐"),
+        ]
+        with patch.object(allergen_rules, "_SAFE_DISH_CANDIDATES", candidates):
+            dishes = allergen_rules.suggest_safe_dishes(
+                [],
+                k=3,
+                conditions=["痛风"],
+            )
+        self.assertEqual(dishes, ["清炒青菜"])
+
     def test_describe_is_traceable(self):
         violations = allergen_rules.audit_allergens("虾仁炒蛋", ["crustacean"])
         text = allergen_rules.describe_allergens(violations)
@@ -1030,6 +1043,62 @@ class TestVerifyGraph(unittest.TestCase):
 
 
 class TestStructuredReaudit(unittest.TestCase):
+    def test_requested_dish_gate_blocks_chronic_before_generation(self):
+        state = {
+            "messages": [HumanMessage(content="做一道油焖大虾，家里有人痛风")],
+            "session_id": "requested-dish-chronic-gate",
+            "verify_violated": [],
+        }
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风"]),
+            patch("agent.graph.suggest_safe_dishes", return_value=["清炒青菜"]),
+        ):
+            result = agent_graph.requested_dish_gate_node(state)
+        payload = json.loads(result["messages"][0].content)
+        self.assertEqual(result["verify_status"], "blocked")
+        self.assertEqual(result["verify_violated"], ["痛风"])
+        self.assertEqual(payload["recipes"], [])
+        self.assertIsNone(payload["image_url"])
+        self.assertIn("有该约束的成员需单独替换", payload["opening"])
+        self.assertNotIn("全家", payload["opening"])
+        blocked = [item for item in payload["guardrails"] if item["status"] == "blocked"]
+        self.assertEqual([item["condition"] for item in blocked], ["痛风"])
+        self.assertIn("命中该约束", blocked[0]["reason"])
+        self.assertNotIn("过敏原", blocked[0]["reason"])
+
+    def test_requested_dish_chronic_fallback_skips_structure_model(self):
+        state = {
+            "messages": [
+                HumanMessage(content="做一道油焖大虾，家里有人痛风"),
+                AIMessage(content="我来整理这道菜。"),
+            ],
+            "session_id": "requested-dish-chronic-structure",
+            "verify_violated": [],
+        }
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风"]),
+            patch("agent.graph._build_structure_context", return_value=("可结构化上下文", None, False)),
+            patch("agent.graph.build_structured_answer") as build,
+        ):
+            result = agent_graph.structure_answer_node(state)
+        payload = json.loads(result["messages"][0].content)
+        build.assert_not_called()
+        self.assertEqual(result["verify_status"], "blocked")
+        self.assertEqual(payload["recipes"], [])
+
+    def test_pure_safety_question_does_not_hit_requested_dish_gate(self):
+        state = {
+            "messages": [HumanMessage(content="家里有人痛风，能吃油焖大虾吗")],
+            "verify_violated": [],
+        }
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风"]),
+        ):
+            self.assertFalse(agent_graph._requested_dish_gate_hit(state))
+
     def test_requested_dish_with_confirmed_allergen_blocks_before_structure(self):
         answer = ChefAnswer(
             recipes=[

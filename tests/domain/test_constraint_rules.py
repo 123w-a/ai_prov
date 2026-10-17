@@ -75,6 +75,33 @@ class ConstraintDimensionTest(unittest.TestCase):
         self.assertTrue(any(line.startswith("爷爷：") and "切小块" in line for line in lines))
         self.assertTrue(any(line.startswith("弟弟：") and "主食减半" in line for line in lines))
 
+    def test_profile_free_text_chronic_values_use_the_same_rule_mapping(self):
+        for alias in ("尿酸高", "高尿酸"):
+            with self.subTest(alias=alias):
+                rows = build_matrix(
+                    ["油焖大虾"],
+                    [
+                        {"name": "妈妈", "profile": {"conditions": [alias]}},
+                        {"name": "我", "profile": {}},
+                    ],
+                )
+                lookup = {(row["dish"], row["member"]): row for row in rows}
+                self.assertEqual(lookup[("油焖大虾", "妈妈")]["verdict"], "需调整")
+                self.assertIn("痛风", lookup[("油焖大虾", "妈妈")]["reason"])
+                self.assertEqual(lookup[("油焖大虾", "我")]["verdict"], "可吃")
+
+        rows = build_matrix(
+            ["咸菜炒肉"],
+            [
+                {"name": "爸爸", "profile": {"conditions": ["血压高"]}},
+                {"name": "我", "profile": {}},
+            ],
+        )
+        lookup = {(row["dish"], row["member"]): row for row in rows}
+        self.assertEqual(lookup[("咸菜炒肉", "爸爸")]["verdict"], "需调整")
+        self.assertIn("高血压", lookup[("咸菜炒肉", "爸爸")]["reason"])
+        self.assertEqual(lookup[("咸菜炒肉", "我")]["verdict"], "可吃")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

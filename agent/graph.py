@@ -3700,7 +3700,11 @@ def _build_guardrails(
         # 分支顺序不可调换：blocked 必须先判，否则会落进 adjusted 分支，
         # 把"拒绝推荐"说成"已自动调整至合规"——那是不实表述。
         if cond in violated and verify_status == "blocked":
-            status, reason = "blocked", "已拦截，本轮未输出含该过敏原的菜品：" + rule_msg
+            if str(cond).startswith("过敏原:"):
+                reason = "已拦截，本轮未输出含该过敏原的菜品：" + rule_msg
+            else:
+                reason = "已拦截，本轮未输出命中该约束的菜品：" + rule_msg
+            status = "blocked"
         elif cond in violated and verify_status == "degraded":
             status, reason = "warn", "经多次重生成仍有需注意项，请谨慎：" + rule_msg
         elif cond in violated:
@@ -3972,7 +3976,7 @@ def _repair_selected_target_opening(opening, messages, answer) -> str:
 
 
 def _requested_dish_allergen_block(state, latest_text, messages):
-    """点名菜命中已确认过敏原时的确定性拦截包。
+    """点名菜命中已确认过敏原或慢病忌口时的确定性拦截包。
 
     返回 ``(payload, merged_violations)``；不命中返回 ``None``。
     生成前拦截门与结构化阶段复核共用这一份构建函数，保证两处的文案、
@@ -3987,28 +3991,57 @@ def _requested_dish_allergen_block(state, latest_text, messages):
         allergens,
         use_optional=True,
     )
-    if not requested_allergen_violations:
+    requested_conditions = _merged_conditions(latest_text)
+    requested_chronic_violations = audit(requested_dish, requested_conditions)
+    if not requested_allergen_violations and not requested_chronic_violations:
         return None
-    requested_conditions = sorted({
+    requested_violation_keys = sorted({
         violation["condition"] for violation in requested_allergen_violations
+    } | {
+        violation["condition"] for violation in requested_chronic_violations
     })
     merged_violations = sorted(
-        set(state.get("verify_violated") or []) | set(requested_conditions)
+        set(state.get("verify_violated") or []) | set(requested_violation_keys)
     )
-    labels = [
+    allergen_labels = [
         condition.split(":", 1)[1].strip()
-        for condition in requested_conditions
+        for condition in requested_violation_keys
         if ":" in condition and condition.split(":", 1)[1].strip()
     ]
-    subject = "、".join(labels) or "相关过敏原"
-    safe = suggest_safe_dishes(allergens, k=3, use_optional=True)
-    block_tip = (
-        f"家庭画像中已确认{subject}过敏，{subject}是硬约束，"
-        f"因此「{requested_dish}」不能推荐，也不能推荐含{subject}的做法。"
-        "以下是不含该成分的替代方向："
-        + "、".join(safe)
-        + "。请挑一个，我再给完整做法。"
+    chronic_labels = sorted({
+        violation["condition"] for violation in requested_chronic_violations
+    })
+    hit_terms = sorted({
+        str(violation.get("keyword") or "").strip()
+        for violation in requested_chronic_violations
+        if str(violation.get("keyword") or "").strip()
+    })
+    safe = suggest_safe_dishes(
+        allergens,
+        k=3,
+        use_optional=True,
+        conditions=requested_conditions,
     )
+    if chronic_labels:
+        subjects = "、".join(chronic_labels)
+        hits = f"（命中忌口：{'、'.join(hit_terms)}）" if hit_terms else ""
+        block_tip = (
+            f"本轮有{subjects}约束，「{requested_dish}」命中了相关忌口{hits}，"
+            "不能直接推荐给有该约束的成员；其他成员如无该约束可另行安排，"
+            "有该约束的成员需单独替换。"
+            "以下是同时避开相关过敏原与慢病忌口的替代方向："
+            + "、".join(safe)
+            + "。请挑一个，我再给完整做法。"
+        )
+    else:
+        subject = "、".join(allergen_labels) or "相关过敏原"
+        block_tip = (
+            f"家庭画像中已确认{subject}过敏，{subject}是硬约束，"
+            f"因此「{requested_dish}」不能推荐，也不能推荐含{subject}的做法。"
+            "以下是不含该成分的替代方向："
+            + "、".join(safe)
+            + "。请挑一个，我再给完整做法。"
+        )
     payload = {
         "opening": block_tip,
         "recipes": [],
@@ -4034,7 +4067,7 @@ def _requested_dish_allergen_block(state, latest_text, messages):
 
 
 def _requested_dish_gate_hit(state) -> bool:
-    """本轮是否应在模型开口之前就拦截点名菜。
+    """本轮是否应在模型开口之前就拦截命中过敏原或慢病忌口的点名菜。
 
     判据与 structure_answer 的点名菜复核同源，只多排除三类本轮本来就不会
     出菜谱的轮次（餐馆/上门服务、非饮食追问、非菜谱信息提问）。这样生成前
@@ -4053,7 +4086,7 @@ def _requested_dish_gate_hit(state) -> bool:
 
 @trace_node("requested_dish_gate")
 def requested_dish_gate_node(state: "ChefState"):
-    """生成前的点名菜过敏原硬拦截。
+    """生成前的点名菜过敏原 / 慢病忌口硬拦截。
 
     必须在 chef_think 之前：模型看到画像里的过敏原后会自己换菜并流式输出
     一整篇替代成品，拦截包事后覆盖它，用户看到的正文就会「先出一版再被换掉」。
@@ -4070,7 +4103,7 @@ def requested_dish_gate_node(state: "ChefState"):
             AIMessage(content=json.dumps(payload, ensure_ascii=False))
         ],
         "verify_status": "blocked",
-        "verify_warning": "点名菜命中已确认过敏原，已在生成前取消成品输出。",
+        "verify_warning": "点名菜命中已确认过敏原或慢病忌口，已在生成前取消成品输出。",
         "verify_violated": merged_violations,
     }
 
@@ -4176,7 +4209,7 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
     allow_multiple = _wants_multiple_recipes(messages) and not taste_followup_target
     if not context.strip():#没有可整理的上下文（理论上不会走到这），直接结束
         return {"messages": []}
-    # 点名菜先过一遍确定性过敏原审计，再进入结构化模型。
+    # 点名菜先过一遍确定性过敏原 / 慢病审计，再进入结构化模型。
     # 实测「花生酱拌面」在文字层可能被模型改写成安全替代并按普通单菜出卡，
     # 这样虽然做法安全，却把用户明确点名的禁忌菜包装成了可交付结果。安全阻断
     # 必须优先于产品形态：命中时只给替代方向，recipes 保持空数组，不生成卡片。
@@ -4192,7 +4225,7 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
                 AIMessage(content=json.dumps(blocked_payload, ensure_ascii=False))
             ],
             "verify_status": "blocked",
-            "verify_warning": "点名菜命中已确认过敏原，已在结构化前取消卡片输出。",
+            "verify_warning": "点名菜命中已确认过敏原或慢病忌口，已在结构化前取消卡片输出。",
             "verify_violated": merged_violations,
         }
     # 候选正文已经成形时，候选锚点不应依赖后续菜谱结构化链是否解析成功。

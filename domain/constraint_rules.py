@@ -150,17 +150,17 @@ def _allergen_codes(entries: list[dict]) -> list[str]:
 
 
 def _chronic_values(entries: list[dict]) -> list[str]:
-    from .nutrition_rules import RULES
+    from .nutrition_rules import conditions_from_profile
 
     values = []
     for entry in entries:
         if entry["dimension"] != "chronic":
             continue
         value = entry["value"]
-        if value in RULES and value not in values:
-            values.append(value)
-        for rule in RULES:
-            if rule in value and rule not in values:
+        # 档案里常写「尿酸高」「血压高」这类自由文本；不能只认完整规则名。
+        # 复用消息侧同一套画像映射，避免门禁与分餐矩阵各有一套病种口径。
+        for rule in conditions_from_profile({"conditions": [value]}):
+            if rule not in values:
                 values.append(rule)
     return values
 

@@ -806,8 +806,10 @@ def suggest_safe_dishes(
     allergens: List,
     k: int = 3,
     use_optional: bool = False,
+    conditions: List[str] | None = None,
 ) -> List[str]:
-    """从内置候选池返回前 k 道不命中硬过敏原的菜；确定性、不调用 LLM。"""
+    """从内置候选池返回前 k 道同时避开过敏原与慢病忌口的菜。"""
+    chronic_conditions = list(conditions or [])
     safe = []
     for name, ingredients in _SAFE_DISH_CANDIDATES:
         if audit_allergens(
@@ -816,6 +818,11 @@ def suggest_safe_dishes(
             use_optional=use_optional,
         ):
             continue
+        if chronic_conditions:
+            from .nutrition_rules import audit as audit_nutrition
+
+            if audit_nutrition(f"{name} {ingredients}", chronic_conditions):
+                continue
         safe.append(name)
         if len(safe) >= max(0, int(k)):
             break
@@ -824,7 +831,11 @@ def suggest_safe_dishes(
     labels = "、".join(
         dict.fromkeys(allergen_label(item) for item in (allergens or []))
     )
-    return [f"告诉我你家现有的食材，我按不含{labels}重新配"]
+    chronic_labels = "、".join(dict.fromkeys(chronic_conditions))
+    avoid = "、".join(item for item in (labels, chronic_labels) if item)
+    if avoid:
+        return [f"告诉我你家现有的食材，我按避开{avoid}重新配"]
+    return ["告诉我你家现有的食材，我重新配"]
 
 
 if __name__ == "__main__":
