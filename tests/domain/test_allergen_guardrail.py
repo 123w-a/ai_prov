@@ -202,7 +202,9 @@ class TestChronicRegression(unittest.TestCase):
     def test_ten_existing_nutrition_rules_still_fire(self):
         cases = [
             (["高血压"], "咸菜炒肉"),
-            (["高血压"], "酱油红烧肉"),
+            # 裸提名「酱油红烧肉」不再算违规（只有菜名、没有用量，属于证据不足）；
+            # 写成用量后折算食盐当量超上限，仍要拦——这里守住的是这条口径。
+            (["高血压"], "酱油2汤匙红烧肉"),
             (["糖尿病"], "蜂蜜甜饮"),
             (["糖尿病"], "肥肉盖饭"),
             (["高脂血症"], "黄油煎牛排"),
@@ -220,6 +222,138 @@ class TestChronicRegression(unittest.TestCase):
                     self.assertTrue(agent_graph.audit(text, conditions))
                 else:
                     self.assertEqual(agent_graph.audit(text, conditions), [])
+
+
+class TestChronicAuditScope(unittest.TestCase):
+    """实测回归：慢病审计只看「菜谱本体」，讲解/依据/护栏字段不进硬审计。
+
+    根因——整篇审计时，模型解释「为什么这道菜要少吃」的句子（指南引用、
+    高钠食物清单、JSON 里的 health_lights/guardrails）本身就写着忌口词，
+    被判成真实下料，合规回答被反复打回、前端连着闪「正在形成膳食建议」。
+    收窄只针对「讲解型正文」；口语菜谱（没有分节、也没有引用/结论词）仍走
+    既有的「剥掉安全说明句」口径，真下料的红线一条都不放。
+    """
+
+    def _chronic(self, text):
+        audit_text, _ = agent_graph._audit_texts_for_answer(
+            text, candidate_names=[], plain_safety_refusal=False, allergens=[]
+        )
+        return audit_text
+
+    def test_json_payload_audits_recipe_fields_only(self):
+        payload = json.dumps(
+            {
+                "answer_kind": "recipes",
+                "opening": "这顿撞了红线：猪肝属动物内脏、啤酒属酒精，都正撞痛风忌口。",
+                "health_lights": ["高嘌呤（动物内脏）", "酒精（啤酒）"],
+                "guardrails": [
+                    {
+                        "condition": "孩子·痛风",
+                        "rule": "限制动物内脏、浓肉汤与酒精",
+                        "status": "risk_flag",
+                    }
+                ],
+                "recipes": [
+                    {
+                        "name": "清蒸鲈鱼",
+                        "serving": "2 人份",
+                        "ingredients": ["鲈鱼 1 条", "姜丝 10g"],
+                        "steps": ["鱼身划刀，铺姜丝，大火蒸 8 分钟。"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        audit_text = self._chronic(payload)
+        self.assertIn("清蒸鲈鱼", audit_text)
+        self.assertNotIn("health_lights", audit_text)
+        self.assertNotIn("啤酒", audit_text)
+        self.assertFalse(agent_graph.audit(audit_text, ["痛风"]))
+
+    def test_json_payload_still_audits_a_real_forbidden_ingredient(self):
+        payload = json.dumps(
+            {
+                "opening": "低嘌呤路线",
+                "recipes": [
+                    {
+                        "name": "丝瓜炒虾皮",
+                        "ingredients": ["丝瓜 1 根", "虾皮 1 小把"],
+                        "steps": ["丝瓜炒软后下虾皮。"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        self.assertTrue(agent_graph.audit(self._chronic(payload), ["痛风"]))
+
+    def test_advisory_prose_without_recipe_body_is_not_audited(self):
+        """实测 perf-1791806412 / user_357fdc3df8：口径题与能否吃的问答里，
+        「浓肉汤、老火汤、猪肝、酒」是这轮回答的**主题词**，不是下料。
+
+        旧口径认不出菜谱分节就退回整篇，于是同一段讲解每轮都被判违规、
+        重生成到 MAX_VERIFY 才收口——前端看到的就是反复闪「正在形成膳食建议」。
+        """
+        for text in (
+            "**结论：成人高血压每天食盐逐步降到 5g 以下。**\n"
+            "（出处：《成人高血压食养指南（2023年版）》，第 6 页）\n"
+            "**最容易被忽略的隐形盐（对照着减）**\n"
+            "- 蚝油、鸡精、味精、豆瓣酱、豆豉、腐乳、榨菜、咸菜、酱瓜\n"
+            "- 挂面、苏打饼干、面包、火腿肠、卤味、话梅——吃着不咸也有钠\n",
+            "## 结论：汤别喝，肉可以吃几块\n"
+            "针对妈妈的**痛风 + 尿酸高**，长时间熬的排骨浓汤属于「要严格限制」的一类。\n"
+            "- 官方做法建议是「避免摄入浓肉汤、老火汤、菜汤」"
+            "（《成人慢性肾脏病食养指南（2024年版）》）。\n",
+            "《成人高尿酸血症与痛风食养指南（2024年版）》原文写得很直白："
+            "「**动物内脏如肝、肾、心等，嘌呤含量**（高）」——肝是嘌呤含量榜首那一档；"
+            "大量酒精和高果糖饮料同样要限制。\n"
+            "啤酒换成无糖苏打水，猪肝限量到 50g，汤整锅倒掉。\n",
+        ):
+            with self.subTest(text=text[:24]):
+                audit_text = self._chronic(text)
+                self.assertEqual(audit_text, "")
+
+    def test_plain_prose_recipe_still_goes_through_audit(self):
+        """边界：认不出分节、也没有引用/结论词的正文是口语菜谱，照旧审计。
+
+        实测 2026-10-09 选定轮：正文写「生抽2大勺、盐5g」被判 retry 是**对的**，
+        收窄审计范围不能把这条真下料的红线一起放掉。
+        """
+        text = "番茄牛肉面：面条煮熟，加生抽2大勺、盐5g调味，铺上牛肉即可。"
+        audit_text = self._chronic(text)
+        self.assertTrue(agent_graph.audit(audit_text, ["高血压"]))
+        # 只报菜名/半句结论的短答复同样不适用讲解豁免（保持基线口径）
+        self.assertNotEqual(self._chronic("老火汤炖猪肝"), "")
+
+    def test_mixed_heading_prose_keeps_recipe_body_only(self):
+        # 模型常把分节标题写成 `**【用料】**（约3–4人份）`、`【做法】`，
+        # 认不出来时整篇讲解会被当成菜谱本体卷进硬审计。
+        text = (
+            "（痛风人群要避免浓肉汤、老火汤与动物内脏，这份按低嘌呤路线调整。）\n"
+            "**【用料】**（约3–4人份）\n"
+            "排骨 500g、话梅 5 颗、生抽 2 汤匙\n"
+            "**【做法】**\n"
+            "1. 排骨冷水下锅焯水，倒掉这锅水（飞水弃汤）。\n"
+            "2. 加生抽 3g 与话梅焖 40 分钟。\n"
+        )
+        audit_text = self._chronic(text)
+        self.assertIn("排骨 500g", audit_text)
+        self.assertNotIn("痛风人群要避免", audit_text)
+        self.assertFalse(agent_graph.audit(audit_text, ["痛风"]))
+        self.assertTrue(agent_graph.audit(audit_text, ["高血压"]))
+
+    def test_sectioned_prose_keeps_recipe_body_only(self):
+        text = (
+            "结论：成人高血压每天食盐逐步降到 5g 以下"
+            "（《成人高血压食养指南（2023年版）》）。\n"
+            "- 隐形钠清单：挂面、火腿肠、咸菜、话梅。\n"
+            "食材：番茄 2 个、嫩豆腐 1 盒。\n"
+            "做法：番茄炒出汁后下豆腐，出锅前加盐 1g。\n"
+        )
+        audit_text = self._chronic(text)
+        self.assertIn("嫩豆腐", audit_text)
+        self.assertIn("盐 1g", audit_text)
+        self.assertNotIn("咸菜", audit_text)
+        self.assertFalse(agent_graph.audit(audit_text, ["高血压"]))
 
 
 class TestNoFalsePositive(unittest.TestCase):
@@ -723,6 +857,63 @@ class TestVerifyGraph(unittest.TestCase):
             )
         self.assertEqual(result["verify_status"], "degraded")
         self.assertTrue(result["verify_warning"].startswith("⚠️"))
+
+    def test_chronic_audit_skips_advisory_sections(self):
+        """实测 user_c5d8dcc6b7：提醒段写「别用浓肉汤、别加小鱼小虾类干货」是
+        安全说明，不是在下料；按整篇审计时它会让一份合规菜谱反复重生成，
+        前端连着闪好几次「正在形成膳食建议」。
+        """
+        text = (
+            "## 番茄豆腐蛋花汤\n"
+            "**食材（2人份）**\n"
+            "- 番茄 2 个、嫩豆腐 1 盒、鸡蛋 2 个\n"
+            "- 淡盐水 1 碗\n"
+            "**做法**\n"
+            "1. 番茄切块炒出汁，加水烧开后下豆腐。\n"
+            "2. 关火后加盐 1g，淋蛋液。\n"
+            "**提醒**\n"
+            "- 别用浓肉汤、鱼汤打底，也别加小鱼小虾类干货。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风", "高血压"]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
+
+    def test_chronic_audit_still_retries_real_forbidden_ingredient(self):
+        """收窄审计范围后，食材表里的真忌口仍要拦：虾皮照旧命中痛风。"""
+        text = (
+            "**食材（2人份）**\n"
+            "- 番茄 2 个、虾皮 1 小把\n"
+            "**做法**\n"
+            "1. 番茄炒出汁后下虾皮。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["痛风"]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "retry")
+        self.assertIn("虾", result["messages"][0].content)
+
+    def test_chronic_audit_does_not_retry_advisory_answer(self):
+        """实测 perf-1791807060：用户问「成人高血压每天盐应该吃多少」，回答里的
+        隐形盐清单（火腿肠、咸菜）与指南引用必须出现；按整篇审计会一直判违规，
+        连续重生成，前端反复闪「正在形成膳食建议」。
+        """
+        text = (
+            "**成人高血压：每天食盐逐步降至 5g 以下**"
+            "（《成人高血压食养指南（2023年版）》）\n"
+            "- 隐形钠：挂面、面包、火腿肠、咸菜、腐乳、话梅、苏打饼干。\n"
+            "- 一啤酒瓶盖平装约 6g 盐，高血压建议不到一瓶盖。\n"
+        )
+        with (
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+            patch("agent.graph._merged_conditions", return_value=["高血压"]),
+        ):
+            result = agent_graph.verify_answer_node(self._state(text))
+        self.assertEqual(result["verify_status"], "ok")
 
     def test_verify_route_keeps_blocked_even_when_budget_exhausted(self):
         status = agent_graph.verify_route({

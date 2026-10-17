@@ -39,6 +39,19 @@ def _candidates_payload(names):
     }
 
 
+def _delivered_card(names, opening="这道菜的完整讲解。", image_url="http://oss/dish.png"):
+    """已交付的结构化卡片（recipes 非空）——`_has_delivered_card` 只认这一种形态。"""
+    return {
+        "opening": opening,
+        "answer_kind": "recipe",
+        "recipes": [
+            {"name": name, "image_url": image_url, "image_ai_generated": False}
+            for name in names
+        ],
+        "image_requested": True,
+    }
+
+
 class SpecificDishRequestTest(unittest.TestCase):
     """点名一道菜 vs 只给食材（候选阶段判定的地基）"""
 
@@ -170,13 +183,35 @@ class CandidateIndexParseTest(unittest.TestCase):
             ("做三把", 3),
             ("做 3 把。", 3),
             ("第十个", 10),
+            ("那就3吧", 3),
+            ("那就要3吧", 3),
+            ("那就选3吧", 3),
+            ("那就3", 3),
+            ("就3", 3),
+            ("就3吧", 3),
+            ("就 2 吧", 2),
+            ("就二吧", 2),
         ]:
             with self.subTest(text=text):
                 self.assertEqual(g.parse_candidate_index(text), expected)
 
     def test_parse_index_none(self):
         # 「做2个菜」是多菜请求，不是选项号
-        for text in ["做2个菜", "做3把菜", "3把菠菜", "随便来点", "换一道", "来点清爽的"]:
+        for text in [
+            "做2个菜",
+            "做3把菜",
+            "3把菠菜",
+            "随便来点",
+            "换一道",
+            "来点清爽的",
+            # 承接前缀只放开「序号 + 语气词/收尾」：带量词或名词的不能当选定
+            "那就2个菜",
+            "那就3个人",
+            "那就先这样吧",
+            "就2个菜",
+            "就3个人",
+            "就1份吧",
+        ]:
             with self.subTest(text=text):
                 self.assertIsNone(g.parse_candidate_index(text))
 
@@ -410,6 +445,129 @@ class CandidateTurnTest(unittest.TestCase):
 
     def test_change_one_without_named_dish_returns_to_candidates(self):
         self.assertTrue(g._is_candidate_turn(self._m("没胃口换一道")))
+
+    def test_taste_adjustment_after_delivered_recipe_keeps_image_pipeline(self):
+        """口味/口感调整续轮仍要保留配图链路，否则同一道菜第二次会丢图。
+
+        复现证据：`sessions/user_147767ddb1.json` 第 2 轮「选3」出「西红柿鸡蛋汤」
+        带图，第 3 轮「想要更辣一点」沿同一道菜重新生成，但路由层
+        `_should_enable_image_pipeline` 判为 other → 关配图 → 结构化答案按
+        `image_requested=False` 清空 image_url，前端卡片直接丢图。
+        """
+        with patch(
+            "storage.sessions.find_recent_recipe_for_image",
+            return_value={"dish_name": "西红柿鸡蛋汤", "recipe_index": 0},
+        ):
+            self.assertTrue(
+                chat_route._should_enable_image_pipeline_for_turn(
+                    "s1", "想要更辣一点", None, None
+                )
+            )
+            self.assertTrue(
+                g._wants_recipe_images(
+                    [HumanMessage(content="【配图开关：开启】\n想要更辣一点")]
+                )
+            )
+
+    def test_strict_control_is_a_recipe_adjustment(self):
+        self.assertTrue(g._is_taste_adjustment_request("要严格控制"))
+
+    def test_explicit_recipe_change_target_keeps_image_pipeline(self):
+        self.assertTrue(
+            chat_route._has_explicit_recipe_change_target(
+                "那换成不放花生的小炒肉行吗"
+            )
+        )
+        self.assertTrue(
+            chat_route._should_enable_image_pipeline_for_turn(
+                "s1", "那换成不放花生的小炒肉行吗", None, None
+            )
+        )
+
+    def test_generic_recipe_change_targets_do_not_open_image_pipeline(self):
+        """泛化版本或候选序号不能被当成明确目标菜而提前配图。"""
+        for text in ("换成低盐版本", "换成第3个吧", "换一道菜"):
+            with self.subTest(text=text):
+                self.assertFalse(
+                    chat_route._has_explicit_recipe_change_target(text)
+                )
+                self.assertFalse(
+                    chat_route._should_enable_image_pipeline_for_turn(
+                        "s1", text, None, None
+                    )
+                )
+
+    def test_taste_adjustment_without_delivered_recipe_stays_plain(self):
+        """没有可复用菜谱时，口味调整不能凭空开配图（候选清单轮尤其）。"""
+        with patch(
+            "storage.sessions.find_recent_recipe_for_image", return_value=None
+        ):
+            self.assertFalse(
+                chat_route._should_enable_image_pipeline_for_turn(
+                    "s1", "想要更辣一点", None, None
+                )
+            )
+            # 换一道菜仍回到候选清单，不属于口味调整续轮。
+            self.assertFalse(
+                chat_route._should_enable_image_pipeline_for_turn(
+                    "s1", "换一道菜", None, None
+                )
+            )
+
+    def test_taste_adjustment_helper_respects_existing_gates(self):
+        """候选选定、常规配图判据仍在口味调整分支之前生效。"""
+        with patch(
+            "storage.sessions.find_recent_recipe_for_image", return_value=None
+        ):
+            self.assertTrue(
+                chat_route._should_enable_image_pipeline_for_turn(
+                    "s1", "选3", None, "西红柿鸡蛋汤"
+                )
+            )
+
+    def test_spoken_taste_variants_keep_same_dish_and_image(self):
+        """口语辣度/咸淡续轮也必须保住同一道菜和配图链路。
+
+        复现证据：`sessions/user_ac95d5ea32.json` 第 2 轮选定「西红柿鸡蛋汤」带图，
+        第 3 轮「我不太能吃辣，这道汤需要放辣椒吗」沿同一道汤继续，但此前这些
+        口语说法都判不出口味调整意图 → 配图门关闭 → 结构化答案清空 image_url，
+        卡片既丢了图、菜名也被改成「番茄鸡蛋青椒汤」。
+        """
+        for text in [
+            "我不太能吃辣，这道汤需要放辣椒吗",
+            "太辣了",
+            "少放点盐",
+            "辣度降低一点",
+            "我怕辣，辣椒少放点",
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(g._is_taste_adjustment_request(text))
+        with patch(
+            "storage.sessions.find_recent_recipe_for_image",
+            return_value={"dish_name": "西红柿鸡蛋汤", "recipe_index": 0},
+        ):
+            for text in [
+                "我不太能吃辣，这道汤需要放辣椒吗",
+                "太辣了",
+                "少放点盐",
+            ]:
+                with self.subTest(text=text):
+                    self.assertTrue(
+                        chat_route._should_enable_image_pipeline_for_turn(
+                            "s1", text, None, None
+                        )
+                    )
+        # 没有可补图的历史菜谱时，口味说法不能凭空开配图（候选清单轮仍不配图）。
+        with patch(
+            "storage.sessions.find_recent_recipe_for_image", return_value=None
+        ):
+            for text in ["太辣了", "少放点盐", "辣度降低一点"]:
+                with self.subTest(text=text):
+                    self.assertFalse(
+                        chat_route._should_enable_image_pipeline_for_turn(
+                            "s1", text, None, None
+                        )
+                    )
 
     def test_explicit_image_request_not_candidate_turn(self):
         # 泛推荐即便带配图开关，也必须先走候选；只有具体菜才能直接出卡片和配图。
@@ -703,6 +861,37 @@ class SelectedTargetOpeningPreservationTest(unittest.TestCase):
         self.assertIn(self.TARGET, payload["opening"])
         self.assertTrue(payload["opening_authoritative"])
         self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
+
+    def test_opening_denying_candidate_index_is_repaired(self):
+        """实测 2026-10-15：卡片认对了「第3道」，讲解却自称看不到编号清单，
+        并把整道菜换成候选清单里根本没有的另一道（卡片「番茄蒸水蛋」/ 讲解
+        「番茄豆腐菌菇汤」）。旧 marker 表只认「看不到前文 / 无法确认」的固定
+        说法，这一族措辞漏判后错位讲解原样发给用户——同轮卡片和讲解必须指向
+        同一道菜。
+        """
+        opening = (
+            "我这边没有看到你前面列的“第3个”具体是什么内容，当前检索也没有找到"
+            "可靠菜谱结果，所以不确定你指的哪一项。\n\n"
+            "**番茄豆腐菌菇汤（少油少盐版）**\n食材（1~2人份）\n- 番茄 2个\n"
+        )
+        result = self._run_structure(_chef_answer([self.TARGET]), opening=opening)
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["recipes"][0]["name"], self.TARGET)
+        self.assertIn("第3道", payload["opening"])
+        self.assertIn(self.TARGET, payload["opening"])
+        self.assertNotIn("番茄豆腐菌菇汤", payload["opening"])
+        self.assertNotIn("没有看到你前面列的", payload["opening"])
+        self.assertTrue(payload["opening_authoritative"])
+
+    def test_denial_wording_without_candidate_anchor_is_preserved(self):
+        # 收窄误伤面：「找不到某样调料」这类正常讲解没有序号/候选锚点，不触发替换
+        opening = "好的，这份按低盐做法整理。如果找不到郫县豆瓣酱，用少量生抽代替就行。"
+        result = self._run_structure(_chef_answer([self.TARGET]), opening=opening)
+        payload = json.loads(result["messages"][-1].content)
+
+        self.assertEqual(payload["opening"], opening)
+        self.assertNotIn("opening_authoritative", payload)
 
     def test_empty_opening_is_not_replaced_by_template(self):
         # 正文为空交给前端流式原话兜底，模板不能顶掉用户已经看到的讲解
@@ -1305,6 +1494,119 @@ class AskTurnNoCardTest(unittest.TestCase):
         ))
 
 
+class DeliveredCardFollowupGuardTest(unittest.TestCase):
+    """卡片交付后的普通追问只回文字：不重出卡片、不补图（技能验收场景 5）
+
+    回归背景（2026-10-15 实测 user_d2cc49f12c / user_c5d8dcc6b7）：卡片已经交付后，
+    下面这些轮次被判成 followup/other 却直落结构化链，重出一张几乎相同的卡片且
+    `image_requested=False`——用户既丢了图，也分不清是上一道菜的补充还是新一轮。
+    """
+
+    FOLLOWUPS = (
+        "这道菜大概要炖多久？",
+        "我妈妈在控糖，我爸爸没有，今晚做两个人的饭",
+        "你好，你能做什么",
+        "做的时候需要焯水吗",
+    )
+
+    def _messages(self, user_text, names=("减盐减油版红烧肉",)):
+        """真实状态形态：用户消息之后还有 chef_think 流式产出的 AIMessage。
+
+        漏掉末尾这条 AIMessage 会改变闸门判定（`opening` 为空、候选兜底拿不到清单），
+        测的就不是线上那条链路了。
+        """
+        return [
+            HumanMessage(content="推荐几道菜"),
+            AIMessage(content=json.dumps(
+                _candidates_payload(list(names)), ensure_ascii=False)),
+            HumanMessage(content="就第1个"),
+            AIMessage(content=json.dumps(
+                _delivered_card(list(names)), ensure_ascii=False)),
+            HumanMessage(content=user_text),
+            AIMessage(content="好的，我按这道菜的情况说清楚。"),
+        ]
+
+    def _run(self, messages, answer=None):
+        with (
+            patch("agent.graph.build_structured_answer",
+                  return_value=answer or _chef_answer(["减盐减油版红烧肉"])) as mocked,
+            patch("agent.graph._build_structure_context",
+                  return_value=("上下文", None, False)),
+            patch("agent.graph._allergens_for_audit", return_value=[]),
+        ):
+            result = g.structure_answer_node({
+                "messages": messages,
+                "verify_status": "ok",
+                "verify_violated": [],
+            })
+        return result, mocked
+
+    def test_plain_followups_after_card_emit_no_message(self):
+        for text in self.FOLLOWUPS:
+            with self.subTest(text=text):
+                result, mocked = self._run(self._messages(text))
+                self.assertEqual(result, {"messages": []})
+                mocked.assert_not_called()
+
+    def test_blocked_followups_are_reported_as_non_structured_turns(self):
+        """被挡下的轮次必须识别成 followup/other，而不是「选定/换菜」。"""
+        for text in self.FOLLOWUPS:
+            with self.subTest(text=text):
+                messages = self._messages(text)
+                self.assertIn(g._classify_turn_intent(messages), ("followup", "other"))
+                self.assertFalse(g._is_dish_pick_turn(messages))
+                self.assertFalse(g._wants_another_dish(text))
+
+    def test_no_card_yet_still_structures(self):
+        """没有交付过卡片时，同样一句话不该被这条闸门吃掉（闸门只认已交付卡片）。"""
+        messages = [
+            HumanMessage(content="我有鸡胸肉和青菜"),
+            AIMessage(content="还有别的想法可以告诉我。"),
+            HumanMessage(content="这道菜大概要炖多久？"),
+        ]
+        result, mocked = self._run(messages)
+        self.assertNotEqual(result, {"messages": []})
+        mocked.assert_called_once()
+
+    def test_new_dish_requests_after_card_are_not_blocked_by_the_guard(self):
+        """「还要别的菜」是新一轮索取，不能被闸门静默掉。
+
+        闸门管的就是「有没有进结构化链」，所以判据是 build_structured_answer 被调用；
+        「再推荐一道 / 换一道菜」被判成候选轮后由既有候选分支收口（正文清单不足两道时
+        本来就不出卡片），那是基线行为，不由本闸门负责。
+        """
+        for text in ("还有别的菜吗", "再推荐一道", "换一道菜"):
+            with self.subTest(text=text):
+                _, mocked = self._run(self._messages(text))
+                mocked.assert_called_once()
+
+    def test_named_dish_after_card_still_emits_card(self):
+        result, mocked = self._run(self._messages("我想吃番茄炒蛋"))
+        payload = json.loads(result["messages"][-1].content)
+        self.assertEqual([item["name"] for item in payload["recipes"]],
+                         ["减盐减油版红烧肉"])
+        mocked.assert_called_once()
+
+    def test_explicit_detail_request_after_card_is_not_blocked_by_the_guard(self):
+        _, mocked = self._run(self._messages("请再给我完整做法和食材用量"))
+        mocked.assert_called_once()
+
+    def test_taste_adjustment_after_card_still_structures(self):
+        result, mocked = self._run(
+            self._messages("就吃这道菜品，想做道更辣些的")
+        )
+        self.assertNotEqual(result, {"messages": []})
+        mocked.assert_called_once()
+
+    def test_wants_another_dish_markers(self):
+        for text in ("还有别的菜吗", "再推荐一道", "换个菜吧", "有没有其它的菜"):
+            with self.subTest(text=text):
+                self.assertTrue(g._wants_another_dish(text))
+        for text in ("", "这道菜大概要炖多久？", "盐少放一点", "爸爸高血压能吃吗"):
+            with self.subTest(text=text):
+                self.assertFalse(g._wants_another_dish(text))
+
+
 class RestaurantSceneTest(unittest.TestCase):
     """「出去吃」必须和「外出就餐」同源识别，不再漏判成推荐"""
 
@@ -1444,9 +1746,24 @@ class ImagePipelineGateTest(unittest.TestCase):
         self.assertTrue(g._is_candidate_turn([HumanMessage(content=text)]))
 
     def test_image_action_phrases_are_recognized(self):
-        for text in ["配张图片", "我要图片", "要图片", "配图片"]:
+        for text in ["配张图片", "我要图片", "要图片", "配图片", "配一张图", "配个图"]:
             with self.subTest(text=text):
                 self.assertTrue(chat_route._wants_image(text, None))
+
+    def test_contextual_image_phrase_is_image_request_not_change(self):
+        """「给这道菜配一张图」这类指代当前菜的配图话必须认成配图意图。
+
+        复现证据：`sessions/user_b67ee4024f.json` 第 2 轮选定「西红柿鸡蛋汤」带图，
+        第 3 轮「给这道菜配一张图」此前 `_wants_image` 判 False → 不进就地补图链路，
+        反而落回通用 Agent，模型把菜名换成「番茄青椒蛋花汤」且没有配图。
+        指代当前菜，所以不解析成点名新菜（`_extract_requested_dish` 为 None），
+        补图对象交给会话里的最近一张卡片。
+        """
+        for text in ["给这道菜配一张图", "这道菜配一张图", "再配一张图"]:
+            with self.subTest(text=text):
+                self.assertTrue(chat_route._wants_image(text, None))
+                self.assertFalse(chat_route._is_recipe_change_request(text))
+                self.assertIsNone(chat_route._extract_requested_dish(text))
 
     def test_image_only_action_has_no_requested_dish(self):
         for text in ["配张图片", "我要图片", "要图片", "配图片"]:
@@ -1774,6 +2091,30 @@ class BareIndexPickTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(g.parse_candidate_index(text))
 
+    def test_prefixed_bare_number_with_particle(self):
+        """「那就3吧」这类承接前缀 + 裸序号（实测 user_c5d8dcc6b7 第 2 轮的根因）
+
+        用户承接候选清单时先说「那就」，前缀把裸序号形态整体吃掉，
+        序号解析不出来 → 配图门开不了、已选定菜名也没注入 → 有卡无图。
+        """
+        for text, expected in [
+            ("那就3吧", 3),
+            ("那就要2吧", 2),
+            ("那就选3吧", 3),
+            ("那选2吧", 2),
+            ("那就3", 3),
+            ("那就 3 吧，少盐一点", 3),
+            ("那就二吧", 2),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(g.parse_candidate_index(text), expected)
+
+    def test_prefixed_bare_number_without_particle_is_not_index(self):
+        # 带量词/名词的仍然不能当序号：「那就2个菜」「那就3个人」「那就是3个人吧」
+        for text in ["那就2个菜", "那就3个人", "那就是3个人吧", "那就一份吧", "那就先这样吧"]:
+            with self.subTest(text=text):
+                self.assertIsNone(g.parse_candidate_index(text))
+
     def test_route_layer_resolves_bare_number_pick(self):
         with patch(
             "storage.sessions.find_recent_candidates",
@@ -1793,6 +2134,11 @@ class BareIndexPickTest(unittest.TestCase):
             )
             self.assertEqual(
                 chat_route._resolve_picked_candidate("s1", "做3把"),
+                "番茄牛腩",
+            )
+            # 承接前缀形态：路由层拿到的就是用户原话「那就3吧」
+            self.assertEqual(
+                chat_route._resolve_picked_candidate("s1", "那就3吧"),
                 "番茄牛腩",
             )
 
@@ -2484,6 +2830,102 @@ class RetryToolSlotTest(unittest.TestCase):
         self.assertEqual(
             g.chef_route_with_tool_budget(merged), "tool_budget_exhausted"
         )
+
+
+class RetrySlotOncePerTurnTest(unittest.TestCase):
+    """重试回路降温：同一轮第 2、3 次重试不再各开一圈新工具（P2）。
+
+    证据：trace 里 `chef_think` 854 次 / 3362s 是最大头，usage 显示平均 5.73 次
+    LLM 调用/轮、最高 10 次；`_retry_tool_slot_patch` 原本**每次**重试都补 1 格并发
+    额度并回退 1 圈，于是 `MAX_VERIFY=3` 之外还能再叠最多 3 圈工具 + 3 次生成。
+    这里收紧成「每轮只补一次」，与同文件 `_pick_turn_slot_patch` 的口径对齐。
+
+    首次重试照旧补额（既有「不让好答案被兜底句顶掉」的保护一个不少）；
+    被拒的第 2 次重试则走既有 `tool_budget_finalize` 收口，收口用本轮已取到的
+    证据生成，不是静态兜底句；过敏原/慢病的安全判定与路由完全不变。
+    """
+
+    ANSWER = "番茄牛肉面：面条煮熟，加生抽2大勺、盐5g调味，铺上牛肉即可。"
+    RETRY_CALLS = [
+        {"id": "retry-t1", "name": "nutrition_kb_search", "args": {"query": "低钠 面食"}},
+    ]
+
+    def _state(self, **overrides):
+        state = {
+            "messages": list(add_messages([], [
+                HumanMessage(content="我有鸡胸肉和青菜"),
+                AIMessage(content=json.dumps(
+                    _candidates_payload(["番茄牛肉面", "蒜香鸡胸"]), ensure_ascii=False)),
+                HumanMessage(content="2吧，我的父亲高血压，可以吃这个吗"),
+                AIMessage(content=self.ANSWER),
+            ])),
+            "verify_attempts": 0,
+            "tool_calls_in_turn": g.PICK_TURN_TOOL_BUDGET,
+            "tool_budget": g.PICK_TURN_TOOL_BUDGET,
+            "tool_rounds": 1,
+            "tool_budget_exhausted": False,
+            "retry_slot_granted": False,
+        }
+        state.update(overrides)
+        return state
+
+    @staticmethod
+    def _merge(state, out):
+        merged = {**state, **{k: v for k, v in out.items() if k != "messages"}}
+        merged["messages"] = add_messages(state["messages"], out.get("messages") or [])
+        return merged
+
+    def test_first_retry_still_grants_and_marks_once(self):
+        out = g.verify_answer_node(self._state())
+        self.assertEqual(out["verify_status"], "retry")
+        self.assertEqual(out["tool_calls_in_turn"], g.PICK_TURN_TOOL_BUDGET - 1)
+        self.assertTrue(out["retry_slot_granted"])
+
+    def test_second_retry_same_turn_does_not_grant_again(self):
+        merged = self._merge(self._state(), g.verify_answer_node(self._state()))
+        # 第一次补的那格已被取完（计数回到封顶）；第二次重试不许再补
+        merged["tool_calls_in_turn"] = g.PICK_TURN_TOOL_BUDGET
+        out = g.verify_answer_node(merged)
+        self.assertEqual(out["verify_status"], "retry")
+        self.assertNotIn("tool_calls_in_turn", out)
+        self.assertNotIn("tool_rounds", out)
+        self.assertNotIn("retry_slot_granted", out)
+
+    def test_denied_second_retry_routes_to_evidence_backed_finalize(self):
+        merged = self._merge(self._state(), g.verify_answer_node(self._state()))
+        merged["tool_calls_in_turn"] = g.PICK_TURN_TOOL_BUDGET
+        merged = self._merge(merged, g.verify_answer_node(merged))
+        merged["messages"] = add_messages(
+            merged["messages"], [AIMessage(content="", tool_calls=self.RETRY_CALLS)]
+        )
+        self.assertEqual(g._remaining_tool_slots(merged), 0)
+        self.assertEqual(
+            g.chef_route_with_tool_budget(merged), "tool_budget_exhausted"
+        )
+
+        merged["messages"] = add_messages(merged["messages"], [
+            ToolMessage(
+                content='{"text":"可用低钠生抽替代，钠约 300mg/份"}',
+                name="nutrition_kb_search",
+                tool_call_id="retry-t1",
+            ),
+        ])
+        with patch("agent.graph.llm") as fake_llm, \
+                patch("agent.graph._allergens_for_audit", lambda *a, **k: set()):
+            fake_llm.invoke.return_value = AIMessage(
+                content="换成低钠生抽的番茄牛肉面，少放盐。"
+            )
+            result = g.tool_budget_finalize_node(dict(merged))
+        self.assertTrue(result["tool_budget_exhausted"])
+        self.assertIn("低钠", result["messages"][-1].content)
+
+    def test_grant_is_reset_each_turn(self):
+        state = {
+            "messages": list(add_messages([], [HumanMessage(content="新的一轮")])),
+            "retry_slot_granted": True,
+        }
+        out = g.maybe_condense(state)
+        self.assertFalse(out["retry_slot_granted"])
 
 
 class PickTurnSecondRoundSlotTest(unittest.TestCase):

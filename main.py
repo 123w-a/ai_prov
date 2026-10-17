@@ -404,6 +404,7 @@ def _stream_agent(message, session_id):
     visible_text_emitted = False  # reset 后是否已有可见正文，避免结构化 opening 重复播报
     last_ai_content = ""
     stream_failed = False
+    turn_seq = None  # 本轮轮序号，由 condense_history 的更新产出（观测用）
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
     # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
     # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
@@ -415,7 +416,13 @@ def _stream_agent(message, session_id):
         ):
             if mode == "updates":
                 for node, update in (payload or {}).items():
-                    if node == "run_tools":
+                    if node == "condense_history":
+                        # 轮序号由入口节点产出：抓住它，收尾时才能把本轮用量
+                        # 和 agent_trace.jsonl 的同一轮节点耗时对上（观测用，不参与业务判断）。
+                        seq = (update or {}).get("turn_seq")
+                        if seq is not None:
+                            turn_seq = seq
+                    elif node == "run_tools":
                         used = (update or {}).get("tool_calls_in_turn")
                         if used is not None:
                             print(f"[agent-metrics] tool_calls_in_turn={used}")
@@ -600,7 +607,12 @@ def _stream_agent(message, session_id):
                     emitted_output = True
                     yield fallback_event
         # 无论正常收尾还是中途异常，都要把本轮用量落盘（record_turn_usage 内部静默失败）
-        record_turn_usage(turn_usage, session_id=session_id, node="_stream_agent")
+        record_turn_usage(
+            turn_usage,
+            session_id=session_id,
+            node="_stream_agent",
+            turn_seq=turn_seq,
+        )
 
 
 def stream_agent(message, session_id):

@@ -269,6 +269,25 @@ def delete_session(sid):
     fp = _session_file(sid)
     if fp.exists():
         _safe_unlink(fp)
+    # 会话 JSON 之外，Agent 在 checkpoint.db 里还留着一整条 thread（断点记忆）。
+    # 不一起删的话，删会话只删掉表层文件，断点永久堆积（实测 245 条线程 vs 3 个 JSON）。
+    _purge_checkpoint_threads(sid)
+
+
+def _purge_checkpoint_threads(sid):
+    """尽力清理断点库里属于该会话的线程（含 failover 派生的 -fo 线程）。
+
+    清理失败不影响会话删除本身：会话文件已经删掉了，断点最多是孤儿，
+    由启动期的孤儿清理兜底。
+    """
+    try:
+        from storage import checkpoints
+
+        deleted = checkpoints.delete_session_threads(sid)
+        if deleted:
+            _logger.info("已清理会话 %s 的断点线程 %d 条", sid, deleted)
+    except Exception as exc:
+        _logger.warning("清理会话 %s 的断点线程失败：%s", sid, exc)
 
 
 def clear_session(sid):
@@ -489,6 +508,58 @@ def find_recent_recipe_for_image(sid, requested_name=None):
                 "recipe_index": index,
                 "dish_name": dish_name,
                 "answer": ans,
+            }
+    return None
+
+
+def _base_dish_name(name) -> str:
+    """归一化菜名，用于「同一道菜」判定。
+
+    微调/控盐控油轮会把菜名改成「蒜蓉蒸丝瓜·严格控制版」「清蒸鸡腿肉（去皮）」这类
+    带版本或括号注释的写法；判定是否同一道菜时要把这些后缀剥掉再比。
+    """
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    text = re.split(r"[（(·・|｜]", text, maxsplit=1)[0]
+    text = re.sub(r"^[^版]{0,8}版", "", text)
+    return text.strip()
+
+
+def find_recent_recipe_image(sid, dish_name):
+    """取最近一张「同名菜且已带图」的成品图，供同菜微调轮沿用上一张卡片的配图。
+
+    与 ``find_recent_recipe_for_image`` 的区别：只认确实带 ``image_url`` 的记录，
+    并按归一化菜名（``_base_dish_name``）匹配，避免微调版本改名后把旧图弄丢。
+    返回 ``{"url", "ai", "note"}``；找不到返回 ``None``。
+    """
+    want = _base_dish_name(dish_name)
+    if not want:
+        return None
+    data = _read_session(sid)
+    if data is None:
+        return None
+    for m in reversed(data.get("messages") or []):
+        try:
+            ans = json.loads(m.get("answer") or "")
+        except Exception:
+            continue
+        if not isinstance(ans, dict):
+            continue
+        for recipe in ans.get("recipes") or []:
+            if not isinstance(recipe, dict):
+                continue
+            if _base_dish_name(recipe.get("name")) != want:
+                continue
+            url = recipe.get("image_url") or ans.get("image_url")
+            if not url:
+                continue
+            return {
+                "url": url,
+                "ai": bool(
+                    recipe.get("image_ai_generated") or ans.get("image_ai_generated")
+                ),
+                "note": str(recipe.get("image_note") or ans.get("image_note") or ""),
             }
     return None
 

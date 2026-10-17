@@ -196,21 +196,23 @@ class SodiumBillTest(unittest.TestCase):
     否则重生成时模型只替换品类、总钠压不下来。"""
 
     def test_bill_lists_each_source_with_amounts(self):
-        vs = audit("红烧肉，放盐2克、生抽3克、鸡精2克", ["高血压"])
+        # 按食盐当量折算后总量需超过 5g，才能触发数值账单。
+        vs = audit("红烧肉，放盐4克、生抽15ml、鸡精4克", ["高血压"])
         bills = [v for v in vs if v.get("detail")]
         self.assertTrue(bills, "超钠违禁应带 detail 明细")
         items = {d["item"] for d in bills[0]["detail"]}
         self.assertEqual(items, {"盐", "生抽", "鸡精"})
         text = describe(vs)
         self.assertIn("数值账单", text)
-        self.assertIn("鸡精2g", text)
+        self.assertIn("鸡精4g", text)
+        self.assertIn("食盐当量", text)
         self.assertIn("超", text)
         self.assertIn("仅替换品类", text)
 
     def test_sour_condiments_now_count_in_sodium(self):
         # E4 实测：模型用味精/鸡精顶替食盐；旧 _salt_total_g 硬编码窄词表算不到
         # 它们（7g 钠里只算得出一小部分）→ 复用 _SALT_SEASONING 后必须进账单
-        vs = audit("配菜放鸡精4克、味精3克", ["高血压"])
+        vs = audit("配菜放鸡精8克、味精10克", ["高血压"])
         bills = [v for v in vs if v.get("detail")]
         self.assertTrue(bills, "鸡精/味精的克数应计入钠账并产生数值违禁")
         items = {d["item"] for d in bills[0]["detail"]}
@@ -223,11 +225,28 @@ class SodiumBillTest(unittest.TestCase):
         self.assertIn("蜂蜜", {d["item"] for d in sugar[0]["detail"]})
 
     def test_under_cap_has_no_bill(self):
-        # 注意产品语义：「盐」字词级命中（salt 模式语境判定）与克数超限是两条
-        # 独立路径——未超上限时允许词级提示存在，但绝不产生数值账单。
+        # 明确用量未超上限时交给数值层判定，不应产生词级或数值重生成。
         vs = audit("清蒸鱼，放盐3克", ["高血压"])
         self.assertFalse(any(v.get("detail") for v in vs),
                          "未超上限不应有数值账单")
+
+    def test_salt_detail_keeps_amount_and_uses_equivalent_total(self):
+        from domain.nutrition_rules import _salt_total_detail, _salt_total_g
+
+        text = "盐2g、生抽15ml、鸡精4g"
+        detail = _salt_total_detail(text)
+        by_item = {d["item"]: d for d in detail}
+        self.assertEqual(by_item["盐"]["grams"], 2)
+        self.assertEqual(by_item["生抽"]["grams"], 15)
+        self.assertEqual(by_item["鸡精"]["grams"], 4)
+        self.assertAlmostEqual(by_item["生抽"]["salt_g"], 2.55)
+        self.assertAlmostEqual(_salt_total_g(text), sum(d["salt_g"] for d in detail))
+
+    def test_salt_detail_prefers_long_keyword(self):
+        from domain.nutrition_rules import _salt_total_detail
+
+        detail = _salt_total_detail("蒸鱼豉油5ml")
+        self.assertEqual([d["item"] for d in detail], ["蒸鱼豉油"])
 
     def test_total_g_and_detail_stay_consistent(self):
         # 单一数据源绊线：求和必须等于明细之和（长词优先去重语义共用）
@@ -326,7 +345,9 @@ class TestSaltWordingContext(unittest.TestCase):
     def test_real_seasoning_is_still_a_violation(self):
         for text in (
             "盐 5g、生抽 2 大勺",
-            "用半勺蚝油提鲜",
+            # 「半勺蚝油」折算约 0.75g 食盐当量，属于写明用量且不超上限，
+            # 已按新口径放行（见 TestExplicitDoseWithinCap）；真超量照旧要拦。
+            "加 4 汤匙生抽",
             "放盐10克",
             "加榨菜炒肉丝",
         ):
@@ -342,6 +363,90 @@ class TestSaltWordingContext(unittest.TestCase):
         # 「盐不少」是关键词后面的翻案，不能被尾随限定词放过
         vs = audit("这道菜盐不少", ["高血压"])
         self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+    def test_salt_saving_wording_is_not_a_violation(self):
+        # 「省掉不少盐」里的「不少」修饰的是省下来的量，不是承认下盐重口
+        for text in (
+            "同样咸度能省掉不少盐",
+            "少放了不少盐",
+            "把盐减少了不少",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["高血压"]), [], text)
+
+
+class TestForbiddenNegationContext(unittest.TestCase):
+    """实测回归：安全说明/劝阻句不是下料（user_c5d8dcc6b7）。
+
+    根因——忌口词的否定语境只看紧贴前缀：「别用浓肉汤」「也别加小鱼小虾类干货」
+    里否定词与关键词隔着「用浓」「加小鱼小」一两个字，被漏判成真实下料，
+    合规答案被反复打回、前端连着闪好几次「正在形成膳食建议」。
+    """
+
+    def test_negated_forbidden_advice_is_not_a_violation(self):
+        for text in (
+            "别用浓肉汤、鱼汤打底，也别加小鱼小虾类干货",
+            "不吃猪肝、腰子",
+            "建议避开动物内脏和浓肉汤",
+            "别喝啤酒，也别吃生冷",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["痛风"]), [], text)
+
+    def test_negation_does_not_cover_a_following_real_addition(self):
+        # 否定只管自己那一小句：后面的「放虾皮」是真实下料，不能被上一个小句开脱
+        for text in ("不加盐、放虾皮", "本来不加虾皮，但实际放虾皮"):
+            with self.subTest(text=text):
+                self.assertTrue(audit(text, ["痛风"]), text)
+
+    def test_negation_window_does_not_cross_punctuation(self):
+        # 「但」这类翻案词与标点都不算否定语境，真下料照旧命中
+        for text in (
+            "香菇或虾皮提鲜",
+            "老火汤、猪肝汤都可以",
+            "老火汤炖猪肝",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(audit(text, ["痛风"]), text)
+
+
+class TestExplicitDoseWithinCap(unittest.TestCase):
+    """实测回归：写明了具体用量的调味品，单品不超上限就不算超量（盐 整锅共 1g）。
+
+    上限口径与 RULES 的 salt_cap_g 对齐，且只作用于硬审计；多品叠加的总当量
+    仍由数值账单兜底，真超量一条都不能放过。
+    """
+
+    def test_small_explicit_dose_is_not_flagged(self):
+        for text in (
+            "盐 整锅共 1g",
+            "关火后加盐 1g",
+            "放淡盐水里泡 2 分钟",
+            # 厨房计量（小撮/汤匙）与「用量写在关键词前面」的语序同样要认出来
+            "加 1 小撮盐",
+            "一撮盐",
+            "生抽 1 汤匙",
+            "用半勺蚝油提鲜",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(audit(text, ["高血压"]), [], text)
+
+    def test_dose_over_cap_still_flagged(self):
+        vs = audit("放盐10克", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in vs))
+
+    def test_summed_doses_still_flagged(self):
+        # 单品都在上限内（盐 3g、生抽 15ml≈2.6g 盐），合计 5.6g > 5g：由数值账单兜住
+        vs = audit("盐 3g + 生抽 15ml", ["高血压"])
+        self.assertTrue(any("食盐" in v["keyword"] for v in vs))
+        vs = audit("盐1.5g + 生抽20g + 盐0.5g + 盐1g", ["高血压"])
+        self.assertTrue(any("食盐" in v["keyword"] for v in vs))
+
+    def test_repeated_dose_is_counted_once(self):
+        # 同一份「盐 1g」在原料区和步骤区各写一次，是复述不是两份用量：
+        # 去重后 1g，不应被重复求和判成超量
+        vs = audit("食材：盐 1g；做法：撒盐 1g 翻匀", ["高血压"])
+        self.assertEqual(vs, [])
 
 
 class ContextSeriesAndDisclosureTest(unittest.TestCase):
@@ -366,25 +471,19 @@ class ContextSeriesAndDisclosureTest(unittest.TestCase):
         violations = audit("喝咖啡和奶茶", ["孕期"])
         self.assertEqual({v["keyword"] for v in violations}, {"咖啡"})  # 奶茶不在表
 
-    # 与 origin/main 的差异（按本分支基线裁定，实现见 domain/nutrition_rules.py）：
-    # 本分支保留「词级盐命中」口径——写了数字也仍以词级拦（更保守、防漏），
-    # 数值层只在超上限时**追加**带账单的数值条，不取代词级条。
-    # origin/main 的「数值让路」（写了数字就跳过词级）未采纳：实测它会同时放过
-    # 「低钠盐替代」这类无数字的真实线索，且与本分支既有回归用例直接冲突。
-    def test_numbered_salt_keeps_word_level_and_adds_numeric_bill(self):
-        # 未超上限：只有词级盐命中，没有数值账单
-        vs3 = audit("少盐烹饪，只放盐3克", ["高血压"])
-        self.assertTrue(any(v["keyword"] == "盐" for v in vs3))
-        self.assertFalse(any(v.get("detail") for v in vs3))
-        # 超上限：词级命中 + 带账单的数值条同时存在
-        vs8 = audit("放盐8克、酱油5克", ["高血压"])
-        self.assertTrue(any(v["keyword"] == "盐" for v in vs8))
-        self.assertTrue([v for v in vs8 if v.get("detail")],
-                        "超上限应产生带账单的数值条")
+    # 融合口径：明确用量由盐当量数值层接管；没有数字的真实钠线索仍走词级。
+    def test_salt_with_number_moves_to_numeric_layer(self):
+        self.assertEqual(audit("少盐烹饪，只放盐3克", ["高血压"]), [])
+        violations = audit("放盐8克、酱油5克", ["高血压"])
+        self.assertTrue(violations)
+        self.assertTrue(all(v.get("detail") for v in violations),
+                        "数值层接管后应全部是带账单的数值条")
 
-    def test_low_sodium_salt_word_is_exempt_as_limitation_wording(self):
-        # 「低钠」属限量表述，本分支按限量语境豁免；这是既有口径，不是漏判。
-        self.assertEqual(audit("用低钠盐替代调味", ["高血压"]), [])
+    def test_salt_without_number_stays_word_level(self):
+        # 低钠盐仍是钠来源；不能用“低钠”二字把真实调味线索当成豁免。
+        violations = audit("用低钠盐替代调味", ["高血压"])
+        self.assertTrue(any(v["keyword"] == "盐" for v in violations))
+        self.assertEqual(audit("不加低钠盐", ["高血压"]), [])
 
     def test_capped_numeric_mention_is_not_flagged(self):
         # 「限制语 + 数字」双条件豁免合规表述（E4 lipid 残留根因）

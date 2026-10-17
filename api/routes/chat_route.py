@@ -3,6 +3,7 @@
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 import json  # 把 token / structuring / answer / finish 打包成 SSE 事件
+import logging
 import os
 import queue
 import re
@@ -40,6 +41,8 @@ import re
 
 router = APIRouter()  # 分文件写接口的小路由
 
+logger = logging.getLogger(__name__)
+
 # 图片 MIME 白名单：挡掉非图片和可能的恶意文件
 ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 _CANCELLED_IMAGE_TURNS: dict[str, float] = {}
@@ -58,6 +61,12 @@ _ACTIVE_TURN_RECORD_TTL_S = 6 * 60 * 60
 _MAX_ACTIVE_TURN_RECORDS = 5000
 _IMAGE_THREAD_POLL_TIMEOUT_S = 5.0
 _IMAGE_THREAD_MAX_WAIT_S = float(os.getenv("CHEF_IMAGE_THREAD_MAX_WAIT_S", "180"))
+# 补图线程自己的总预算：SSE 侧最多等 180s，线程侧过去写死 60s，
+# 多菜轮次里第一道冷启动生图（实测 ~50s）就会把后面的菜整轮跳过。
+# 这里改成读 .env，默认留出两轮冷启动的余量，且不超过 SSE 的等待上限。
+_IMAGE_THREAD_BUDGET_S = float(
+    os.getenv("CHEF_IMAGE_THREAD_BUDGET_S", "120")
+)
 # run_agent 结束后等 SSE 消费端完成落库；超时才按客户端断连走线程侧兜底。
 _PERSIST_CONSUMER_WAIT_S = float(os.getenv("CHEF_PERSIST_CONSUMER_WAIT_S", "10"))
 _STREAMED_OPENING_REPLACE_THRESHOLD = 80
@@ -175,6 +184,44 @@ def _save_global_dish_assets(answer_obj: dict, session_id: str) -> None:
                 upsert_dish_asset(recipe, session_id)
     except Exception:
         pass
+
+
+def _carry_over_same_dish_image(answer_obj: dict, session_id: str) -> bool:
+    """单菜微调轮沿用上一张卡片的成品图，避免「重复出卡不出图」。
+
+    仅当：本轮只出一道菜、该菜与最近一张已交付卡片是同一道菜（菜名归一化后相同）、
+    且那张卡片确实带图时生效。命中后把图片就地写回本轮 answer，并把 image_requested
+    置 True，让前端沿用既有的「有图就显示」渲染口径；不会启动补图线程、不额外烧图。
+    找不到可复用图时保持原样（本轮仍是普通无图卡片）。
+    """
+    if not isinstance(answer_obj, dict):
+        return False
+    recipes = [
+        r for r in (answer_obj.get("recipes") or []) if isinstance(r, dict)
+    ]
+    if len(recipes) != 1:
+        return False
+    try:
+        from storage.sessions import find_recent_recipe_image
+        carried = find_recent_recipe_image(session_id, recipes[0].get("name"))
+    except Exception:
+        return False
+    if not carried:
+        return False
+    recipe = recipes[0]
+    recipe["image_url"] = carried["url"]
+    recipe["image_ai_generated"] = carried["ai"]
+    answer_obj["image_url"] = carried["url"]
+    answer_obj["image_ai_generated"] = carried["ai"]
+    if carried["note"]:
+        recipe["image_note"] = carried["note"]
+        answer_obj["image_note"] = carried["note"]
+    answer_obj["image_requested"] = True
+    print(
+        f"[image-carry] 同菜微调轮沿用上一张成品图 name={recipe.get('name')!r}",
+        flush=True,
+    )
+    return True
 
 
 def _global_asset_prompt(message: str) -> str:
@@ -328,7 +375,7 @@ def _apply_mode_prompt(message: str, mode: str) -> str:
 # 配图意图短语：`_wants_image` 与「纯配图请求」判定共用同一份词表，
 # 避免两处口径漂移（一处认、一处不认）。
 _IMAGE_REQUEST_PHRASES = (
-    "配图", "配张图", "补图", "换图", "生成图片", "生成一张图", "来张图",
+    "配图", "配张图", "配一张图", "配个图", "补图", "换图", "生成图片", "生成一张图", "来张图",
     "发图", "发张图", "发图片", "发个图", "出图", "出个图", "图给我",
     "带图", "带图片", "有图", "有图片",
     "我要图片", "要图片", "要张图片", "要一张图片",
@@ -754,6 +801,82 @@ def _should_enable_image_pipeline(message: str, want_image: str | None) -> bool:
     )
 
 
+def _has_explicit_recipe_change_target(message: str) -> bool:
+    """判断“换成/改成”后是否明确给出了目标菜，而不是泛泛换一道。"""
+    raw = str(message or "").strip()
+    if not raw or not re.search(r"(?:换成|改成|做成|换做|改做|改为|变成)", raw):
+        return False
+    # 复用点名菜判定，避免另起一套菜名词表；去掉变更动作和句尾询问词后，
+    # “不放花生的小炒肉”会按具体菜名处理，“第3个/一道菜”仍不会。
+    normalized = re.sub(
+        r"(?:换成|改成|做成|换做|改做|改为|变成)", "我想吃", raw, count=1
+    )
+    normalized = re.sub(
+        r"(?:行吗|可以吗|好吗|好不好|可以不)\s*[？?。！!]?$",
+        "",
+        normalized,
+    )
+    target = normalized.removeprefix("我想吃").strip("，。！？、；;：: ")
+    if _is_generic_dish_name_for_image(target):
+        return False
+    if re.search(r"(?:第[一二三四五六七八九十\d]+个|第[一二三四五六七八九十\d]+道)", target):
+        return False
+    if is_specific_dish_request(normalized):
+        return True
+    # 带安全/口味修饰的目标菜（如“不放花生的小炒肉”）会被点名菜规则
+    # 整体拒绝；取最后一个“的”之后的菜名再复用同一套校验。
+    tail = target.rsplit("的", 1)[-1].strip("，。！？、；;：: ")
+    return (
+        len(tail) >= 2
+        and not _is_generic_dish_name_for_image(tail)
+        and bool(re.search(r"(?:炒|蒸|煮|炖|焖|烧|拌|煎|烤|汤|羹|面|饭|肉|蛋|鱼|虾|豆腐|蔬菜)", tail))
+    )
+
+
+def _is_generic_dish_name_for_image(name: str) -> bool:
+    """图片路由只需过滤明显的泛称，避免与 Agent 内部函数形成反向依赖。"""
+    return (
+        name in {"一道菜", "一个菜", "这道菜", "那个菜", "菜", "方案", "版本"}
+        or any(word in name for word in ("版本", "方案", "做法", "第"))
+    )
+
+
+def _has_delivered_recipe_for_image(session_id: str) -> bool:
+    """本会话是否已有可补图的结构化菜谱（候选清单不算）。
+
+    用于口味/口感调整轮：Agent 会按新口味重新生成方案，但配图链路必须保持开启。
+    否则结构化答案会按 `image_requested=False` 清空图片字段，前端卡片在第二次
+    调整同一道菜时直接丢图（实测 user_147767ddb1 第 3 轮「想要更辣一点」）。
+    """
+    try:
+        from storage.sessions import find_recent_recipe_for_image
+
+        return bool(find_recent_recipe_for_image(session_id, None))
+    except Exception:
+        return False
+
+
+def _should_enable_image_pipeline_for_turn(
+    session_id: str,
+    message: str,
+    want_image: str | None,
+    picked_candidate: str | None,
+) -> bool:
+    """单轮配图开关：常规判据 + 候选选定 + 口味调整续轮。"""
+    if _should_enable_image_pipeline(message, want_image) or picked_candidate:
+        return True
+    if _has_explicit_recipe_change_target(message):
+        return True
+    # 口味/口感调整轮：仍由 Agent 重新生成方案，但保持配图开关，避免同一道菜
+    # 第二次调整时结构化答案清空图片、前端卡片丢图。只在已交付过菜谱时开启，
+    # 纯候选清单轮和健康/安全轮不受影响。
+    return (
+        not is_non_recipe_information_request(message)
+        and _is_taste_adjustment_request(message)
+        and _has_delivered_recipe_for_image(session_id)
+    )
+
+
 def _is_standalone_image_request(message: str, want_image: str | None) -> bool:
     """只保留“已有图片不满意，换一张”这类后续请求。"""
     return _is_image_revision_request(message, want_image) or _is_visual_dish_lookup_request(message, want_image)
@@ -787,6 +910,7 @@ def _extract_requested_dish(message: str) -> str | None:
         "重新配张图片", "重新配张图", "重新配图", "重新配", "重画",
         "换一张图片", "换一张图", "换一张", "换张图片", "换张图", "换图",
         "再来一张图片", "再来一张图", "再来一张", "另一张图片", "另一张图", "另一张",
+        "配一张图片", "配一张图", "配个图片", "配个图",
         "配张图片", "配张图", "配图片", "配图", "补张图片", "补张图", "补图",
         "生成一张图片", "生成一张图", "生成图片", "来张图片", "来张图", "来图片",
         "发张图片", "发张图", "发图片", "发个图", "发图", "出个图", "出图",
@@ -806,7 +930,7 @@ def _extract_requested_dish(message: str) -> str | None:
     # 再清一次复合动作，覆盖“配张图片”被局部替换后可能残留的首字/尾字。
     text = re.sub(
         r"(重新生成一张图|重新生成|重新配|重画|换一张|换张图|再来一张|另一张|"
-        r"不满意|不好看|配图|配张图|补图|换图|生成图片|生成一张图|来张图|"
+        r"不满意|不好看|配一张图|配个图|配图|配张图|补图|换图|生成图片|生成一张图|来张图|"
         r"发图|发张图|发图片|发个图|出图|出个图|图片欣赏|成品图|成品照|"
         r"实拍图|示意图|效果图|样图|参考图|图片|照片|实拍|图)",
         "",
@@ -1074,7 +1198,9 @@ async def chat(
     picked_candidate = _resolve_picked_candidate(session_id, message)
     if picked_candidate:
         turn_intent = "confirm_one"
-    image_requested = _should_enable_image_pipeline(message, want_image) or bool(picked_candidate)
+    image_requested = _should_enable_image_pipeline_for_turn(
+        session_id, message, want_image, picked_candidate
+    )
     effective_message = f"【配图开关：开启】\n{message}" if image_requested else message
     if picked_candidate:
         effective_message = (
@@ -1464,11 +1590,25 @@ async def chat(
             # 默认推荐也必须保持“有菜就尽量有图”的原有体验；
             # 全局资产命中时不会走到生图，只有没有可用资产和现成图时才消耗 AI 兜底。
             allow_ai_fallback = True
-            deadline = time.time() + 60
+            deadline = time.time() + _IMAGE_THREAD_BUDGET_S
+            budget_exhausted_logged = False
             for index, recipe in enumerate(list(answer_dict.get("recipes") or [])):
                 if _is_image_cancelled(session_id, turn_id):
                     return
-                if time.time() > deadline or recipe.get("image_url"):
+                if recipe.get("image_url"):
+                    continue
+                if time.time() > deadline:
+                    if not budget_exhausted_logged:
+                        budget_exhausted_logged = True
+                        logger.warning(
+                            "[image-thread] 补图预算 %.0fs 已耗尽，本轮剩余菜品交给后台补图队列：%s",
+                            _IMAGE_THREAD_BUDGET_S,
+                            [
+                                str(r.get("name") or "")
+                                for r in (answer_dict.get("recipes") or [])
+                                if not r.get("image_url")
+                            ],
+                        )
                     continue
                 name = str(recipe.get("name") or "").strip()
                 if not name:
@@ -1493,9 +1633,10 @@ async def chat(
                             allow_ai_fallback=allow_ai_fallback,
                         )
                 except Exception as exc:
-                    print(
-                        f"[image-thread] lookup failed name={name!r} error={exc!r}",
-                        flush=True,
+                    logger.warning(
+                        "[image-thread] lookup failed name=%r error=%r",
+                        name,
+                        exc,
                     )
                     continue
                 print(
@@ -1765,6 +1906,15 @@ async def chat(
                             if answer_dict.get("recipes"):
                                 answer_dict["image_url"] = None
                                 answer_dict["image_ai_generated"] = False
+                        elif has_recipes:
+                            # 同菜微调轮（「要严格控制」「我妈妈在控糖…」这类对本轮已定菜品的
+                            # 约束/版本调整）不走配图链路，但会重出一张卡片——如果就这么落库，
+                            # 用户看到同一道菜的新卡片却把上一张的成品图弄丢了（"重复出卡不出图"，
+                            # 实测 sessions/user_d2cc49f12c rec7：醋溜土豆丝 → 同名卡片无图）。
+                            # 这里只做一件事：单菜且与上一张已交付卡片是同一道菜（菜名归一化后
+                            # 相同）时，就地沿用上一张的图；不改配图开关的既有判定，也不再烧一次
+                            # 生图/搜图。多菜卡片存在歧义，不在此列。
+                            _carry_over_same_dish_image(answer_dict, session_id)
                         _save_global_dish_assets(answer_dict, session_id)
                         # 复用缓存图片（上面那步）时不会启动补图线程，于是 done 分支
                         # 不会有 img_thread 来把 answer_dict 回填进 final_answer。

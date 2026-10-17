@@ -134,6 +134,7 @@ def _build_llm(
     base_url=None,
     model_name=None,
     timeout=None,
+    extra_body=None,
 ):
     """从已解析的 provider 配置构造模型，供文本和视觉链路共用。"""
     # 双兜底：函数参数 > .env 配置
@@ -158,6 +159,10 @@ def _build_llm(
     # max_tokens=None 时不传入，避免部分厂商 API 因接收 null 而报错
     if max_tokens is not None:#如果传了参就传进去，没传参就是大模型去默认别写个null在这里
         kwargs["max_tokens"] = max_tokens
+    # 端点专用参数透传（例如 DeepSeek 的 {"thinking": {"type": "disabled"}}）。
+    # 不传时保持原样，绝不给不接受该参数的厂商发空对象。
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
     # DeepSeek thinking 模型在工具调用后必须把 reasoning_content 原样回传。
     # 通用 ChatOpenAI 会丢弃该字段，第二轮请求直接 400；官方适配类会保留它。
@@ -175,6 +180,7 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
     base_url=None,
     model_name=None,
     timeout=None,
+    extra_body=None,
 ):
     chosen = resolve_provider(provider)#可能是用户传的可能是环境变量的
     cfg = MODEL_CONFIGS[chosen]#获取模型参数
@@ -187,6 +193,7 @@ def get_langchain_llm(# 创建 LangChain ChatOpenAI 实例贯彻到底
         base_url=base_url,
         model_name=model_name,
         timeout=timeout,
+        extra_body=extra_body,
     )
 
 
