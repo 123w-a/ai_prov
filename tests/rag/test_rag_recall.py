@@ -17,8 +17,11 @@ from agent_tools import nutrition_kb_search            # 工具层封装（与 a
 
 
 def _skip_if_offline_dependency_missing(result):
-    if result.error and "couldn't connect to 'https://huggingface.co'" in result.error and "cached files" in result.error:
+    error = str(result.error or "")
+    if "couldn't connect to 'https://huggingface.co'" in error and "cached files" in error:
         raise unittest.SkipTest("离线环境缺少本地 embedding 模型/索引；RAG 基准标记为 non-blocking")
+    if "Collection [dietary_kb] does not exist" in error:
+        raise unittest.SkipTest("当前环境未构建本地知识库索引；RAG 基准标记为 non-blocking")
 
 
 class TestRagRecall(unittest.TestCase):
@@ -59,8 +62,11 @@ class TestRagRecall(unittest.TestCase):
             out = json.loads(raw)
         else:
             out = raw
-        if not out.get("found") and "couldn't connect to 'https://huggingface.co'" in str(out) and "cached files" in str(out):
+        out_text = str(out)
+        if not out.get("found") and "couldn't connect to 'https://huggingface.co'" in out_text and "cached files" in out_text:
             self.skipTest("离线环境缺少本地 embedding 模型/索引；RAG 基准标记为 non-blocking")
+        if not out.get("found") and "Collection [dietary_kb] does not exist" in out_text:
+            self.skipTest("当前环境未构建本地知识库索引；RAG 基准标记为 non-blocking")
         self.assertTrue(out["found"], "工具层应 found=True")
         self.assertTrue(len(out["hits"]) > 0, "工具层应返回命中")
         hit = out["hits"][0]

@@ -36,6 +36,8 @@ def _feature(text: str, length: int = 40) -> str:
 
 class PdfPageCitationTest(unittest.TestCase):
     def test_parser_preserves_real_page_numbers(self):
+        if not TARGET_PDF.is_file():
+            self.skipTest("当前环境缺少知识库 PDF；页码解析基准标记为 non-blocking")
         parsed = SimplePDFParser(backend="pdfplumber").parse(str(TARGET_PDF))
 
         self.assertEqual(parsed.metadata["page_count"], 56)

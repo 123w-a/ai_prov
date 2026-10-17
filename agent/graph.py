@@ -536,6 +536,9 @@ set_query_transform_llm(_query_transform_adapter, mode="multi")
 # --------------------------------------------------------------------------- #
 #  2. 断点持久化（SQLite checkpointer，thread_id 对应 checkpoint.db 里的单条任务断点）
 # --------------------------------------------------------------------------- #
+# resources/ 属于本地运行目录，干净 clone 中可能不存在；导入 Agent 时先建父目录，
+# 否则下面的 SQLite 连接会在模块加载阶段失败，连带所有依赖 Agent 的接口无法导入。
+CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
 connection = sqlite3.connect(
     # 路径统一来自 infrastructure.paths，避免 CWD 不同导致断点库分裂成两份
     # （storage/checkpoints.py 的清理入口读的是同一个常量）。
