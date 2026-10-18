@@ -7,6 +7,7 @@ import type { ChefAnswer, StreamStage } from '../../types.ts'
  *   1547  {'status':'working'}
  *   1579  {'heartbeat':{'elapsed':N}}       队列空闲时按 poll_timeout 重复
  *   1603  {'token':str}                     已由后端 _looks_like_control_json 过滤过一层
+ *   1901  {'reset':True}                    护栏打回重生成：上一版正文作废，前后端同步丢弃
  *   1605  {'stage':str}
  *   1676  {'structuring':True}              正文说完了、正在整理卡片
  *   1677  {'answer':dict}                   整包结构化结果
@@ -30,6 +31,8 @@ export type ChatStreamEvent =
   | { kind: 'answer'; answer: ChefAnswer }
   | { kind: 'image'; recordId?: number; turnId?: string; index: number; url: string; aiGenerated: boolean; note: string }
   | { kind: 'image_failed'; recordId?: number; turnId?: string; indexes: number[] }
+  /** 护栏打回重生成：丢弃已累积的正文（控制事件，不是可展示内容，不要写提示语）。 */
+  | { kind: 'reset' }
   | { kind: 'finish'; sessionId?: string; recordId?: number }
   | { kind: 'error'; message: string }
 
@@ -186,6 +189,10 @@ function toEvent(envelope: Envelope): ChatStreamEvent | null {
     const f = envelope.image_failed as { record_id?: number; turn_id?: string; indexes: number[] }
     return { kind: 'image_failed', recordId: f.record_id, turnId: f.turn_id, indexes: f.indexes ?? [] }
   }
+
+  // 护栏打回重生成：后端此刻清空了它自己的累积缓冲，前端必须同步丢弃已渲染正文，
+  // 否则第二版首尾拼在第一版后面（同一道菜讲两遍）。必须排在 token 判断之前。
+  if (envelope.reset) return { kind: 'reset' }
 
   if (typeof envelope.token === 'string') {
     // 后端已过滤一层，这里再兜一层：宁可少渲染一行，也不把控制 JSON 画到正文里。

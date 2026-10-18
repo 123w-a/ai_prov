@@ -195,6 +195,15 @@ export default function NextApp() {
       for await (const event of streamChat({ sessionId, message, wantImage })) {
         // token 不进日志：一次真实调用能刷出三千多条，日志会被自己淹掉。
         // 只记第一条的到达时刻——「首字延迟」才是这里唯一有信息量的指标。
+        // 护栏打回重生成：后端清空了自己的累积缓冲，这里必须同步丢弃已渲染正文，
+        // 否则第二版会首尾拼在第一版后面（同一道菜讲两遍）。
+        if (event.kind === 'reset') {
+          setBody('')
+          firstTokenAt = null
+          pushLog('护栏打回重生成：已丢弃上一版正文')
+          continue
+        }
+
         if (event.kind === 'token') {
           if (firstTokenAt === null) {
             firstTokenAt = Date.now()

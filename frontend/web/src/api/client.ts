@@ -161,6 +161,17 @@ export interface ChatHandlers {
   onImage?: (img: { record_id?: number; turn_id?: string; index: number; url: string; ai_generated: boolean }) => void
   onImageFailed?: (payload: { record_id?: number; turn_id?: string; indexes: number[] }) => void
   onFinish?: (payload: { session_id?: string; record_id?: number }) => void
+  /**
+   * 护栏打回重生成（main.py:470 发事件 → api/routes/chat_route.py:1901 转发）。
+   *
+   * 上一版正文此刻已经整段流式外发过了，后端在同一条链路上清空了自己的累积缓冲
+   * （_accumulate_streamed_text 的 reset 分支）。前端必须同步丢弃已渲染的正文，
+   * 否则第二版会首尾拼在第一版后面——用户在同一轮里看到同一道菜讲两遍，
+   * 落库的 opening 也会是两遍。
+   *
+   * 这是控制事件、不是可展示内容：清空即可，不要往气泡里写任何提示语。
+   */
+  onReset?: () => void
 }
 
 export interface ChatImageTarget {
@@ -232,7 +243,11 @@ export async function sendChat(
         continue
       }
 
-      if (event.working || event.status === 'working') handlers.onWorking?.()
+      // reset 必须排在最前面判：它是控制事件，与其它键不共存；一旦被后面的
+      // else-if 链漏过去，就永远不会清空。（历史缺口：这里没有 reset 分支，
+      // 护栏打回时前端照旧把两版正文接在一起。）
+      if (event.reset) handlers.onReset?.()
+      else if (event.working || event.status === 'working') handlers.onWorking?.()
       else if (event.heartbeat) handlers.onHeartbeat?.(Number((event.heartbeat as { elapsed?: number })?.elapsed ?? 0))
       else if (event.image) handlers.onImage?.(event.image as { record_id?: number; turn_id?: string; index: number; url: string; ai_generated: boolean })
       else if (event.image_failed) handlers.onImageFailed?.(event.image_failed as { record_id?: number; turn_id?: string; indexes: number[] })

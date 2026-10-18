@@ -44,7 +44,8 @@
   「chef_think 最后一轮的自然语言回答 = 流式已经推给前端的正文，原样保留进 opening」）。
 - 当本轮没有可见正文时，后端会**先把 `answer.opening` 按 `token` 推一遍**，再推 `answer`
   （`main.py:518-545`）——即「先用打字机说一遍，再用卡片显示一遍」是刻意的。
-- `reset` 只在护栏打回时发，客户端必须和状态机一起丢弃上一版正文（`main.py:450-463`）。
+- `reset` 只在护栏打回时发（`main.py:470` 产生 → `api/routes/chat_route.py:1901` 转发），
+  客户端必须和状态机一起丢弃上一版正文。
 
 ---
 
@@ -64,7 +65,16 @@
 `reset` 到达时，把当前气泡已累积的正文**全部丢弃**，再开始接收第二版 `token`。
 不清的后果是两版正文首尾拼接，用户在同一轮里看到同一道菜讲两遍。
 
-参考实现：`frontend/web/src/App.tsx:617-626`。
+参考实现：`frontend/web/src/App.tsx` 的 `onReset` 回调（legacy 前端）、
+`frontend/web/src/next/app/TonightApp.tsx` 的 `case 'reset'`、
+`frontend/web/src/next/NextApp.tsx` 的 reset 分支（自研前端）。
+
+> 更正记录（2026-10-18）：此处原先标注 `frontend/web/src/App.tsx:617-626`，
+> 但该行段实际是 `onWorking`，行号引用从一开始就是错的。更严重的是两套前端入口
+> **都**没有消费 `reset`（`api/client.ts` 的 else-if 链与 `next/data/chatStream.ts`
+> 的 `toEvent` 都漏了这个事件），后端却在 `main.py:470` → `api/routes/chat_route.py:1901`
+> 一路往外发，服务端自己也按它清缓冲。缺口的后果与本文 §3 表格里「忽略 `reset` 事件」
+> 一行完全相同：护栏打回时两版正文首尾拼接。两处入口已于同日补齐。
 
 ### R3 · 服务端同步不能追加新气泡
 
@@ -165,7 +175,23 @@ function mergeSynced(local: Turn[], server: Turn[]): Turn[] {
 ```
 
 其中 `answer.recipes` 为空时的正文兜底、`opening_authoritative` 下的版本选择，
-可参考 `frontend/web/src/answerMerge.ts`（纯函数 + 单元测试，已有 3 条用例）。
+两套前端的落地位置分别是：
+
+- legacy 前端：`frontend/web/src/App.tsx` 的 `onAnswer`——把已完整展示的流式正文
+  接力成 `opening`；`opening_authoritative` 为真时**拒绝覆盖**，短兜底句、短兜底前缀
+  与长度阈值 80 逐条对齐后端 `_KNOWN_SHORT_OPENING_FALLBACKS` /
+  `_KNOWN_SHORT_OPENING_PREFIXES` / `_STREAMED_OPENING_REPLACE_THRESHOLD`。
+- 自研前端：`frontend/web/src/next/data/viewModel.ts` 的 `buildResultVM` 与
+  `buildProseVM`——结构化轮只渲染 `answer.opening`、散文轮只渲染流式正文，
+  两条通道天然互斥，不需要额外的覆盖判断。
+
+> 更正记录（2026-10-18）：此处原先指向 `frontend/web/src/answerMerge.ts`（并称
+> "已有 3 条用例"）。该文件与 `frontend/web/tests/answerMerge.test.mjs` 已在
+> `225fd9e`（"keep repository frontend in backend fusion"）中删除、实现内联进上面
+> 两条路径，引用因此失效。`api/routes/chat_route.py:469` 与
+> `tests/api/test_chat_opening_gate.py:6` 的注释仍指向它，属同一处陈旧引用。
+> 另：自研前端不覆盖 `opening`，因此 `opening_authoritative` 对它不是缺口；
+> 真正的缺口是 `reset`（见 §2 R2 的更正记录）。
 
 ---
 

@@ -614,6 +614,18 @@ export default function App() {
                   : message,
               ),
             })),
+          onReset: () =>
+            cancelledImageTurnsRef.current[assistantId]
+              ? undefined
+              :
+            setMessagesBySession((current) => ({
+              ...current,
+              [sessionId!]: (current[sessionId!] ?? []).map((message) =>
+                // 护栏打回：上一版正文整段作废，只清正文、不动 stage ——
+                // 第二版紧接着还会流式写进来，onToken 会把 stage 置回 writing。
+                message.id === assistantId ? { ...message, text: '' } : message,
+              ),
+            })),
           onWorking: () =>
             cancelledImageTurnsRef.current[assistantId]
               ? undefined
@@ -670,8 +682,16 @@ export default function App() {
                 // 结构化卡片接管展示后，把流式正文放入 opening，避免卡片与流式正文重复显示。
                 const answerWithOpening =
                   streamedText &&
+                  // opening_authoritative：后端已为「本轮选定目标」校准过 opening，契约是
+                  // 「不得被旧流式正文覆盖」——服务端 _prefer_streamed_opening 正是按这个
+                  // 标志提前返回（api/routes/chat_route.py:472）。前端若不认它，就会把后端
+                  // 驳回的那一版重新盖回去，用户看到被撤销的版本且刷新前无法自愈。
+                  !normalizedAnswer.opening_authoritative &&
                   (!normalizedAnswer.opening ||
                     normalizedAnswer.opening === '已按你的要求整理好这一道，完整做法见图卡。' ||
+                    // 后端 _KNOWN_SHORT_OPENING_PREFIXES 里以该前缀开头的也算短兜底；
+                    // 两侧判据必须一致，否则同一份数据在前后端会选出版本不同的 opening。
+                    normalizedAnswer.opening.startsWith('这次没查到足够具体的做法，我先给你一个稳妥的方向：') ||
                     streamedText.length > normalizedAnswer.opening.length + 80)
                     ? { ...normalizedAnswer, opening: streamedText }
                     : normalizedAnswer

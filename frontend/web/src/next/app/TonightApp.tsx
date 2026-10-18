@@ -352,6 +352,17 @@ export default function TonightApp() {
             break
           }
 
+          case 'reset':
+            // 护栏打回重生成（main.py:470 发 → chat_route.py:1901 转发）：后端此刻已
+            // 丢弃上一版正文，前端必须同步清空，否则第二版首尾拼在第一版后面——
+            // 同一轮里同一道菜讲两遍。只清正文与首字时刻；事件轨迹/心跳保留，
+            // 那些记录的是过程本身，第二版重讲并不否定第一版确实跑过。
+            body = ''
+            imgTokens = ''
+            firstTokenAt = null
+            push({ body, firstTokenAt, elapsed: at })
+            break
+
           case 'token':
             // 图片轮的实话攒着不进等待页正文（见 imgTokens 注释），计时照推。
             if (img) {

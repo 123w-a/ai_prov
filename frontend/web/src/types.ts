@@ -122,6 +122,15 @@ export interface ChefAnswer {
   dish_matrix?: DishMatrixItem[]
   /** 本轮主菜按哪位成员的健康约束求解（由后端在出卡时注入） */
   primary_member?: string
+  /**
+   * 后端已为「本轮选定目标」校准过 opening（agent/graph.py:3801 / :4523）。
+   *
+   * 置 true 时**流式正文不得覆盖 opening**。后端 _prefer_streamed_opening
+   * （api/routes/chat_route.py:472）就是按这个标志提前返回、拒绝改写；两侧判据
+   * 必须一致——后端已拒绝、前端却照旧覆盖，用户看到的是被撤销的那一版，
+   * 而标志仍为 true，刷新前无法自愈。
+   */
+  opening_authoritative?: boolean
 }
 
 export interface SessionMessage {
