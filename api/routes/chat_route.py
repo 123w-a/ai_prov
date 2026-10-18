@@ -457,6 +457,67 @@ def _find_recipe_image_cached(recipe_name: str, allow_ai_fallback: bool, refresh
     return image_url, source
 
 
+# 候选轮图片预热：候选菜名 -> 正在进行中的标记。同一进程内去重，避免同一道菜
+# 被并发预热两次（同一菜名并发搜图/生图既浪费外部额度，也是重复扣费）。
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_INFLIGHT = set()
+# 并发闸门：实测候选菜齐发（8 路）时通义万相会排队到 20s 生成超时而放弃，
+# 白烧外部额度还拿不到图。限 2 路既能并行又不至于把生图端打爆。
+_PREFETCH_GATE = threading.BoundedSemaphore(2)
+
+
+def _prefetch_candidate_images(names) -> None:
+    """候选轮预热候选菜的成品图，让用户「回序号选定」那一刻图已经在缓存里。
+
+    背景（实测）：图片链路——视觉审核 + 生图——单独约 26s，且是在结构化 answer
+    之后才启动、与文字链路完全串行，用户等的是两段之和。而候选轮结束时后端已经
+    拿到全部候选菜名，用户在候选清单上停留的时间通常足够把图做完，于是把这段
+    外部耗时前移，而不是缩短它（外部 API 耗时本身压不动）。
+
+    刻意复用选定轮同一个 ``_find_recipe_image_cached``：写进同一层缓存，选定轮
+    直接命中；不改动任何既有判定（配图开关、卡片与图片的先后顺序都不变）。预热
+    只做「填缓存」这一件事，任何失败都只记日志——选定轮仍会照原路补图，因此本
+    函数不可能让本轮变差。
+    """
+    try:
+        pending = [str(name or "").strip() for name in (names or [])]
+    except Exception:
+        return
+    for name in pending:
+        if not name:
+            continue
+        with _PREFETCH_LOCK:
+            if name in _PREFETCH_INFLIGHT:
+                continue
+            _PREFETCH_INFLIGHT.add(name)
+
+        def _one(dish_name: str = name) -> None:
+            try:
+                with _PREFETCH_GATE:
+                    image_url, _source = _find_recipe_image_cached(
+                        dish_name, allow_ai_fallback=True
+                    )
+                # _find_recipe_image_cached 在失败时也会写缓存（其 docstring 声称
+                # 「成功才写回」，实现并非如此）。预热若把这次失败留在缓存里，这道
+                # 菜就会在整个 TTL 内被判成「没有图」，用户反而更久看不到图——所以
+                # 预热自己撤销失败条目，让选定轮照原路重试一次。最坏情况只是退回
+                # 改造前的行为，绝不会比改造前更差。
+                if not image_url:
+                    with _RECIPE_IMAGE_CACHE_LOCK:
+                        _RECIPE_IMAGE_CACHE.pop((dish_name.lower(), True), None)
+            except Exception as exc:
+                logger.warning("[image-prefetch] %r 预热失败: %r", dish_name, exc)
+            finally:
+                with _PREFETCH_LOCK:
+                    _PREFETCH_INFLIGHT.discard(dish_name)
+
+        threading.Thread(
+            target=_one,
+            name="image-prefetch",
+            daemon=True,
+        ).start()
+
+
 def _prefer_streamed_opening(answer: dict, streamed_text: str) -> bool:
     """把已完整展示给用户的正文补进结构化答案，避免后续图片线程落库时覆盖讲解。
 
@@ -1937,6 +1998,11 @@ async def chat(
                                     )
                                 except Exception:
                                     pass
+                            # 候选菜名此刻已经确定，趁用户读清单的时间把成品图先做出来。
+                            # 图片链路（审核+生图）约 26s 且完全串行在文字链路之后，只有
+                            # 把它前移才能既快又不缩短图片本身；失败不影响本轮——选定轮
+                            # 仍会照原路补图，本调用不改变任何既有判定与展示顺序。
+                            _prefetch_candidate_images(candidate_names)
                             # 候选清单已经通过正文 token 流式展示；不能再把
                             # candidates payload 作为 answer 推给前端，否则会显示原始 JSON
                             # 或触发错误的结构化卡片。
