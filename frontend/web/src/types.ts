@@ -50,6 +50,15 @@ export interface NutritionIngredient {
   status: 'covered' | 'missing' | 'no_amount'
 }
 
+/** 按能量值确定性换算的运动当量，后端计算，模型不填。 */
+export interface ExerciseEquivalent {
+  kcal: number
+  weight_kg?: number
+  /** 固定键 jogging / cycling / walking */
+  minutes?: Partial<Record<'jogging' | 'cycling' | 'walking', number>>
+  basis?: string
+}
+
 /** 这顿的营养数值表。由后端按食材用量查国标表算出，**模型不填**。
  *
  *  status 三档是这块最要紧的诚实标注：
@@ -66,6 +75,7 @@ export interface NutritionFacts {
   covered?: string[]
   missing?: string[]
   no_amount?: string[]
+  exercise_equiv?: ExerciseEquivalent | null
 }
 
 export interface SourceRef {

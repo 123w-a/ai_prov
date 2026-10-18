@@ -3,13 +3,11 @@
 
 ═══ 为什么在 domain 层、为什么要独立于 agent_tools ═══════════════════════════
 
-`agent_tools/legacy.py` 里已经有一个 `calorie_lookup`（单食材查询），但它服务于
-**Agent 的问答**（返回一段 JSON 文本给模型读）。这里要的是**后处理**：拿到结构化的
-ingredients 后，用同一张国标表算出确定性数值，直接写进 answer。
+本模块服务于**后处理**：拿到结构化的 ingredients 后，用国标表算出确定性数值，
+直接写进 answer。Agent 不再通过 LLM 工具逐项查询热量或换算运动当量。
 
 依赖方向：`domain/` 是最底层，`agent/` 与 `agent_tools/` 都依赖它。所以本模块不能
-import `agent_tools`，只能自己加载那张 CSV——这不理想（两处加载同一张表），但比让
-domain 反向依赖工具层干净。若将来要合一，应该是把加载下沉到 domain、由 legacy 复用。
+import `agent_tools`，只能自己加载营养 CSV，避免 domain 反向依赖工具层。
 
 ═══ 三条硬纪律（2026-10-04 与 lave 商讨后定） ════════════════════════════════
 
@@ -26,6 +24,7 @@ domain 反向依赖工具层干净。若将来要合一，应该是把加载下�
 from __future__ import annotations
 
 import csv
+import math
 import re
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -41,6 +40,15 @@ NUTRIENT_FIELDS: tuple[tuple[str, str, str, str], ...] = (
     ("fiber_g", "膳食纤维", "g", "fiber"),
     ("sodium_mg", "钠", "mg", "sodium"),
 )
+
+# 运动当量只做固定系数的单位换算，不参与营养估算本身。
+# 系数单位：kcal / kg / 分钟，统一按 60kg、中等强度估算。
+_EXERCISE_RATES: tuple[tuple[str, float], ...] = (
+    ("jogging", 0.115),
+    ("cycling", 0.08),
+    ("walking", 0.06),
+)
+_EXERCISE_WEIGHT_KG = 60.0
 
 # 口语名 → 国标表里的那一条（表里是「主名（学名/别名）」形态）。
 # 只写**确定的同物异名**；同一条目有多个形态（豆腐南/北、鸡蛋红皮/白皮）时，
@@ -207,6 +215,27 @@ def _empty(status: str) -> dict[str, Any]:
         "covered": [],
         "missing": [],
         "no_amount": [],
+        "exercise_equiv": None,
+    }
+
+
+def _exercise_equiv(energy_kcal: Any) -> Optional[dict[str, Any]]:
+    """按已算出的能量生成固定口径运动当量；没有有效能量时整块返回 None。"""
+    try:
+        energy = float(energy_kcal)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(energy) or energy <= 0:
+        return None
+
+    return {
+        "kcal": round(energy, 1),
+        "weight_kg": _EXERCISE_WEIGHT_KG,
+        "minutes": {
+            key: max(1, round(energy / (rate * _EXERCISE_WEIGHT_KG)))
+            for key, rate in _EXERCISE_RATES
+        },
+        "basis": "按60kg中等强度估算，仅作参考",
     }
 
 
@@ -220,6 +249,7 @@ def compute_nutrition_facts(ingredients: Sequence[Any] | None) -> dict[str, Any]
         nutrients    {energy_kcal: {value, status}, …}，按 NUTRIENT_FIELDS 顺序
         ingredients  [{name, amount_g, lookup_name, status}]，status ∈ covered/missing/no_amount
         covered / missing / no_amount  三类食材名，供页面写清楚"这张表算的是哪几样"
+        exercise_equiv  有有效 energy_kcal 时的固定系数运动当量；否则为 None
     """
     items: list[tuple[str, Optional[float]]] = []
     for raw in ingredients or []:
@@ -283,4 +313,9 @@ def compute_nutrition_facts(ingredients: Sequence[Any] | None) -> dict[str, Any]
         "covered": covered,
         "missing": missing,
         "no_amount": no_amount,
+        "exercise_equiv": (
+            _exercise_equiv(nutrients["energy_kcal"]["value"])
+            if nutrients["energy_kcal"]["status"] == "known"
+            else None
+        ),
     }

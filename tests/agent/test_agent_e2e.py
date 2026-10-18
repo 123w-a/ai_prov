@@ -6,7 +6,7 @@
 验证点：
 1) 整图在真实请求下能从 entry 跑到 END，不卡死、不抛未捕获异常；
 2) 健康护栏节点 verify_answer 确实在真实链路中被执行（不只是单元测试里）；
-3) 最终产出结构化卡片，必填字段齐全、recipes 非空；
+3) 首轮只出候选清单，选定序号后产出单菜结构化卡片；
 4) 健康/慢病上下文确实流入卡片（护栏 + RAG 生效的间接证据）。
 """
 import os, sys, json, time, unittest
@@ -25,9 +25,9 @@ RUN_E2E = os.environ.get("RUN_E2E") == "1"
 
 @unittest.skipUnless(RUN_E2E, "设 RUN_E2E=1 才跑真实 LLM 链路（耗 API 额度/较慢，约 1-3 分钟）")
 class TestAgentE2E(unittest.TestCase):
-    def _run(self, text):
+    def _run(self, text, thread_id=None):
         import agent.graph as ag  # 延迟导入：仅在真正跑 e2e 时初始化 LLM + 编译图
-        tid = "e2e-%d-%d" % (int(time.time() * 1000), os.getpid())
+        tid = thread_id or "e2e-%d-%d" % (int(time.time() * 1000), os.getpid())
         cfg = {"configurable": {"thread_id": tid}}
         events = []
         for chunk in ag.agent.stream(
@@ -39,29 +39,71 @@ class TestAgentE2E(unittest.TestCase):
         state = ag.agent.get_state(cfg)
         return events, state
 
+    @staticmethod
+    def _json_payloads(messages):
+        """按从新到旧返回消息中的结构化 payload。"""
+        payloads = []
+        for msg in reversed(messages):
+            if type(msg).__name__ != "AIMessage":
+                continue
+            try:
+                payload = json.loads(msg.content)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+        return payloads
+
     def test_health_sensitive_query_runs_full_chain(self):
-        events, state = self._run(
-            "我有高血压，用芹菜和木耳做一道清淡的菜，只要一道，少盐"
+        tid = "e2e-%d-%d" % (int(time.time() * 1000), os.getpid())
+        first_events, first_state = self._run(
+            "我有高血压，医生让严格控盐，用芹菜和木耳推荐三道清淡菜让我选，都少盐",
+            thread_id=tid,
         )
 
-        # 1) 健康护栏节点在真实链路中确实执行了
-        va_chunks = [c for c in events if "verify_answer" in c]
-        self.assertTrue(va_chunks, "verify_answer 护栏节点未在真实运行中执行")
-        status = va_chunks[-1]["verify_answer"].get("verify_status")
-        self.assertIn(status, ("ok", "retry", "degraded"),
-                      f"verify_status 非法: {status}")
+        # 1) 首轮健康护栏执行，并停在候选清单，不提前出菜谱卡
+        first_va = [c for c in first_events if "verify_answer" in c]
+        self.assertTrue(first_va, "首轮 verify_answer 护栏节点未执行")
+        status = first_va[-1]["verify_answer"].get("verify_status")
+        self.assertIn(
+            status, ("ok", "retry", "degraded"), f"verify_status 非法: {status}"
+        )
+        candidates = next(
+            (
+                payload
+                for payload in self._json_payloads(first_state.values["messages"])
+                if payload.get("answer_kind") == "candidates"
+            ),
+            None,
+        )
+        self.assertIsNotNone(candidates, "首轮没有结构化候选清单")
+        self.assertGreaterEqual(len(candidates.get("candidates") or []), 2)
+        self.assertEqual(candidates.get("recipes"), [], "候选轮不应提前产出菜谱")
 
-        # 2) 最终产出结构化卡片（解析为 JSON，必填字段齐全）
-        msgs = state.values["messages"]
-        last = msgs[-1]
-        self.assertEqual(type(last).__name__, "AIMessage", "末条消息应为结构化 AIMessage")
-        obj = json.loads(last.content)
-        for k in ("opening", "recipes", "chef_tip", "sources"):
-            self.assertIn(k, obj, f"结构化卡片缺少字段 {k}")
-        self.assertTrue(len(obj["recipes"]) >= 1, "recipes 不应为空")
+        # 2) 同一会话回复序号，进入单菜结构化卡片
+        second_events, second_state = self._run("1", thread_id=tid)
+        second_va = [c for c in second_events if "verify_answer" in c]
+        self.assertTrue(second_va, "选定轮 verify_answer 护栏节点未执行")
+        status = second_va[-1]["verify_answer"].get("verify_status")
+        self.assertIn(
+            status, ("ok", "retry", "degraded"), f"verify_status 非法: {status}"
+        )
+        card = next(
+            (
+                payload
+                for payload in self._json_payloads(second_state.values["messages"])
+                if payload.get("answer_kind") in (None, "recipe")
+                and payload.get("recipes")
+            ),
+            None,
+        )
+        self.assertIsNotNone(card, "选定后没有产出单菜结构化卡片")
+        for key in ("opening", "recipes", "chef_tip", "sources"):
+            self.assertIn(key, card, f"结构化卡片缺少字段 {key}")
+        self.assertGreaterEqual(len(card["recipes"]), 1, "recipes 不应为空")
 
         # 3) 健康/RAG 上下文确实流入（护栏或检索生效的间接证据）
-        flowed = bool(obj.get("sources")) or ("健康" in obj.get("chef_tip", ""))
+        flowed = bool(card.get("sources")) or ("健康" in card.get("chef_tip", ""))
         self.assertTrue(flowed, "未观察到健康护栏/RAG 上下文流入卡片")
 
 

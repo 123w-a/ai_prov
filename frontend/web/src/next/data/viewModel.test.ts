@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { cleanOpening, echoRequest, guardText, sameSource, srcTitle, stripDishPrefix, usableNote } from './clean.ts'
-import { buildMembersVM, buildProseVM, buildResultVM, classify, hide, isShown, leadBodyPhrase, show } from './viewModel.ts'
+import { buildMembersVM, buildNutritionVM, buildProseVM, buildResultVM, classify, hide, isShown, leadBodyPhrase, show } from './viewModel.ts'
 import type { ChefAnswer } from '../types.ts'
 
 /* ── 契约本身 ─────────────────────────────────────────────────────────── */
@@ -241,6 +241,52 @@ test('真实满数据形态：三个指标、护栏翻译、来源条数都对�
   assert.equal(vm.process.sources, 2)
   assert.equal(vm.guardrails[0].condition, '高血压')
   assert.equal(isShown(vm.guardrails[0].text) && vm.guardrails[0].text.data, '已符合高血压膳食原则')
+})
+
+test('运动当量：六项营养之后只翻译固定字段，不在前端重算', () => {
+  const n = buildNutritionVM({
+    status: 'complete',
+    nutrients: { energy_kcal: { value: 347, status: 'known' } },
+    exercise_equiv: {
+      kcal: 347,
+      weight_kg: 60,
+      minutes: { jogging: 50, cycling: 72, walking: 96 },
+      basis: '按60kg中等强度估算，仅作参考',
+    },
+  })
+
+  assert.ok(n)
+  assert.equal(n!.exercise?.kcal, '347')
+  assert.deepEqual(n!.exercise?.items, [
+    { label: '慢跑', minutes: '50' },
+    { label: '骑车', minutes: '72' },
+    { label: '快走', minutes: '96' },
+  ])
+  assert.equal(n!.exercise?.basis, '按60kg中等强度估算，仅作参考')
+})
+
+test('运动当量：partial 口径必须写明按已覆盖食材小计', () => {
+  const n = buildNutritionVM({
+    status: 'partial',
+    nutrients: { energy_kcal: { value: 347, status: 'known' } },
+    missing: ['培根'],
+    exercise_equiv: {
+      kcal: 347,
+      minutes: { jogging: 50, cycling: 72, walking: 96 },
+      basis: '按60kg中等强度估算，仅作参考',
+    },
+  })
+
+  assert.equal(n!.exercise?.basis, '按60kg中等强度估算，仅作参考；按已覆盖食材小计')
+})
+
+test('运动当量：没有有效能量时整块不渲染', () => {
+  const n = buildNutritionVM({
+    status: 'complete',
+    nutrients: { energy_kcal: { value: null, status: 'unavailable' } },
+  })
+
+  assert.equal(n!.exercise, null)
 })
 
 /* ── 家人两列 ─────────────────────────────────────────────────────────── */

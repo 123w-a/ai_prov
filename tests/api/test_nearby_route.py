@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import requests
+from fastapi import HTTPException
 
 from api.routes import nearby_route
 
@@ -123,6 +124,192 @@ class NearbyRouteTest(unittest.TestCase):
         )
         self.assertEqual(payload["data"]["allergen_filter"]["removed"], 1)
         self.assertIn("芝麻及其制品", payload["data"]["allergen_filter"]["message"])
+
+    def test_nearby_map_uses_only_real_coordinates_and_bounds_center(self):
+        sample = [
+            {
+                "name": "老街家常菜",
+                "cuisine": "家常菜",
+                "avg_price": 58,
+                "distance_km": 0.8,
+                "address": "示例路 1 号",
+                "guardrail": "点蒸煮炖",
+                "lng": 112.4,
+                "lat": 28.5,
+            },
+            {
+                "name": "清蒸鸡腿饭",
+                "cuisine": "快餐",
+                "avg_price": 32,
+                "distance_km": 1.1,
+                "address": "示例路 2 号",
+                "guardrail": "避开油炸窗口",
+                "lng": 112.6,
+                "lat": 28.6,
+            },
+            {
+                "name": "坐标坏掉的店",
+                "cuisine": "快餐",
+                "avg_price": 20,
+                "distance_km": 2.0,
+                "address": "示例路 3 号",
+                "guardrail": "少油少盐",
+                "lng": 999,
+                "lat": 28.6,
+            },
+        ]
+        with patch.object(nearby_route, "_amap_poi_search", return_value=sample):
+            payload = nearby_route.nearby_map(city="益阳", district="赫山", budget=0, page=1)
+
+        data = payload["data"]
+        self.assertEqual(data["source"], "amap")
+        self.assertEqual(data["coordinate_system"], "gcj02")
+        self.assertEqual([item["name"] for item in data["markers"]], ["老街家常菜", "清蒸鸡腿饭"])
+        self.assertEqual(data["center"], {"lng": 112.5, "lat": 28.55})
+        self.assertIsNone(data["origin"])
+        self.assertEqual(data["warning"], "")
+
+    def test_nearby_map_uses_given_location_as_origin_and_center(self):
+        sample = [
+            {
+                "name": "老街家常菜",
+                "cuisine": "家常菜",
+                "avg_price": 58,
+                "distance_km": 0.8,
+                "address": "示例路 1 号",
+                "guardrail": "点蒸煮炖",
+                "lng": 112.41,
+                "lat": 28.51,
+            }
+        ]
+        with patch.object(nearby_route, "_amap_poi_search", return_value=sample) as mock_search:
+            payload = nearby_route.nearby_map(
+                query="家常菜",
+                city="益阳",
+                district="赫山",
+                budget=50,
+                location="[当前位置：112.4,28.5]",
+                radius=2000,
+                page=2,
+            )
+
+        data = payload["data"]
+        self.assertEqual(mock_search.call_args.args[4], "112.4,28.5")
+        self.assertEqual(mock_search.call_args.kwargs["radius"], 2000)
+        self.assertEqual(mock_search.call_args.kwargs["page"], 2)
+        self.assertEqual(data["origin"], {"lng": 112.4, "lat": 28.5})
+        self.assertEqual(data["center"], {"lng": 112.4, "lat": 28.5})
+        self.assertEqual(data["markers"][0]["lng"], 112.41)
+
+    def test_nearby_map_invalid_location_falls_back_without_center(self):
+        with patch.object(nearby_route, "_amap_poi_search", return_value=[]) as mock_search:
+            payload = nearby_route.nearby_map(location="0,0", budget=50, page=1)
+
+        data = payload["data"]
+        self.assertEqual(mock_search.call_args.args[4], "")
+        self.assertEqual(data["source"], "mock_empty")
+        self.assertIsNone(data["origin"])
+        self.assertIsNone(data["center"])
+        self.assertEqual(data["markers"], [])
+        self.assertIn("定位坐标无法解析", data["warning"])
+        self.assertIn("模拟参考餐厅", data["warning"])
+
+    def test_nearby_map_mock_fallback_never_fabricates_markers(self):
+        with patch.object(nearby_route, "_amap_poi_search", return_value=None):
+            payload = nearby_route.nearby_map(query="火锅", city="益阳", district="赫山", budget=50)
+
+        data = payload["data"]
+        self.assertEqual(data["source"], "mock")
+        self.assertEqual(data["markers"], [])
+        self.assertIsNone(data["center"])
+        self.assertIsNone(data["origin"])
+        self.assertIn("展示模拟参考餐厅", data["warning"])
+
+    def test_nearby_map_reports_no_key_honestly(self):
+        def fake_search(*args, diag=None, **kwargs):
+            if diag is not None:
+                diag["info"] = "no_key"
+            return None
+
+        with patch.object(nearby_route, "AMAP_KEY", ""), \
+             patch.object(nearby_route, "_amap_poi_search", side_effect=fake_search):
+            payload = nearby_route.nearby_map(budget=50)
+
+        data = payload["data"]
+        self.assertFalse(data["amap_configured"])
+        self.assertEqual(data["markers"], [])
+        self.assertIn("没有配置高德 Key", data["warning"])
+
+    def test_nearby_map_scrubs_key_from_search_failure_warning(self):
+        sentinel = "SENTINELKEY0000000000000000000000"
+
+        def fake_search(*args, diag=None, **kwargs):
+            if diag is not None:
+                diag["exception"] = f"ConnectionError: /v3/place/text?key={sentinel}"
+            return None
+
+        with patch.object(nearby_route, "AMAP_KEY", sentinel), \
+             patch.object(nearby_route, "_amap_poi_search", side_effect=fake_search):
+            payload = nearby_route.nearby_map(budget=50)
+
+        data = payload["data"]
+        self.assertTrue(data["amap_configured"])
+        self.assertIn("***", data["warning"])
+        self.assertNotIn(sentinel, json.dumps(payload, ensure_ascii=False))
+
+    def test_nearby_map_amap_result_without_coordinates_is_honest(self):
+        sample = [
+            {
+                "name": "没有坐标的店",
+                "cuisine": "家常菜",
+                "avg_price": 58,
+                "distance_km": None,
+                "address": "示例地址",
+                "guardrail": "点蒸煮炖",
+            }
+        ]
+        with patch.object(nearby_route, "_amap_poi_search", return_value=sample):
+            payload = nearby_route.nearby_map(city="益阳", budget=50)
+
+        data = payload["data"]
+        self.assertEqual(data["source"], "amap")
+        self.assertEqual(data["markers"], [])
+        self.assertIsNone(data["center"])
+        self.assertIn("没有可用的经纬度", data["warning"])
+
+    def test_nearby_map_allergen_filter_is_not_reported_as_missing_coordinates(self):
+        sample = [
+            {
+                "name": "花生酱拌面",
+                "cuisine": "面食",
+                "avg_price": 28,
+                "distance_km": 0.8,
+                "address": "示例路 1 号",
+                "guardrail": "少油少盐",
+                "lng": 112.4,
+                "lat": 28.5,
+            }
+        ]
+        hits = [{"condition": "过敏原:花生", "keyword": "花生"}]
+        with patch.object(nearby_route, "_amap_poi_search", return_value=sample), \
+             patch.object(
+                 nearby_route._legacy,
+                 "_filter_restaurants_by_allergens",
+                 return_value=([], hits),
+             ):
+            payload = nearby_route.nearby_map(city="益阳", budget=50)
+
+        data = payload["data"]
+        self.assertEqual(data["source"], "amap")
+        self.assertEqual(data["markers"], [])
+        self.assertNotIn("没有可用的经纬度", data["warning"])
+        self.assertEqual(data["allergen_filter"]["removed"], 1)
+        self.assertIn("花生", data["allergen_filter"]["message"])
+
+    def test_nearby_map_validates_search_params(self):
+        with self.assertRaises(HTTPException) as ctx:
+            nearby_route.nearby_map(budget=-1)
+        self.assertEqual(ctx.exception.status_code, 400)
 
     def test_resolve_location_without_key_is_honest(self):
         with patch.object(nearby_route, "AMAP_KEY", ""):

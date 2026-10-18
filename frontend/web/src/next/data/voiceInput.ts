@@ -25,17 +25,27 @@ import {
 } from './voiceText.ts'
 
 export type VoiceState = 'idle' | 'recording' | 'transcribing'
+export type VoiceSupport = 'ready' | 'insecure' | 'unsupported'
 
 /**
- * 浏览器是否真的有录音能力——缺任一件都**不渲染按钮**。
- * 画一枚点了没反应的麦克风，比不画它更糟：用户会以为是自己操作错了。
+ * 浏览器是否真的有录音能力。能力不足时按钮仍保留，点击后说明原因，
+ * 避免同一个操作行有时有麦克风、有时只剩相机，用户不知道发生了什么。
  */
-function detectSupport(): boolean {
-  if (typeof window === 'undefined') return false
-  if (typeof MediaRecorder === 'undefined') return false
-  if (typeof navigator === 'undefined') return false
+function detectSupport(): VoiceSupport {
+  if (typeof window === 'undefined') return 'unsupported'
+  if (window.isSecureContext === false) return 'insecure'
+  if (typeof MediaRecorder === 'undefined') return 'unsupported'
+  if (typeof navigator === 'undefined') return 'unsupported'
   const devices = navigator.mediaDevices
-  return Boolean(devices) && typeof devices.getUserMedia === 'function'
+  return devices && typeof devices.getUserMedia === 'function' ? 'ready' : 'unsupported'
+}
+
+function supportNotice(support: VoiceSupport): string | null {
+  if (support === 'ready') return null
+  if (support === 'insecure') {
+    return '麦克风只能在 localhost 或 HTTPS 页面使用，请用 http://127.0.0.1:5178/ 打开。'
+  }
+  return '当前浏览器没有提供录音能力，请使用最新版 Chrome、Edge 或 Safari。'
 }
 
 /** 优先 opus/webm；Safari 只给 mp4，此时返回空串交给 MediaRecorder 自己选。 */
@@ -52,7 +62,8 @@ function stopTracks(stream: MediaStream | null) {
 }
 
 export function useVoiceInput(onTranscript: (text: string) => void) {
-  const [supported] = useState(detectSupport)
+  const [support] = useState<VoiceSupport>(detectSupport)
+  const supported = support === 'ready'
   const [state, setState] = useState<VoiceState>('idle')
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -111,8 +122,12 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
   }, [])
 
   const start = useCallback(async () => {
-    if (!supported || state !== 'idle') return
+    if (state !== 'idle') return
     setNotice(null)
+    if (!supported) {
+      setNotice(supportNotice(support))
+      return
+    }
     let stream: MediaStream | null = null
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -142,7 +157,7 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
       // 权限被拒**不隐藏按钮**：按钮仍是"再试一次"的入口，原因写在它旁边。
       setNotice(voiceErrorMessage(err, 'mic'))
     }
-  }, [supported, state, finish])
+  }, [supported, support, state, finish])
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current
@@ -198,5 +213,5 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
     }
   }, [])
 
-  return { supported, state, notice, toggle }
+  return { supported, supportNotice: supportNotice(support), state, notice, toggle }
 }

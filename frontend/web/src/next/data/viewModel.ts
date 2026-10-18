@@ -192,6 +192,14 @@ export interface NutritionVM {
   gaps: string
   /** 没有数值时那句原因 */
   empty: string
+  /** 运动当量；后端没有有效能量时为 null */
+  exercise: ExerciseEquivalentVM | null
+}
+
+export interface ExerciseEquivalentVM {
+  kcal: string
+  items: Array<{ label: string; minutes: string }>
+  basis: string
 }
 
 /** 整数不带小数点（后端 round(…,1) 会把 612 变成 612.0），小数保留一位。 */
@@ -220,6 +228,31 @@ export function buildNutritionVM(facts: NutritionFacts | null | undefined): Nutr
   const covered = facts.covered ?? []
   const missing = (facts.missing ?? []).filter(Boolean)
   const noAmount = (facts.no_amount ?? []).filter(Boolean)
+  const exerciseRaw = facts.exercise_equiv
+  const exerciseKcal = exerciseRaw?.kcal
+  const exerciseMinutes = exerciseRaw?.minutes
+  const exerciseItems = exerciseMinutes
+    ? [
+        { label: '慢跑', minutes: exerciseMinutes.jogging },
+        { label: '骑车', minutes: exerciseMinutes.cycling },
+        { label: '快走', minutes: exerciseMinutes.walking },
+      ]
+        .filter((item): item is { label: string; minutes: number } =>
+          typeof item.minutes === 'number' && Number.isFinite(item.minutes) && item.minutes > 0,
+        )
+        .map((item) => ({ label: item.label, minutes: String(Math.round(item.minutes)) }))
+    : []
+  const exercise: ExerciseEquivalentVM | null =
+    typeof exerciseKcal === 'number' && Number.isFinite(exerciseKcal) && exerciseKcal > 0
+      ? {
+          kcal: fmtNutrient(exerciseKcal),
+          items: exerciseItems,
+          basis: [
+            exerciseRaw?.basis ?? '',
+            facts.status === 'partial' ? '按已覆盖食材小计' : '',
+          ].filter(Boolean).join('；'),
+        }
+      : null
   const gaps = [
     missing.length ? `未收录：${missing.join('、')}` : '',
     noAmount.length ? `缺克数：${noAmount.join('、')}` : '',
@@ -230,7 +263,14 @@ export function buildNutritionVM(facts: NutritionFacts | null | undefined): Nutr
     const why = !covered.length && (missing.length || noAmount.length)
       ? gaps
       : '这道菜没有给出食材用量'
-    return { status: 'unavailable', basis: '', rows: [], gaps, empty: `算不出营养数值：${why}` }
+    return {
+      status: 'unavailable',
+      basis: '',
+      rows: [],
+      gaps,
+      empty: `算不出营养数值：${why}`,
+      exercise: null,
+    }
   }
 
   return {
@@ -240,6 +280,7 @@ export function buildNutritionVM(facts: NutritionFacts | null | undefined): Nutr
     rows,
     gaps,
     empty: '',
+    exercise,
   }
 }
 

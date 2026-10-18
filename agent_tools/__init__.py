@@ -339,9 +339,7 @@ tools = [
     nutrition_kb_search,
     healthy_remix,
     fridge_gap,
-    query_fridge_inventory,
     find_recipes_from_inventory,
-    query_weekly_report,
 ]
 
 __all__ = [
@@ -352,6 +350,8 @@ __all__ = [
     "healthy_remix",
     "nearby_food",
     "nutrition_kb_search",
+    "query_fridge_inventory",
+    "query_weekly_report",
     "tools",
     "web_search",
 ]

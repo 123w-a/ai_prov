@@ -1,8 +1,9 @@
 # 小膳管家 · 后端 API 契约清单
 
-> **生成方式**：从源码静态提取（Python `ast` 解析路由装饰器 + 实际 `return` 语句），并与现有前端 `frontend/web/src/api/client.ts`、`types.ts` 交叉核对。
-> **代码基线**：commit `ba55cf6`（2026-09-20 同步 GitHub 最新版后）
-> **端点总数**：48
+> **生成方式**：以运行时 `api.main_app:app.openapi()` 为准，并与 `frontend/web/src/api/client.ts`、`types.ts` 交叉核对。
+> **代码基线**：当前工作区 `codex/frontend-backend-fusion`，HEAD `6e9d035`，包含 2026-10-18 尚未提交的后端改动。
+> **端点总数**：52 个 method/path 操作。
+> **前端接口层**：52/52 均已有调用封装；具体放在哪个页面尚未决定。
 
 ---
 
@@ -11,9 +12,9 @@
 | 项目 | 值 |
 |---|---|
 | 路由前缀 | 全部统一 `/api`（`main_app.py` 中 `include_router(..., prefix="/api")`） |
-| 后端端口 | uvicorn 默认 `http://127.0.0.1:8000` |
-| 前端 dev server | `http://localhost:5173` |
-| CORS 白名单 | `localhost:5173`、`127.0.0.1:5173`、`localhost:3000`、`127.0.0.1:3000`；`allow_credentials=True`，方法与请求头全放行 |
+| 后端端口 | `python run.py` 默认 `http://127.0.0.1:8010` |
+| 前端 dev server | `http://localhost:5178`，`/api` 由 Vite 代理到 `127.0.0.1:8010` |
+| CORS 白名单 | 后端显式放行 `localhost:5173`、`127.0.0.1:5173`、`localhost:3000`、`127.0.0.1:3000`；5178 通过同源代理访问 |
 | 前端 base 配置 | 环境变量 `VITE_API_BASE`；留空则走同源相对路径 |
 | 全局异常 | 500 + `{code:500, messages:"服务内部错误，请稍后重试", data:null, request_id}`，响应头附 `X-Request-ID` |
 | 请求体上限 | 默认 16MB，环境变量 `CHEF_MAX_REQUEST_MB` 可调；超限返回 413，结构与全局异常一致 |
@@ -92,15 +93,15 @@
 
 ---
 
-## 4. 端点总表（48 个）
+## 4. 端点总表（52 个）
 
-图例：**信封** = `{code,messages,data}`；**裸返** = 直接 JSON；**SSE** = 事件流；`★` = 现有前端已在用。
+图例：**信封** = `{code,messages,data}`；**裸返** = 直接 JSON；**SSE** = 事件流；`★` = `client.ts` 已提供调用封装。封装不等于页面已经接入；页面位置统一待定。
 
 ### chat_route.py（3）
 
 | 方法 | 路径 | 形态 | 入参 | 响应要点 |
 |---|---|---|---|---|
-| GET | `/api/` | 信封 | — | `{code:200, messages:"服务正常", data:null}`（健康自检，前端未用） |
+| GET | `/api/` ★ | 信封 | — | `{code:200, messages:"服务正常", data:null}`（根路由自检） |
 | POST | `/api/chat/cancel-image` ★ | 信封 | Form: `session_id`(必)、`turn_id`(可)、`keep_text`(`1`/`0`) | `data:{session_id, turn_id, record_id, keep_text}` |
 | POST | `/api/chat` ★ | **SSE** | 见第 3 节 | 事件流 |
 
@@ -113,7 +114,7 @@
 | PATCH | `/api/sessions/{sid}` ★ | 裸返 | JSON `{title}`（≤40 字） | `{ok:true, msg}` |
 | DELETE | `/api/sessions/{sid}` ★ | 裸返 | — | `{ok:true, msg}` |
 | POST | `/api/sessions/{sid}/clear` ★ | 裸返 | — | `{ok:true, msg}` |
-| POST | `/api/sessions/{sid}/messages` | 裸返 | Form: `user_text`、`answer`、`time`、`image_name`、`image_type`、`image` | `{ok:true, msg}`（前端未用） |
+| POST | `/api/sessions/{sid}/messages` ★ | 裸返 | Form: `user_text`、`answer`、`time`、`image_name`、`image_type`、`image` | `{ok:true, msg}`（兼容入口） |
 | DELETE | `/api/sessions/{sid}/messages/{msg_id}` ★ | 裸返 | — | `{ok:true, msg}` |
 | POST | `/api/sessions/{sid}/messages/{rec_id}/feedback` ★ | 信封 | JSON `{rating:"up"\|"down"}` | `data:{feedback}` |
 | POST | `/api/sessions/{sid}/messages/{rec_id}/star` ★ | 信封 | JSON `{starred:bool}` | `data:{starred}` |
@@ -128,11 +129,11 @@
 | GET | `/api/preferences` ★ | 信封 | — | `data:{preferences:string}` |
 | PUT | `/api/preferences` ★ | 信封 | JSON `{preferences}`（≤5000 字） | `data:{preferences}` |
 | GET | `/api/profile` ★ | 信封 | — | `data:{exists:bool, family:FamilyData}` |
-| PUT | `/api/profile` | 信封 | JSON `HealthProfilePayload` | `data:{exists, family}`（前端未用） |
+| PUT | `/api/profile` ★ | 信封 | JSON `HealthProfilePayload` | `data:{exists, family}`（兼容入口，更新激活成员） |
 | POST | `/api/profile/members` ★ | 信封 | JSON `{name, profile}` | `data:{exists, family}` |
 | PUT | `/api/profile/members/{member_id}` ★ | 信封 | JSON `{name, profile}` | `data:{exists, family}` |
 | DELETE | `/api/profile/members/{member_id}` ★ | 信封 | — | `data:{exists, family}` |
-| DELETE | `/api/profile/member/{member_id}` | 信封 | — | 同上（**单数别名路由**，前端未用） |
+| DELETE | `/api/profile/member/{member_id}` ★ | 信封 | — | 同上（**单数别名路由**） |
 | PUT | `/api/profile/active` ★ | 信封 | JSON `{member_id}` | `data:{exists, family}` |
 | GET | `/api/profile/export` ★ | 信封 | — | `data:{export:{app,version,exported_at,active_id,members}}` |
 | POST | `/api/profile/import` ★ | 信封 | JSON `{members:[1..8], meta}` | `data:{exists, family}` |
@@ -144,10 +145,12 @@
 | POST | `/api/preferences/candidates/{id}/once` ★ | 信封 | — | `data:{candidate}` |
 | POST | `/api/preferences/candidates/{id}/dismiss` ★ | 信封 | — | 仅 `{code,messages}`，**无 data** |
 
-### reports_route.py（3）
+### reports_route.py（5）
 
 | 方法 | 路径 | 形态 | 入参 | 响应要点 |
 |---|---|---|---|---|
+| GET | `/api/reports/member-weekly` ★ | 裸返 | Query `name` | 某位成员近 7 天周报；无记录时 `has_data:false` |
+| GET | `/api/reports/meal-attribution` ★ | 裸返 | — | `{total,attributed,unattributed,by_member,period,attributed_this_week,unattributed_this_week}` |
 | GET | `/api/reports/weekly` ★ | 裸返 | — | `WeeklyReport`：`{has_data, meals, top_dishes, lights, light_trends, guardrail_triggers, range, recommendations, feedback_summary}`；无数据时 `{has_data:false, message}` |
 | POST | `/api/reports/feedback` ★ | 裸返 | JSON（自由 dict，前端传 `{dish, rating, tags, comment}`） | `{saved:true, count}` |
 | GET | `/api/reports/weekly-summary` ★ | 裸返 | Query `refresh`(bool) | 成功 `{ai_summary, cached}`；失败 `{ai_summary:null, reason:"no_data"\|"empty"\|"llm_failed:..."}` |
@@ -159,11 +162,12 @@
 | GET | `/api/service/vision` ★ | 信封 | — | `data:ServiceVision` |
 | POST | `/api/service/preview` ★ | 信封 | JSON `ServicePreviewRequest` | `data:ServicePreviewResult` |
 
-### nearby_route.py（2）
+### nearby_route.py（3）
 
 | 方法 | 路径 | 形态 | 入参 | 响应要点 |
 |---|---|---|---|---|
 | GET | `/api/nearby` ★ | 信封 | Query: `query`、`city`、`district`、`budget`(默认50)、`location`、`radius`(默认1500)、`page`(默认1) | `data:NearbyResult` |
+| GET | `/api/nearby/map` ★ | 信封 | 与 `/api/nearby` 相同 | `data:{source,amap_configured,coordinate_system:"gcj02",center,origin,markers,warning,allergen_filter?}` |
 | GET | `/api/location/resolve` ★ | 信封 | Query `location` | `data:ResolvedLocation` |
 
 ### fridge_route.py（4）
@@ -171,9 +175,9 @@
 | 方法 | 路径 | 形态 | 入参 | 响应要点 |
 |---|---|---|---|---|
 | POST | `/api/fridge/vision` ★ | 裸返 | Form `image`(文件) | `{items:[{name,quantity}], draft:true, note}` |
-| GET | `/api/fridge` | 裸返 | — | `{items:[...]}`（前端未用） |
-| POST | `/api/fridge/set` | 裸返 | Form `items` | 写入结果（前端未用） |
-| POST | `/api/fridge/add` | 裸返 | Form `items` | 写入结果（前端未用） |
+| GET | `/api/fridge` ★ | 裸返 | — | `{items:[...]}` |
+| POST | `/api/fridge/set` ★ | 裸返 | Form `items` | 写入后的权威清单 `{items:[...]}` |
+| POST | `/api/fridge/add` ★ | 裸返 | Form `items` | 写入后的权威清单 `{items:[...]}` |
 
 ### speech_route.py（1）
 
@@ -181,18 +185,19 @@
 |---|---|---|---|---|
 | POST | `/api/transcribe` ★ | 信封 | Form `audio`(文件) | 成功 `{code:200, data:{text, provider:"dashscope", available:true}}`；未配置 `{code:503, data:{...,available:false}}` |
 
-### health_route.py（2）· 运维用，前端未用
+### health_route.py（3）· 运维用
 
 | 方法 | 路径 | 形态 | 响应要点 |
 |---|---|---|---|
-| GET | `/api/health/live` | 裸返 | `{status:"ok"}` |
-| GET | `/api/health/ready` | 裸返 | 就绪 200 / 未就绪 503，body 为 `payload` |
+| GET | `/api/health/live` ★ | 裸返 | `{status:"ok"}` |
+| GET | `/api/health/ready` ★ | 裸返 | 就绪 200 / 未就绪 503，body 为 `{status,checks,rag,time}` |
+| GET | `/api/health/status` ★ | 裸返 | `{status,startup:{knowledge_base,uptime_seconds,...}}` |
 
-### kb_route.py（1）· 评测用，前端未用
+### kb_route.py（1）· 评测用
 
 | 方法 | 路径 | 形态 | 入参 | 响应要点 |
 |---|---|---|---|---|
-| POST | `/api/kb/search` | 裸返 | JSON `{query, k(默认5,上限20)}` | `{query, count, hits:[{text, distance}]}` |
+| POST | `/api/kb/search` ★ | 裸返 | JSON `{query, k(默认5,上限20)}` | `{query, count, hits:[{text, distance}]}` |
 
 ---
 
@@ -219,7 +224,7 @@
 
 ## 6. 响应数据模型（TS 类型，可直接复用）
 
-完整定义在 `frontend/web/src/types.ts`（239 行）。重建时的核心几个：
+共享定义在 `frontend/web/src/types.ts`，接口专用的响应类型直接与 `client.ts` 中的封装放在一起。重建时的核心几个：
 
 ```ts
 type DecisionMode = 'home' | 'dining' | 'health'
@@ -293,10 +298,31 @@ interface NearbyResult {
 7. **`GET /api/reports/weekly` 无数据时**返回 `{has_data:false}`，不是 404，前端要单独处理空态。
 8. **图片相关有两个地址字段**：`image_url`（AI 生成配图）与 `user_image_url`（用户上传），别混用。
 9. **配图是异步的**：`answer` 事件先到，`image` 事件后到（可能几十秒后），期间用 `turn_id` 可调 `/api/chat/cancel-image` 取消；`image_failed` 表示失败。
-10. **现有前端的已知不一致**（重建时顺手统一）：
+10. **现有前端的已知不一致**：
     - `ChatArea.tsx:196` 直接裸 `fetch('/api/reports/weekly')`，绕过了 client.ts 封装；
-    - `client.ts` 的 `addTasteNote` 用了 `JSON.stringify` 但**没带 `Content-Type: application/json`**（其他 JSON 端点都带了）。
+    - `addTasteNote` 的 JSON `Content-Type` 已在 2026-10-18 的接口层补齐。
 
 ---
 
-*本文档由源码静态提取生成，未做运行时验证。如需运行时权威版本，可在服务启动后取 `/openapi.json`（FastAPI 自动生成），但注意本项目大量端点未声明 `response_model`，OpenAPI 里的响应结构会是空的。*
+## 8. 前端接口层覆盖
+
+2026-10-18 以当前后端为基线，`frontend/web/src/api/client.ts` 已补齐此前缺失的 10 个调用：
+
+| 封装 | 后端接口 | 用途 |
+|---|---|---|
+| `fetchApiHealth()` | `GET /api/` | 根路由自检 |
+| `appendSessionMessage()` | `POST /api/sessions/{sid}/messages` | 兼容手动补消息 |
+| `fetchNearbyMap()` | `GET /api/nearby/map` | 地图中心点、坐标与 marker |
+| `replaceActiveProfile()` | `PUT /api/profile` | 兼容整档写入激活成员 |
+| `deleteMemberLegacy()` | `DELETE /api/profile/member/{member_id}` | 旧前端单数路径别名 |
+| `fetchMealAttribution()` | `GET /api/reports/meal-attribution` | 成员归属只读诊断 |
+| `fetchLiveness()` | `GET /api/health/live` | 进程存活探针 |
+| `fetchReadiness()` | `GET /api/health/ready` | 依赖就绪探针，保留 503 业务载荷 |
+| `fetchHealthStatus()` | `GET /api/health/status` | 启动阶段与知识库预热状态 |
+| `searchKnowledgeBase()` | `POST /api/kb/search` | 知识库检索/评测 |
+
+“全部有接口”不等于“全部直接进用户主界面”。地图、服务预览、家庭导入导出可进入业务页面；健康探针、归属诊断和知识库检索更适合作为连接状态或管理/调试入口。页面位置仍待业务确认，本轮没有修改任何 UI 入口。
+
+---
+
+*本文档的路由数量与参数以运行时 `app.openapi()` 为权威来源。项目大量端点未声明 `response_model`，因此响应结构以路由实现和前端 TypeScript 类型交叉核对。*

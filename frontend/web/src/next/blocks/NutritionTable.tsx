@@ -80,6 +80,18 @@ export function NutritionTable({ vm }: { vm: ResultVM }) {
         <p className="nutri-empty">{n.empty}</p>
       )}
 
+      {n.rows.length > 0 && n.exercise && (
+        <p className="nutri-exercise">
+          <span className="nutri-exercise-kcal">这顿约 {n.exercise.kcal} 千卡</span>
+          {n.exercise.items.length > 0 && (
+            <span className="nutri-exercise-time">
+              {n.exercise.items.map((item) => `${item.label} ${item.minutes} 分钟`).join(' · ')}
+            </span>
+          )}
+          {n.exercise.basis && <span className="nutri-exercise-basis">{n.exercise.basis}</span>}
+        </p>
+      )}
+
       {/* 口径与 NRV 出处压在最弱一级：它们是这张表的读数条件，不与数值抢注意力。 */}
       {n.rows.length > 0 && (
         <p className="nutri-basis">

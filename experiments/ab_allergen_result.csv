@@ -20,7 +20,7 @@ safe-gluten-broccoli,C,clean,0,0,True
 safe-peanut-greens,C,clean,0,0,True
 safe-soy-rib-soup,C,clean,0,0,True
 chronic-hypertension-salt,B,chronic:高血压,1,1,True
-chronic-hypertension-soy,B,chronic:高血压,1,1,True
+chronic-hypertension-soy,B,chronic:高血压,0,0,False
 chronic-diabetes-honey,B,chronic:糖尿病,1,1,True
 chronic-diabetes-fat,B,chronic:糖尿病,1,1,True
 chronic-lipid-butter,B,chronic:高脂血症,2,2,True

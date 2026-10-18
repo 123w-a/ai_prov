@@ -146,6 +146,37 @@
   color: var(--ink-faint);
 }
 
+/* 能量换算出的运动当量。它是营养表的派生读数，排版压在表与脚注之间，
+   不另起一张卡片，也不和六项营养数值抢层级。 */
+.nutri-exercise {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.nutri-exercise-kcal {
+  font-family: var(--serif);
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+
+.nutri-exercise-time {
+  white-space: normal;
+}
+
+.nutri-exercise-basis {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
 /* 算不出时的那一句。不排表：没有数值就没有行可排，
    排一整行「未收录」反而像"数据全坏了"，而实际可能只是正文没写用量。 */
 .nutri-empty {

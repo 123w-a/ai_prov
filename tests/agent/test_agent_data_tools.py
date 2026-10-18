@@ -1,4 +1,4 @@
-"""Agent 数据查询工具（查冰箱/查周报）的确定性回归测试。"""
+"""Agent 数据查询工具的确定性回归测试。"""
 
 import json
 import unittest
@@ -20,12 +20,21 @@ from agent_tools import (
 
 
 class AgentDataToolsTest(unittest.TestCase):
-    def test_both_data_tools_registered(self):
+    def test_seven_llm_tools_registered(self):
         names = {t.name for t in tools}
 
-        self.assertIn("query_fridge_inventory", names)
-        self.assertIn("find_recipes_from_inventory", names)
-        self.assertIn("query_weekly_report", names)
+        self.assertEqual(
+            names,
+            {
+                "web_search",
+                "get_file",
+                "nearby_food",
+                "nutrition_kb_search",
+                "healthy_remix",
+                "fridge_gap",
+                "find_recipes_from_inventory",
+            },
+        )
 
     def test_find_recipes_from_inventory_reports_matches_and_gaps(self):
         payload = json.loads(
@@ -115,6 +124,20 @@ class AgentDataToolsTest(unittest.TestCase):
         self.assertIn("番茄炒蛋", payload["top_dishes"])
         self.assertIn(payload["light_trends"]["钠"], {"在好转", "在抬头", "保持平稳", "样本不足"})
         self.assertIsInstance(payload["recommendations"], list)
+
+    def test_legacy_nutrition_tools_remain_available(self):
+        legacy_names = {tool.name for tool in agent_tools._legacy.tools}
+
+        self.assertIn("calorie_lookup", legacy_names)
+        self.assertIn("exercise_equiv", legacy_names)
+
+        calories = json.loads(agent_tools._legacy.calorie_lookup.func("米饭", 200))
+        exercise = json.loads(agent_tools._legacy.exercise_equiv.func(calories["kcal"], 60))
+
+        self.assertEqual(calories["source"], "china_food_table")
+        self.assertEqual(calories["portion_g"], 200)
+        self.assertGreater(calories["kcal"], 0)
+        self.assertEqual(set(exercise["minutes"]), {"慢跑", "骑车", "快走"})
 
     def test_nearby_tool_filters_allergens(self):
         sample = [

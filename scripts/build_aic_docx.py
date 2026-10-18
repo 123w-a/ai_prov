@@ -14,7 +14,7 @@
   本脚本的定位：① 保留官方模板骨架；② 口径与当前报告保持一致，防止旧数字回流。
   本次已同步的口径：三层解耦（应用层—算法层—数据层）+ 四段运行链路 + 确定性护栏为
   横切安全控制；27 份权威文件（含 8 项食养指南）/ 1435 chunk / 288 条营养底表 /
-  8 个工具 / 12 节点·4 条件边·8 普通边 / 召回距离 0.187 与 0.297。
+  7 个工具 / 12 节点·4 条件边·8 普通边 / 召回距离 0.187 与 0.297。
 
   运行依赖：matplotlib（绘图）+ python-docx（生成 docx）。
   当前 `.venv` 两者都缺（matplotlib 只在 anaconda3 基础环境），如需重跑请先补装。
@@ -310,11 +310,11 @@ def main():
              size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
     except Exception as e:
         body(doc, "【建议此处插入系统架构图：应用层（页面/拍照/定位/文字语音/API）→ 算法层（chef_think 循环 Agent + "
-                  "8 工具 + 硬护栏 + 三层记忆）→ 数据层（权威 RAG / 营养底表 / 用户画像 / 会话与运行数据）；"
+                  "7 工具 + 硬护栏 + 三层记忆）→ 数据层（权威 RAG / 营养底表 / 用户画像 / 会话与运行数据）；"
                   "红色竖向控制条表示确定性硬护栏横切算法层到输出端。"
                   "绘图失败原因：" + str(e)[:80] + "】")
     body(doc, "数据层：权威护栏 RAG（Chroma，1435 chunk + 页码锚定）、营养底表 CSV（288 条记录）、用户健康画像档案、"
-              "会话与运行数据。算法层：LangGraph 决策中枢（12 节点 / 4 条件边 / 8 普通边）+ 工具编排（8 个工具）"
+              "会话与运行数据。算法层：LangGraph 决策中枢（12 节点 / 4 条件边 / 8 普通边）+ 工具编排（7 个工具）"
               " + 硬护栏（横切安全控制）+ 记忆与自适应追问。应用层：页面交互、拍照识别、定位导航、文字/语音入口，"
               "统一经 API 收口到同一决策中枢。")
 
@@ -406,7 +406,7 @@ def main():
                 "tool_budget_finalize、ingredient_confirm）。")
     bullet(doc, "domain/nutrition_rules.py：确定性硬禁忌规则引擎（高血压/痛风/糖尿病/肾病/高脂血症/肥胖，每条带 PDF 出处）。")
     bullet(doc, "rag/ingest.py、indexing/parser_router.py、rag/retriever.py、rag/store.py：知识库构建与检索。")
-    bullet(doc, "agent_tools/__init__.py：8 个工具（web_search / get_file / nearby_food / nutrition_kb_search / healthy_remix / fridge_gap / query_fridge_inventory / query_weekly_report）。")
+    bullet(doc, "agent_tools/__init__.py：7 个工具（web_search / get_file / nearby_food / nutrition_kb_search / healthy_remix / fridge_gap / find_recipes_from_inventory）。")
     bullet(doc, "agent/schemas.py：ChefAnswer 含 sources 引文字段，实现权威依据进结构化卡片。")
     bullet(doc, "embedding：bge-small-zh-v1.5；向量库：Chroma（collection=dietary_kb）。")
 

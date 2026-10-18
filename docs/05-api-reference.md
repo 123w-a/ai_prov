@@ -47,6 +47,7 @@ POST   /api/profile/import
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/nearby` | 查询餐厅 |
+| `GET` | `/api/nearby/map` | 地图中心点、定位原点与真实 POI marker |
 | `GET` | `/api/location/resolve` | 坐标反向解析城市和区县 |
 
 `/api/nearby` 支持 `query`、`city`、`district`、`budget`、`location`、`radius`、`page`。返回的 `source` 用于区分 `amap` 和 mock。
@@ -56,6 +57,7 @@ POST   /api/profile/import
 ```text
 GET  /api/health/live
 GET  /api/health/ready
+GET  /api/health/status
 POST /api/transcribe
 GET  /api/fridge
 POST /api/fridge/set
@@ -64,6 +66,11 @@ POST /api/fridge/vision
 GET  /api/service/vision
 POST /api/service/preview
 GET  /api/reports/weekly
+GET  /api/reports/member-weekly
+GET  /api/reports/meal-attribution
 GET  /api/reports/weekly-summary
 POST /api/reports/feedback
+POST /api/kb/search
 ```
+
+前端调用封装统一位于 `frontend/web/src/api/client.ts`。接口是否展示、展示在哪个页面，与后端是否保留该功能分开决定。

@@ -90,6 +90,17 @@ class NutritionIngredient(BaseModel):
     status: str = Field(description="covered（算进去了）| missing（表里没收录）| no_amount（没有克数）")
 
 
+class ExerciseEquivalent(BaseModel):
+    """按能量值确定性换算的运动当量，模型不填写。"""
+    kcal: float = Field(description="本次计算采用的能量，千卡")
+    weight_kg: float = Field(default=60.0, description="估算体重")
+    minutes: dict[str, int] = Field(
+        default_factory=dict,
+        description="固定键 jogging/cycling/walking 对应慢跑/骑车/快走分钟数",
+    )
+    basis: str = Field(description="估算口径")
+
+
 class NutritionFacts(BaseModel):
     """这顿的营养数值表。
 
@@ -117,6 +128,10 @@ class NutritionFacts(BaseModel):
     covered: list[str] = Field(default_factory=list, description="算进去了的食材名")
     missing: list[str] = Field(default_factory=list, description="国标表未收录的食材名")
     no_amount: list[str] = Field(default_factory=list, description="有食材但正文没给克数的")
+    exercise_equiv: Optional[ExerciseEquivalent] = Field(
+        default=None,
+        description="按 energy_kcal 和固定系数算出的运动当量；能量不可用时为 null",
+    )
 
 
 class SourceRef(BaseModel):#权威信息

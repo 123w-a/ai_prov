@@ -1,9 +1,11 @@
 """附近餐厅接口：把旧 agent_tools.py 里的高德 POI 能力开放成独立 API。
 
-无 AMAP_KEY / 断网 / 配额异常时回退 mock，保证演示不挂；
-数据源会如实返回，前端不应把它包装成真实定位推荐。
+`/nearby` 返回带 mock 兜底的餐厅列表；`/nearby/map` 只返回真实高德坐标对应的
+地图视图模型，降级时 marker 为空并如实给出 warning。两者共用同一条检索与
+过敏原过滤链路，但不改变 `/nearby` 的既有契约。
 """
 import importlib.util
+import re
 from pathlib import Path
 
 import requests
@@ -25,6 +27,9 @@ _MOCK_RESTAURANTS = _legacy._MOCK_RESTAURANTS
 _amap_poi_search = _legacy._amap_poi_search
 
 _AMAP_REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
+_COORDINATE_PAIR_RE = re.compile(
+    r"(-?\d{1,3}(?:\.\d+)?)\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)"
+)
 
 # 高德 Web 服务错误码 →（状态描述，用户能做的动作）。
 # 表取自官方《错误码说明》 https://lbs.amap.com/api/webservice/guide/tools/info （2026-10-12 对照）。
@@ -65,6 +70,83 @@ def _scrub(text: str) -> str:
     """任何要进响应或日志的文本都先过这里：绝不把 Key 内容写出去。"""
     key = AMAP_KEY or ""
     return text.replace(key, "***") if key and key in text else text
+
+
+def _valid_coordinate(lng, lat) -> bool:
+    """只接受可落到地图上的经纬度；(0,0) 是常见的未定位占位值，不当作真实位置。"""
+    try:
+        lng_value = float(lng)
+        lat_value = float(lat)
+    except (TypeError, ValueError):
+        return False
+    if lng_value == 0 and lat_value == 0:
+        return False
+    return -180 <= lng_value <= 180 and -90 <= lat_value <= 90
+
+
+def _parse_location(location: str) -> dict | None:
+    """从 `location` 中提取一对经纬度（兼容「[当前位置：经度,纬度]」这类整串）。"""
+    match = _COORDINATE_PAIR_RE.search(str(location or ""))
+    if not match:
+        return None
+    lng, lat = float(match.group(1)), float(match.group(2))
+    if not _valid_coordinate(lng, lat):
+        return None
+    return {"lng": round(lng, 6), "lat": round(lat, 6)}
+
+
+def _map_markers(restaurants: list[dict] | None) -> list[dict]:
+    """把检索结果投影成地图 marker；没有有效坐标的餐厅一律不进地图。"""
+    markers = []
+    for item in restaurants or []:
+        lng = item.get("lng")
+        lat = item.get("lat")
+        if not _valid_coordinate(lng, lat):
+            continue
+        markers.append(
+            {
+                "name": str(item.get("name") or ""),
+                "cuisine": str(item.get("cuisine") or ""),
+                "avg_price": item.get("avg_price") or 0,
+                "distance_km": item.get("distance_km"),
+                "lng": round(float(lng), 6),
+                "lat": round(float(lat), 6),
+                "address": str(item.get("address") or ""),
+                "guardrail": str(item.get("guardrail") or ""),
+            }
+        )
+    return markers
+
+
+def _markers_center(markers: list[dict]) -> dict | None:
+    """未定位时用本批真实餐厅的外接矩形中心，避免写死任何城市坐标。"""
+    if not markers:
+        return None
+    lngs = [item["lng"] for item in markers]
+    lats = [item["lat"] for item in markers]
+    return {
+        "lng": round((min(lngs) + max(lngs)) / 2, 6),
+        "lat": round((min(lats) + max(lats)) / 2, 6),
+    }
+
+
+def _with_warning(warning: str, extra: str) -> str:
+    warning = (warning or "").strip()
+    extra = (extra or "").strip()
+    if not extra:
+        return warning
+    if not warning:
+        return extra
+    return f"{warning.rstrip('。')}。{extra}"
+
+
+def _validate_search_params(budget: int, radius: int, page: int) -> None:
+    if budget < 0 or budget > 5000:
+        raise HTTPException(status_code=400, detail="预算需在 0 到 5000 元之间，0 表示不限")
+    if radius <= 0 or radius > 10000:
+        raise HTTPException(status_code=400, detail="radius 需在 1 到 10000 米之间")
+    if page < 1 or page > 20:
+        raise HTTPException(status_code=400, detail="page 需在 1 到 20 之间")
 
 
 def _failure(location: str, why: str, action: str = "", detail: str = "") -> dict:
@@ -177,12 +259,7 @@ def nearby(
     radius: int = 1500,
     page: int = 1,
 ):
-    if budget < 0 or budget > 5000:
-        raise HTTPException(status_code=400, detail="预算需在 0 到 5000 元之间，0 表示不限")
-    if radius <= 0 or radius > 10000:
-        raise HTTPException(status_code=400, detail="radius 需在 1 到 10000 米之间")
-    if page < 1 or page > 20:
-        raise HTTPException(status_code=400, detail="page 需在 1 到 20 之间")
+    _validate_search_params(budget, radius, page)
 
     # diag 收集高德这次为什么失败（断网 / Key 平台不符 / 配额……）：
     # 返回 None 这一种结果本身分不出原因，而原因决定了用户该去改什么。
@@ -209,6 +286,80 @@ def nearby(
     return {
         "code": 200,
         "messages": "附近餐厅建议已返回",
+        "data": data,
+    }
+
+
+@router.get("/nearby/map")
+def nearby_map(
+    query: str = "",
+    city: str = "",
+    district: str = "",
+    budget: int = 50,
+    location: str = "",
+    radius: int = 1500,
+    page: int = 1,
+):
+    """附近餐厅地图视图模型（增量接口，不改变 `/nearby` 的契约）。
+
+    - `location` 为 GCJ-02 的「经度,纬度」（与浏览器定位转换后的口径一致）；
+      传了就同时作为检索圆心、`origin` 与地图 `center`。
+    - 没传定位时，用本批真实餐厅坐标的外接矩形中心作为 `center`。
+    - 只有 `source=amap` 且带有效坐标的餐厅才生成 marker；mock 和失败降级
+      一律返回空 marker 与真实 warning，绝不伪造坐标。
+    - 只返回 `amap_configured` 布尔值，绝不把 AMAP_KEY 写进响应。
+    """
+    _validate_search_params(budget, radius, page)
+
+    origin = _parse_location(location)
+    search_location = f"{origin['lng']},{origin['lat']}" if origin else ""
+    warning = ""
+    if str(location or "").strip() and origin is None:
+        warning = "收到的定位坐标无法解析，已改为按关键词/城市检索"
+
+    diag: dict = {}
+    real = _amap_poi_search(
+        city,
+        district,
+        query,
+        budget,
+        search_location,
+        page=page,
+        radius=radius,
+        diag=diag,
+    )
+    source, restaurants, search_warning = _filter_and_sort(
+        real, query, budget, page=page, diag=diag
+    )
+    before_filter = len(restaurants)
+    restaurants, allergen_hits = _legacy._filter_restaurants_by_allergens(restaurants)
+
+    markers = _map_markers(restaurants) if source == "amap" else []
+    warning = _with_warning(warning, search_warning)
+    if source == "amap" and restaurants and not markers:
+        warning = _with_warning(
+            warning,
+            "高德返回了结果，但没有可用的经纬度，地图不展示标记",
+        )
+
+    data = {
+        "source": source,
+        "amap_configured": bool(AMAP_KEY),
+        "coordinate_system": "gcj02",
+        "center": origin or _markers_center(markers),
+        "origin": origin,
+        "markers": markers,
+        "warning": warning,
+    }
+    if allergen_hits:
+        data["allergen_filter"] = {
+            "applied": True,
+            "removed": before_filter - len(restaurants),
+            "message": _legacy._allergen_filter_note(allergen_hits),
+        }
+    return {
+        "code": 200,
+        "messages": "附近餐厅地图数据已返回",
         "data": data,
     }
 

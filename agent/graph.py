@@ -3190,8 +3190,6 @@ _TOOL_RESULT_LIMITS = {
     "nutrition_kb_search": 3600,
     "nearby_food": 1800,
     "get_file": 2400,
-    "calorie_lookup": 1200,
-    "exercise_equiv": 1200,
 }
 _MAX_RESULT_ITEMS = 5  # 搜索结果 / 检索命中最多保留几条
 

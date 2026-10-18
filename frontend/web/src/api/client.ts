@@ -43,6 +43,17 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>
 }
 
+export interface ApiHealth {
+  code: number
+  messages: string
+  data: null
+}
+
+/** 后端根路由自检，与进程探针 `/api/health/*` 分开。 */
+export async function fetchApiHealth(): Promise<ApiHealth> {
+  return jsonRequest<ApiHealth>('/api/')
+}
+
 export async function fetchSessions(): Promise<Session[]> {
   const data = await jsonRequest<{ sessions: Session[] }>('/api/sessions')
   return data.sessions ?? []
@@ -73,6 +84,33 @@ export async function deleteMessage(sessionId: string, messageId: number): Promi
   await jsonRequest(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
     { method: 'DELETE' },
+  )
+}
+
+export interface SessionMessageInput {
+  userText: string
+  answer: string
+  time?: string
+  imageName?: string
+  imageType?: string
+  image?: File | null
+}
+
+/** 后端兼容入口：手动补一条问答记录。常规聊天仍由 `/api/chat` 自动落库。 */
+export async function appendSessionMessage(
+  sessionId: string,
+  input: SessionMessageInput,
+): Promise<void> {
+  const body = new FormData()
+  body.append('user_text', input.userText)
+  body.append('answer', input.answer)
+  body.append('time', input.time ?? new Date().toISOString())
+  if (input.imageName) body.append('image_name', input.imageName)
+  if (input.imageType) body.append('image_type', input.imageType)
+  if (input.image) body.append('image', input.image)
+  await jsonRequest<{ ok: boolean; msg: string }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { method: 'POST', body },
   )
 }
 
@@ -218,7 +256,7 @@ export async function sendChat(
 }
 
 
-export async function fetchNearby(params?: {
+export interface NearbyQuery {
   query?: string
   city?: string
   district?: string
@@ -226,7 +264,9 @@ export async function fetchNearby(params?: {
   location?: string
   radius?: number
   page?: number
-}): Promise<NearbyResult> {
+}
+
+function nearbySearchParams(params?: NearbyQuery): URLSearchParams {
   const search = new URLSearchParams()
   if (params?.query) search.set("query", params.query)
   if (params?.city) search.set("city", params.city)
@@ -235,7 +275,55 @@ export async function fetchNearby(params?: {
   if (params?.location) search.set("location", params.location)
   if (params?.radius != null) search.set("radius", String(params.radius))
   if (params?.page != null) search.set("page", String(params.page))
+  return search
+}
+
+export async function fetchNearby(params?: NearbyQuery): Promise<NearbyResult> {
+  const search = nearbySearchParams(params)
   const result = await jsonRequest<ApiEnvelope<NearbyResult>>(`/api/nearby?${search.toString()}`)
+  return result.data
+}
+
+export interface MapCoordinate {
+  lng: number
+  lat: number
+}
+
+export interface NearbyMapMarker {
+  name: string
+  cuisine: string
+  avg_price: number
+  distance_km?: number | null
+  lng: number
+  lat: number
+  address: string
+  guardrail: string
+}
+
+export interface NearbyMapResult {
+  source: string
+  amap_configured: boolean
+  coordinate_system: 'gcj02'
+  center: MapCoordinate | null
+  origin: MapCoordinate | null
+  markers: NearbyMapMarker[]
+  warning: string
+  allergen_filter?: {
+    applied: boolean
+    removed: number
+    message: string
+  }
+}
+
+/**
+ * 地图视图模型。与 `/api/nearby` 共用筛选口径，只增加坐标、中心点与 marker；
+ * `source` 不是 `amap` 时 marker 必须为空，调用方不得补造坐标。
+ */
+export async function fetchNearbyMap(params?: NearbyQuery): Promise<NearbyMapResult> {
+  const search = nearbySearchParams(params)
+  const result = await jsonRequest<ApiEnvelope<NearbyMapResult>>(
+    `/api/nearby/map?${search.toString()}`,
+  )
   return result.data
 }
 
@@ -365,11 +453,32 @@ export async function deleteMember(memberId: string): Promise<FamilyData> {
   return result.data.family
 }
 
+/** 旧前端使用的单数路径别名；新代码优先用 `deleteMember`。 */
+export async function deleteMemberLegacy(memberId: string): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>(
+    `/api/profile/member/${encodeURIComponent(memberId)}`,
+    { method: "DELETE" },
+  )
+  return result.data.family
+}
+
 export async function switchActiveMember(memberId: string): Promise<FamilyData> {
   const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>("/api/profile/active", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ member_id: memberId }),
+  })
+  return result.data.family
+}
+
+export type HealthProfileInput = MemberInput['profile']
+
+/** 兼容旧前端的整档写入：只更新当前激活成员，不新增成员。 */
+export async function replaceActiveProfile(profile: HealthProfileInput): Promise<FamilyData> {
+  const result = await jsonRequest<ApiEnvelope<{ family: FamilyData }>>("/api/profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
   })
   return result.data.family
 }
@@ -473,6 +582,21 @@ export async function fetchWeeklySummary(refresh = false): Promise<WeeklySummary
   )
 }
 
+export interface MealAttributionDiagnostics {
+  total: number
+  attributed: number
+  unattributed: number
+  by_member: Record<string, number>
+  period: { start: string; end: string }
+  attributed_this_week: number
+  unattributed_this_week: number
+}
+
+/** 只读诊断口：记账中的成员归属现状。 */
+export async function fetchMealAttribution(): Promise<MealAttributionDiagnostics> {
+  return jsonRequest<MealAttributionDiagnostics>("/api/reports/meal-attribution")
+}
+
 export async function starMessage(
   sessionId: string,
   recordId: number,
@@ -518,6 +642,7 @@ export async function fetchTasteSuggestion(): Promise<TasteSuggestion | null> {
 export async function addTasteNote(text: string): Promise<void> {
   await jsonRequest('/api/profile/taste-note', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   })
 }
@@ -597,6 +722,77 @@ export async function submitMealFeedback(payload: MealFeedbackPayload): Promise<
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+}
+
+// ---- 运维探针 ----
+
+export interface HealthReadinessPayload {
+  status: string
+  checks: Record<string, boolean>
+  rag: string
+  time: string
+}
+
+export interface HealthReadinessResult extends HealthReadinessPayload {
+  http_status: 200 | 503
+  ready: boolean
+}
+
+export async function fetchLiveness(): Promise<{ status: string }> {
+  return jsonRequest<{ status: string }>('/api/health/live')
+}
+
+/**
+ * 就绪探针的 503 是有效业务响应，不能当作普通 HTTP 错误丢掉 checks。
+ * 只有 200/503 以外的状态才抛错。
+ */
+export async function fetchReadiness(): Promise<HealthReadinessResult> {
+  const resp = await fetch(`${API_BASE}/api/health/ready`)
+  if (resp.status !== 200 && resp.status !== 503) {
+    throw new Error(await readError(resp))
+  }
+  const payload = (await resp.json()) as HealthReadinessPayload
+  return {
+    ...payload,
+    http_status: resp.status,
+    ready: resp.status === 200 && payload.status === 'ok',
+  }
+}
+
+export interface HealthStatus {
+  status: string
+  startup: {
+    started_at: number
+    knowledge_base: string
+    knowledge_base_error: string
+    knowledge_base_ready_at?: number
+    uptime_seconds: number
+  }
+}
+
+export async function fetchHealthStatus(): Promise<HealthStatus> {
+  return jsonRequest<HealthStatus>('/api/health/status')
+}
+
+// ---- 知识库检索（评测接口，也可供管理员/调试页复用）----
+
+export interface KbSearchHit {
+  text: string
+  distance: number
+}
+
+export interface KbSearchResult {
+  query: string
+  count: number
+  hits: KbSearchHit[]
+}
+
+export async function searchKnowledgeBase(query: string, k = 5): Promise<KbSearchResult> {
+  return jsonRequest<KbSearchResult>('/api/kb/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, k }),
   })
 }
 

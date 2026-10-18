@@ -221,5 +221,52 @@ class TestContract(unittest.TestCase):
         self.assertEqual(f["covered"], ["西兰花"])
 
 
+class TestExerciseEquivalent(unittest.TestCase):
+    """运动当量只做固定系数换算，不重新估算热量。"""
+
+    def test_known_energy_uses_fixed_rates_and_default_weight(self):
+        f = compute_nutrition_facts([{"name": "大米（粳米）", "amount_g": 100}])
+
+        self.assertEqual(f["exercise_equiv"], {
+            "kcal": 347.0,
+            "weight_kg": 60.0,
+            "minutes": {"jogging": 50, "cycling": 72, "walking": 96},
+            "basis": "按60kg中等强度估算，仅作参考",
+        })
+
+    def test_partial_energy_still_generates_subtotal_equivalent(self):
+        f = compute_nutrition_facts([
+            {"name": "大米（粳米）", "amount_g": 100},
+            {"name": "培根", "amount_g": 50},
+        ])
+
+        self.assertEqual(f["status"], "partial")
+        self.assertEqual(f["exercise_equiv"]["kcal"], 347.0)
+        self.assertEqual(f["exercise_equiv"]["minutes"]["jogging"], 50)
+
+    def test_missing_energy_never_fills_zero(self):
+        for payload in (
+            None,
+            [],
+            [{"name": "西兰花", "amount_g": None}],
+            [{"name": "培根", "amount_g": 50}],
+        ):
+            with self.subTest(payload=payload):
+                f = compute_nutrition_facts(payload)
+                self.assertIsNone(f["exercise_equiv"])
+                self.assertEqual(
+                    f["nutrients"]["energy_kcal"],
+                    {"value": None, "status": "unavailable"},
+                )
+
+    def test_energy_field_missing_does_not_generate_equivalent(self):
+        stub = {"name": "打桩食材", "kcal": None, "protein": 5.0,
+                "fat": 1.0, "carb": 10.0, "fiber": 1.0, "sodium": 2.0}
+        with patch.dict(dish_nutrition._BY_NAME, {"打桩食材": stub}):
+            f = compute_nutrition_facts([{"name": "打桩食材", "amount_g": 100}])
+
+        self.assertIsNone(f["exercise_equiv"])
+
+
 if __name__ == "__main__":
     unittest.main()

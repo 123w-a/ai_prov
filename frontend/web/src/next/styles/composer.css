@@ -395,6 +395,16 @@
   cursor: progress;
 }
 
+.ask-voice-btn.is-unavailable {
+  color: var(--ink-faint);
+  cursor: help;
+}
+
+.ask-voice-btn.is-unavailable:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-faint);
+}
+
 .ask-voice-ico {
   width: 17px;
   height: 17px;

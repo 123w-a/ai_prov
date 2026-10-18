@@ -8,7 +8,7 @@ import { useVoiceInput } from '../data/voiceInput.ts'
  * 与同文件里那片叶 `svg` 同笔宽 1.4——同一行里两枚图形不该是两种线重。
  *
  * 三条降级（每一条都有界面表现，不静默）：
- *   · 浏览器不支持录音 → **不渲染**（连隐私说明一起不渲染：说明一个不存在的功能更误导）；
+ *   · 非安全页面 / 浏览器不支持录音 → 按钮仍显示，旁边直接说明不可用原因；
  *   · 麦克风权限被拒 / 没有设备 / 被占用 → 按钮**仍可用**（再点一次即重试），
  *     原因写在按钮旁边的浮层里，按钮本身不变灰；
  *   · 后端 available:false 或转写失败 → 后端原话如实带出（voiceErrorMessage），草稿不动。
@@ -18,25 +18,32 @@ import { useVoiceInput } from '../data/voiceInput.ts'
  * 不是"我小心没写"。
  */
 export function AskVoice({ onTranscript }: { onTranscript: (text: string) => void }) {
-  const { supported, state, notice, toggle } = useVoiceInput(onTranscript)
-  if (!supported) return null
+  const { supported, supportNotice, state, notice, toggle } = useVoiceInput(onTranscript)
 
   const recording = state === 'recording'
   const transcribing = state === 'transcribing'
-  const label = recording ? '结束录音' : transcribing ? '正在识别语音' : '用语音说话'
+  const label = recording
+    ? '结束录音'
+    : transcribing
+      ? '正在识别语音'
+      : supported
+        ? '用语音说话'
+        : '查看麦克风不可用原因'
 
   return (
     <span className="ask-voice">
       {/* 隐私边界写在这里：音频走后端，**而且后端会再送云端**（services/speech.py
           先 upload_to_oss 再交阿里云 DashScope 转写），所以只说"上传到本机后端"
           会让人以为音频不出本机——那是不完整的表述，按诚实底线必须把云端这一步写明。 */}
-      <span className="ask-voice-priv">语音会上传到本机后端，再送云端识别</span>
+      <span className="ask-voice-priv">
+        {supportNotice ?? '语音会上传到本机后端，再送云端识别'}
+      </span>
 
       <button
-        className={`ask-voice-btn${recording ? ' is-rec' : ''}${transcribing ? ' is-busy' : ''}`}
+        className={`ask-voice-btn${recording ? ' is-rec' : ''}${transcribing ? ' is-busy' : ''}${!supported ? ' is-unavailable' : ''}`}
         type="button"
         aria-label={label}
-        title={label}
+        title={supportNotice ?? label}
         aria-pressed={recording}
         disabled={transcribing}
         onClick={toggle}
