@@ -402,4 +402,119 @@
   padding-bottom: 48px;
 }
 
+/* ── 段四「权威文件」：可展开的文件条目（2026-10-19）────────────────────
+   这一段的位置原来是「本轮依据」的一串文件名——名字给到位了，但读的人没法核对：
+   说"依据是这份指南"，却翻不到那句原文。现在每条文件是一个可展开的条目：
+   收起时只有"文件名 + 位置"，展开后是那一页的原文。
+   视觉纪律（与右栏其余段一致）：
+   · 条目之间只用发丝线分格，不做卡片套卡片（右栏已经在 Panel 里了）；
+   · 展开出来的原文用 --surface 垫一层 + 左色标沿用段色 --tone-source，
+     读起来是"引文"而不是又一段正文；
+   · 全是文字元素，没有新色相：暖纸底上再开一个冷色只会像另一套系统。 */
+.af-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.af-item {
+  border-bottom: 1px solid var(--line);
+}
+
+.af-item:last-child {
+  border-bottom: none;
+}
+
+.af-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+}
+
+.af-head:disabled {
+  cursor: default;
+}
+
+/* 文件名让出全部剩余宽度并单行截断（全名挂在 title 上）；
+   位置与标签不参与压缩——页码是"能翻到那一页"的唯一线索，被挤掉就白给了。 */
+.af-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.af-head:hover:not(:disabled) .af-title {
+  color: var(--tone-source);
+}
+
+.af-loc {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.af-tag {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.af-caret {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--accent-ink);
+}
+
+.af-item[data-open='1'] .af-title {
+  color: var(--ink);
+}
+
+.af-item[data-open='1'] .af-caret {
+  color: var(--ink-faint);
+}
+
+.af-body {
+  padding: 0 0 9px;
+}
+
+/* 原文保留换行（PDF 抽取出来的行就是断的），但不允许长串撑破右栏。 */
+.af-text {
+  margin: 0;
+  padding: 7px 9px;
+  border-left: 2px solid var(--tone-source);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 取不到 / 被截断 / 只退到首段这三种情况都用同一行灰字说清——它们是元信息，
+   不与引文抢注意力，但必须可读（11.5px 是右栏注释的既有档位）。 */
+.af-state {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+
 

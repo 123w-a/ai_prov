@@ -599,6 +599,50 @@ body {
   color: var(--ink-faint);
 }
 
+/* 「再试一次」与"重发的是哪句话"（2026-10-19 用户批准）。
+   失败块原来只有说明、没有出口：用户得自己发现输入框里的话还在、再按一次发送，
+   而那时输入框可能已经被他改过。现在给一个明确的主行动，并把要重发的正文
+   原地标出来——不标出来等于替他决定发什么。 */
+.failure-hint {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.failure-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+  flex-wrap: wrap;
+}
+
+.failure-retry {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.failure-retry:hover {
+  border-color: var(--accent);
+}
+
+.failure-what {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .failure-partial {
   margin-top: 12px;
   font-size: 13px;

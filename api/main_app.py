@@ -217,6 +217,8 @@ app.include_router(nearby_router, prefix="/api")
 app.include_router(preferences_router, prefix="/api")
 from api.routes.reports_route import router as reports_router
 app.include_router(reports_router, prefix="/api")
+from api.routes.weight_route import router as weight_router
+app.include_router(weight_router, prefix="/api")
 from api.routes.fridge_route import router as fridge_router
 app.include_router(fridge_router, prefix="/api")
 from api.routes.health_route import router as health_router

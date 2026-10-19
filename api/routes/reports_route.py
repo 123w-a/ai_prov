@@ -207,6 +207,106 @@ def member_nutrition_progress(
     }
 
 
+def _member_window_meals(
+    name: str, rows: list[dict], start: datetime
+) -> list[dict]:
+    """该成员在窗口内的餐次（只统计**已归属到他**的餐）。
+
+    与 `member_nutrition_progress` 内的筛选**同一条口径**：未归属的餐次对任何
+    成员都不算，绝不摊派；ts 坏掉的记录连窗口都判不了，不进分母。抽成此处
+    是为了让新增的覆盖度与我（进度）用同一套筛选，避免"两处各写一遍、
+    改一处漏一处"——本仓已有过这类教训（见 `_member_week_rows` 的 docstring）。
+    """
+    out: list[dict] = []
+    for meal in rows:
+        if not isinstance(meal, dict):
+            continue
+        if name not in eaters_of(meal):
+            continue
+        try:
+            ts = datetime.fromisoformat(str(meal.get("ts") or ""))
+        except Exception:
+            continue
+        if ts >= start:
+            out.append(meal)
+    return out
+
+
+def member_nutrition_coverage(
+    member: dict | None = None,
+    meals: list[dict] | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """成员本周**四维营养覆盖度**（档案页右栏那四个环用）。2026-10-18 新增。
+
+    为什么不是「达成率」：`meals.json` 的 `dish` 是自由文本菜名、没有任何重量，
+    算不出摄入克数，因此「吃到目标的百分之几」在这个数据面上不存在。编一个
+    默认份量去凑，在孕期成员身上就是错误医嘱。本函数只报**菜名原文能证明的**
+    事实：本周有几分之一的餐吃到了蛋白源 / 主食 / 蔬果；脂肪是唯一能取实值的
+    一维（`lights` 里确实有脂肪灯）。完整论证见 `storage/nutrition_coverage`
+    模块 docstring，此处不重复。
+
+    周期与 `/reports/weekly`、`member_nutrition_progress` 共用 `week_window`，
+    成员筛选共用 `eaters_of`——四个环与周报其余数字同源，不会出现"卡片说 5 顿、
+    这里说 3 顿"。
+
+    返回每维 `{value, numerator, denominator}`，外加 `meals`（本周已记录餐数）
+    与 `period`。分母为 0 时 `value` 为 **None**（不是 0.0）：页面据此画空环写
+    「待补」，与既有进度字段同一条渲染纪律。
+    """
+    from storage.nutrition_coverage import nutrition_coverage
+
+    start, end = week_window(now)
+    period = {"start": start.date().isoformat(), "end": end.date().isoformat()}
+    name = str((member or {}).get("name") or "").strip()
+    blank = {
+        "protein": {"value": None, "numerator": 0, "denominator": 0},
+        "staple": {"value": None, "numerator": 0, "denominator": 0},
+        "fat": {"value": None, "numerator": 0, "denominator": 0},
+        "produce": {"value": None, "numerator": 0, "denominator": 0},
+        "meals": 0,
+        "period": period,
+    }
+    if not name:
+        return blank
+
+    rows = read_meals() if meals is None else meals
+    mine = _member_window_meals(name, rows, start)
+    if not mine:
+        return blank
+
+    result = nutrition_coverage(mine, name)
+    result["period"] = period
+    return result
+
+
+@router.get("/reports/nutrition-coverage")
+def nutrition_coverage_report(name: str = ""):
+    """本周四维营养覆盖度。`name` 缺省 → 当前生效成员（与档案页一致）。
+
+    返回结构与 `/reports/member-weekly` 的分支字段同构，便于前端复用同一套
+    「待补」渲染：`value` 为 null 时画空环，不写 0%。
+    """
+    from api.routes.preferences_route import _read_family
+
+    family = _read_family()
+    members = [m for m in (family or {}).get("members") or [] if isinstance(m, dict)]
+    who = str(name or "").strip()
+    if not who:
+        active_id = (family or {}).get("active_id")
+        hit = next((m for m in members if m.get("id") == active_id), None)
+        who = str((hit or {}).get("name") or "").strip()
+        if not who and members:
+            who = str(members[0].get("name") or "").strip()
+    if not who:
+        return member_nutrition_coverage(None)
+
+    target = next(
+        (m for m in members if str(m.get("name") or "").strip() == who), {"name": who}
+    )
+    return member_nutrition_coverage(target)
+
+
 @router.get("/reports/member-weekly")
 def member_weekly_report(name: str = ""):
     """某位成员的近 7 天周报（2026-10-15 新增，多值用餐人配套）。

@@ -585,6 +585,99 @@ export async function fetchMemberWeekly(name: string): Promise<MemberWeeklyRepor
   )
 }
 
+/** 单维覆盖度。`value` 为 null = 分母为 0（本周还没记到该成员的餐），**不是** 0.0。 */
+export interface CoverageDim {
+  value: number | null
+  numerator: number
+  denominator: number
+}
+
+export interface NutritionCoverage {
+  protein: CoverageDim
+  staple: CoverageDim
+  fat: CoverageDim
+  produce: CoverageDim
+  /** 本周该成员已记录的餐数（四个环的分母基数，脂肪那一维另有自己的分母）。 */
+  meals: number
+  period: { start: string; end: string }
+}
+
+/**
+ * 本周四维营养覆盖度（2026-10-18 后端新增，配身体档案页右栏那四个环）。
+ *
+ * 口径是**覆盖度而不是达成率**：`meals.json` 的 `dish` 是自由文本菜名、没有任何
+ * 重量，算不出摄入克数，所以「吃到目标的百分之几」在这个数据面上不存在。四个环
+ * 报的是能被原文证明的事实：本周有几分之一的餐吃到了蛋白源 / 主食 / 蔬果，
+ * 以及脂肪灯为绿的比例（`lights` 里确实有脂肪灯，是唯一能取实值的一维）。
+ *
+ * 不传 `name` 时后端按档案的当前生效成员取，与右栏「当前生效」视角一致。
+ * 与 `/api/reports/*` 这族一样是裸返回，不走 ApiEnvelope。
+ */
+export async function fetchNutritionCoverage(name?: string): Promise<NutritionCoverage> {
+  const q = name ? `?name=${encodeURIComponent(name)}` : ''
+  return jsonRequest<NutritionCoverage>(`/api/reports/nutrition-coverage${q}`)
+}
+
+/** 一条体重记录。`date` 是本地日期 `YYYY-MM-DD`，`weight_kg` 单位 kg。 */
+export interface WeightEntry {
+  date: string
+  weight_kg: number
+}
+
+/**
+ * 某位成员的体重小结。
+ *
+ * `change_kg` **只有至少两条不同日期**的记录时才有值；一条记录时为 `null`，
+ * 不是 `0.0` —— 写 0 会被读成"体重没变"。调用方据 null 显示「记录不足两次」。
+ */
+export interface WeightSummary {
+  member: string
+  latest: WeightEntry | null
+  earliest: WeightEntry | null
+  change_kg: number | null
+  count: number
+  entries: WeightEntry[]
+}
+
+/**
+ * 体重记录（2026-10-18 后端新增，接身体档案页的「记录体重」）。
+ *
+ * 不传 `name` 时一次返回**全家每位成员**的小结 —— 档案页要一次画完所有卡片；
+ * 按人拉 N 次会让同一屏上出现不同时点读到的数据。
+ *
+ * 从没记过体重的成员**也会出现在结果里**（`count: 0` / `latest: null`）：
+ * 它从列表里消失会被读成"这个人不在这个家里"。
+ *
+ * 与 `/api/reports/*` 这族一样是裸返回，不走 ApiEnvelope。
+ */
+export async function fetchWeightLog(name?: string): Promise<Record<string, WeightSummary>> {
+  const q = name ? `?name=${encodeURIComponent(name)}` : ''
+  const res = await jsonRequest<{ by_member: Record<string, WeightSummary> }>(
+    `/api/weight/log${q}`,
+  )
+  return res.by_member ?? {}
+}
+
+/**
+ * 记一条体重。**同一天重复记会覆盖当天那条**（一天量两次不是两个数据点）。
+ *
+ * 返回写入后的该成员小结，调用方可直接拿它刷新界面，不必再拉一次。
+ * 体重超出合理区间 / 日期格式坏 → 后端 400，`jsonRequest` 会把后端的 `detail`
+ * 抛成 Error；调用方应**原样显示那句话**，不要自己另编提示（后端知道它拒了什么）。
+ */
+export async function postWeight(
+  name: string,
+  weightKg: number,
+  date?: string,
+): Promise<WeightSummary> {
+  const res = await jsonRequest<{ ok: boolean; summary: WeightSummary }>('/api/weight/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, weight_kg: weightKg, ...(date ? { date } : {}) }),
+  })
+  return res.summary
+}
+
 export interface WeeklySummaryResponse {
   ai_summary: string | null
   reason?: string

@@ -302,13 +302,19 @@ def clear_session(sid):
 
 
 def delete_message(sid, msg_id):
-    """删除单一条问答记录。"""
+    """删除单一条问答记录，返回删完之后这个会话还剩几条。
+
+    2026-10-19：返回值是给"失败轮不留痕"用的——调用方要知道自己是不是刚把
+    这个会话删空了（空会话也该一起收掉，否则历史里会留下一个以失败那一问为
+    标题的空对话，那是另一种形式的假记录）。原来的调用方不读返回值，不受影响。
+    """
     with _lock:
         data = _read_session(sid)
         if data is None:
-            return
+            return 0
         data["messages"] = [m for m in data["messages"] if m["id"] != msg_id]
         _write_session(data)
+        return len(data["messages"])
 
 
 def rename_session(sid, title):

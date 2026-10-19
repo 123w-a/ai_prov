@@ -727,6 +727,10 @@ export default function TonightApp() {
           cand={cand}
           fridge={fridgeBox}
           readErr={firstScreenError}
+          /* 失败块的「再试一次」（2026-10-19）：重发这一轮**原本发出去的正文**
+             （run.request），不是输入框现值——用户失败后往往已经把输入框改了，
+             拿现值重发等于替他问了另一句话。send 内部会重新置 running 并起新流。 */
+          onRetry={() => void send(run.request)}
           /* 本餐用餐人（2026-10-15）：值 + 三个动作打包成一个对象。
              只在成员真的读出来、且至少有一位时才给——成员读不出来时给 null，
              AskView 那边就不设关卡（读不到人不能把首屏整个锁死）。
@@ -773,12 +777,12 @@ export default function TonightApp() {
           blocked={blocked}
           onPickCandidate={(t) => void send(t)}
           onRequestImage={requestImage}
-          /* 候选页右栏那三块（第 F 项）：与首屏读**同一份**已算好的数据，
-             不重新拉接口——两处若各拉一次，"首屏说的人"和"候选页说的人"
-             会在档案刚改过的那一瞬间不一致。cand 不传：待确认块是首屏专属。 */
+          /* 候选页右栏那块「匹配的饮食档案」（第 F 项）：与首屏读**同一份**已算好的
+             数据，不重新拉接口——两处若各拉一次，"首屏说的人"和"候选页说的人"
+             会在档案刚改过的那一瞬间不一致。cand 不传：待确认块是首屏专属。
+             2026-10-19 用户裁决：候选页右栏不再要「本周已做过」「冰箱现有食材」，
+             所以 week / fridgeBox 只传给首屏 AskView，不再流进结果页。 */
           fam={fam}
-          week={week}
-          fridge={fridgeBox}
           readErr={firstScreenError}
         />
       )}

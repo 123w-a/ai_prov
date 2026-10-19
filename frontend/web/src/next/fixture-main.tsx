@@ -274,12 +274,11 @@ function mount() {
             /* 配图入口：夹具不接后端，空实现保证点击零副作用——只用来验
                「菜名右侧出现、按有图/没图换标签、有落点才显示」这三件。 */
             onRequestImage={() => {}}
-            /* 候选页右栏那三块（第 F 项）。与首屏同源：rail 里那份就是首屏用例
-               用的同一份数据，用来验证"同一份数据在两个语境下换标题"。
+            /* 候选页右栏那块「匹配的饮食档案」（第 F 项）。与首屏同源：rail 里那份
+               就是首屏用例用的同一份数据。2026-10-19 之后结果页右栏只收 fam
+               （本周 / 冰箱是首屏的背景信息，结果页不再显示），故这里不再透传那两块。
                非候选轮的 result 用例给了也不会渲染——右栏只在候选分支里出现。 */
             fam={current.rail?.fam ?? null}
-            week={current.rail?.week ?? null}
-            fridge={current.rail?.fridge ?? null}
           />
         ) : (
           <WaitCard run={current.run} onCancel={() => {}} onRestart={() => {}} />

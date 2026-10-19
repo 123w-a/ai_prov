@@ -560,25 +560,6 @@
   color: var(--ink-faint);
 }
 
-.wk-card-sum {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin: 0;
-}
-
-.wk-sum.is-g {
-  color: var(--green);
-}
-
-.wk-sum.is-y {
-  color: var(--yellow);
-}
-
-.wk-sum.is-r {
-  color: var(--red);
-}
-
 /* 卡 1 的大数字：整页最大的字，角色就是"一眼看到这周吃了几顿"。 */
 .wk-big {
   display: flex;
@@ -604,36 +585,76 @@
   color: var(--ink-soft);
 }
 
-/* 卡 2：点阵 + 右侧图例。点阵换行铺满，图例固定窄列。 */
-.wk-card-lights {
+/* 卡 2 比例条（2026-10-19 重做，用户判旧点阵"不好看"）：
+   一餐一格、段间 2px 缝、**长度即比例**。
+
+   · 高度 12px：与 15px 正文同量级——比进度条轻，又足够看清颜色；
+   · 每段 flex:1 1 0：格宽随卡宽均分，19 格时约 15px、40 格时自动变窄但**不换行**。
+     旧版是 13px 径的圆点 + 固定 9px 间隙，餐数一多就折行且末行残缺（11+8），
+     比例因此读不出来；
+   · 圆角 2px：小段上只有 2px 才看得出圆角，给大了就退回"药丸糖豆"的形态，
+     那正是这次被否掉的样子。 */
+.wk-meter {
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
+  gap: 2px;
+  margin: 2px 0 0;
+  height: 12px;
 }
 
-.wk-card-lights .wk-pips {
-  flex: 1;
-  min-width: 0;
+.wk-meter-cell {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 2px;
 }
 
-.wk-card-legend {
-  flex: 0 0 auto;
-}
+.wk-meter-cell[data-c='g'] { background: var(--green); }
+.wk-meter-cell[data-c='y'] { background: var(--yellow); }
+.wk-meter-cell[data-c='r'] { background: var(--red); }
 
-.wk-legend {
-  list-style: none;
-  margin: 6px 0 0;
+/* 条下的一行读数：色块 + 名称 + 数字。
+   名称是注记（--fs-note / --ink-soft），数字是读数（等宽 + tabular-nums + 档色）。
+   色块单独 align-self:center，其余按 baseline 对齐——否则中文名与数字会错半行。 */
+.wk-meter-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 12px 0 0;
   padding: 0;
+  list-style: none;
 }
 
-.wk-legend li {
+.wk-meter-key li {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 0;
+  align-items: baseline;
+  gap: 6px;
   font-size: var(--fs-note);
   color: var(--ink-soft);
 }
+
+.wk-meter-key i {
+  flex: none;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.wk-meter-key li[data-c='g'] i { background: var(--green); }
+.wk-meter-key li[data-c='y'] i { background: var(--yellow); }
+.wk-meter-key li[data-c='r'] i { background: var(--red); }
+
+/* 数字是这张卡的读数，字号给 17px：比正文（15px）大一档才压得住上面那条色带，
+   但不到「大数字」档（38px，那是卡 1 的餐次），两张卡的层级不会打架。 */
+.wk-meter-key b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.wk-meter-key li[data-c='g'] b { color: var(--green); }
+.wk-meter-key li[data-c='y'] b { color: var(--yellow); }
+.wk-meter-key li[data-c='r'] b { color: var(--red); }
 
 /* 卡 5：折线给一个固定高度区，免得不同数据量把它撑成不同高，
    三列网格的基线就会跟着抖。 */

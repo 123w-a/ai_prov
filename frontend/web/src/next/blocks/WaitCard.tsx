@@ -1,6 +1,7 @@
 import type { RunState } from '../data/model.ts'
 import { familyFacts, familyTiles, sharedDislike, useHousehold } from '../data/household.ts'
 import { benchLine, connLine } from '../data/waitLines.ts'
+import { readRunError } from '../data/runError.ts'
 import { WaitFacts } from './WaitFacts.tsx'
 import { WaitDetail } from './WaitDetail.tsx'
 import { WaitStream } from './WaitStream.tsx'
@@ -105,7 +106,9 @@ export function WaitCard({
         </p>
       )}
 
-      {run.error && <p className="wait-error">{run.error}</p>}
+      {/* running 中断时也可能带 error。这里只印主句（中文），原文留在首屏失败块里
+          的折叠中——等待页是"还在跑"的语境，塞一段上游英文原文只会打断它。 */}
+      {run.error && <p className="wait-error">{readRunError(run.error).title}</p>}
 
       {/* 顺序照稿：记录 → 过程稿 → 出口。 */}
       <WaitDetail run={run} />

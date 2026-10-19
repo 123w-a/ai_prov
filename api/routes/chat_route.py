@@ -1610,6 +1610,10 @@ async def chat(
         saved_flag = [False]  # 兜底落库幂等标记
         consumer_persisted = threading.Event()
         _img_lock = threading.Lock()
+        # 这一轮是不是被异常打断的（None = 正常走完或客户端自己断开）。
+        # 只认 Agent 主链抛出来的异常：客户端断开（GeneratorExit）不写在这里，
+        # 那种情况的历史语义是"中断"，已有 mark_message_cancelled 负责。
+        failure = [None]
 
         def _persist_once():
             """把入口预落的 __pending__ 记录更新为最终态（幂等）。
@@ -1650,6 +1654,29 @@ async def chat(
                 except Exception:
                     pass
             if not (answer and answer.strip()):
+                # 2026-10-19 失败轮不留痕（用户批准）：这一轮是被异常打断、
+                # 且一个字正文都没产出时，入口预落的 __pending__ 记录直接删掉。
+                # 以前这里会写成「（本轮没有生成可展示的回答，请再试一次。）」，
+                # 于是历史里多出一条"有答案"的假记录——用户当时在界面上已经看到
+                # 失败说明了，回头再看到一条假答案，等于替这顿饭编了个结论。
+                # 只在 failure 有值时才删：客户端自己断开（中断）仍按原语义保留记录。
+                if failure[0] is not None and pending_rec_id is not None:
+                    try:
+                        from storage.sessions import delete_message, delete_session
+
+                        left = delete_message(session_id, pending_rec_id)
+                        # 删空了就把会话壳一起收掉：否则历史里留下一个以那次失败提问
+                        # 为标题的空对话（append_message 在会话不存在时会自动重建，
+                        # 前端下一轮照常能写进来）。
+                        if left == 0:
+                            delete_session(session_id)
+                        print(
+                            f"[persist] dropped failed turn sid={session_id} "
+                            f"rec={pending_rec_id} left={left} why={type(failure[0]).__name__}"
+                        )
+                    except Exception:
+                        pass
+                    return
                 answer = "（本轮没有生成可展示的回答，请再试一次。）"
             if _is_image_cancelled(session_id, turn_id):
                 if pending_rec_id is not None:
@@ -2071,6 +2098,9 @@ async def chat(
             _persist_once()
             consumer_persisted.set()
         except Exception as exc:
+            # 记下来给落库分支判定"失败轮不留痕"。只记异常、不改异常本身的处理：
+            # 前端仍要收到这条 error 帧（它据此显示中文失败说明与「再试一次」）。
+            failure[0] = exc
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
             return
         finally:

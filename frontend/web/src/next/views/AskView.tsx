@@ -5,6 +5,7 @@ import { leadBodyPhrase } from '../data/viewModel.ts'
 import { AskRail } from '../blocks/AskRail.tsx'
 import { AskComposer } from '../blocks/AskComposer.tsx'
 import { MealCrewPick } from '../blocks/MealCrewPick.tsx'
+import { FailureNote } from '../blocks/FailureNote.tsx'
 import { OpenNearby } from '../blocks/OpenNearby.tsx'
 
 /**
@@ -75,6 +76,7 @@ export function AskView({
   fridge,
   readErr = null,
   crew,
+  onRetry,
 }: {
   run: RunState
   text: string
@@ -106,6 +108,10 @@ export function AskView({
     onConfirm: () => void
     onEdit: () => void
   } | null
+  /** 失败块的「再试一次」：把这一轮原本的话重发一遍（run.request）。
+   *  实现在 app 层（它才持有 send 与请求上下文），这里只接一个回调。
+   *  不传 = 只显示说明与原文——夹具与只读场景用得上。 */
+  onRetry?: () => void
 }) {
   /* 附近餐厅是否展开。它只影响**示例卡在与不在**这一件事：
      展开时示例卡就地让位（同一位置互换），收起时原样回来——
@@ -118,19 +124,7 @@ export function AskView({
 
   return (
     <section className="starter">
-      {run.status === 'failed' && (
-        <div className="failure">
-          <strong>这一轮没有成功</strong>
-          <p>{run.error}</p>
-          {run.httpStatus !== undefined && <p className="mono">HTTP {run.httpStatus}</p>}
-          {run.body && (
-            <details className="failure-partial">
-              <summary>查看已经收到的部分内容（可能不完整）</summary>
-              <pre>{run.body}</pre>
-            </details>
-          )}
-        </div>
-      )}
+      {run.status === 'failed' && <FailureNote run={run} onRetry={onRetry} />}
 
       {/* 2026-09-27 用户裁决：首屏从「标题→输入→按钮→脚注」的纯垂直堆叠
           改成左右两栏，右栏放身份确认。主因是布局（lave 与我一致：元素太少

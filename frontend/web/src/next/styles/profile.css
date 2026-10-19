@@ -707,47 +707,63 @@
   white-space: nowrap;
 }
 
-/* ── 成员卡内的「目标与进度」（稿条长 162 稿 px、轨道 y 居中在数值行）── */
-.pf-goal-list {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
+/* ── 成员卡内的「记录体重」（2026-10-18 新增）──
+   与刚删掉的「目标与进度」正好相反：那个没有采集入口、后端永远算不出，所以整块拿掉；
+   这个有入口，所以要留着，并且把入口做到看得见（一块虚线上边与卡片其余部分分开，
+   避免被读成又一个只读数值行）。 */
+.pf-weight {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.pf-weight-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.pf-goal-item {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) 40px;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.pf-goal-k {
+.pf-weight-in {
+  width: 84px;
+  padding: 5px 8px;
+  font-family: var(--mono);
   font-size: var(--fs-data, 13.5px);
   color: var(--ink);
-  line-height: 1.3;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 4px);
 }
 
-/* 百分比位：后端没有这个数，所以只有中性占位，右对齐到与数值列同一条基线。 */
-.pf-goal-v {
+.pf-weight-day {
+  padding: 5px 8px;
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 4px);
+}
+
+.pf-weight-in:focus-visible,
+.pf-weight-day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 空态与状态提示用正文字色一档比一档弱：hint 是"下一步做什么"，
+   msg 是"刚才那次操作的结果"，后者比前者更该被看见。 */
+.pf-weight-hint {
+  margin: 8px 0 0;
   font-size: var(--fs-note, 12px);
   color: var(--ink-faint);
-  text-align: right;
-  line-height: 1.3;
+  line-height: 1.45;
 }
 
-/* 进度轨道（稿上轨道底色 #efe4d4 一类的浅驼、填充是 --accent）。
-   这里**只画轨道不画填充**——填充宽度在后端就是"已达成多少"，
-   没有这个数就填一半等于编造进度。 */
-.pf-bar {
-  display: block;
-  height: 6px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  min-width: 0;
+.pf-weight-msg {
+  margin: 4px 0 0;
+  font-size: var(--fs-note, 12px);
+  color: var(--accent-ink);
+  line-height: 1.45;
 }
 
 /* 卡内小注（说明哪几项是占位）。mono 小字，与 .pf-note 同族但更贴卡片。 */
@@ -886,7 +902,11 @@
   border-color: var(--line);
 }
 
-/* ── 右栏「营养目标达成情况」：稿上 2×2 四个圆环（环外径 98 稿 px ≈ 87 CSS）── */
+/* ── 右栏「本周营养覆盖」：稿上 2×2 四个圆环（环外径 98 稿 px ≈ 87 CSS）。
+   2026-10-18 接上 /api/reports/nutrition-coverage 的真数据：环里从此真的有
+   百分比（此前恒为中性占位）。四个维度也由「蛋白质/碳水化合物/脂肪/维生素」
+   改为四维**覆盖度**——原四维的达成率在后端数据面上不存在，见 ProfileView
+   的 COVERAGE_RINGS 注释。 ── */
 .pf-ring-grid {
   list-style: none;
   margin: 0;
@@ -911,15 +931,30 @@
   line-height: 1.3;
 }
 
-/* 环：conic 轨道 + 中心挖空。轨道两端本来带进度色，
-   但进度值后端没有，所以整圈同一档浅驼——它此刻不是"0%"，是"还没接上"。 */
+/* 环下方的分子分母（「14/17 餐」）。必须比维度名更弱：主信息是环里的百分比，
+   这一行只用来让人核对分母。无数据时这里写「本周未记到」，是文字不是数字——
+   所以不套等宽数字字形（与 weekly.css 的「待补」同一条纪律）。 */
+.pf-ring-sub {
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* 环：conic 轨道 + 中心挖空。填充比例由 JSX 以 `--ring-p` 传入（2026-10-18：
+   接上真数据后环必须**跟着动**——此前恒为整圈浅驼，四个不同百分比的环长得一模
+   一样，用户只能读数字，环就是装饰）。
+   未传 `--ring-p`（无数据）→ 回落到 0%，整圈都是轨道色，仍读作"空的"而不是"0%"。 */
 .pf-ring {
   position: relative;
   width: 62px;
   height: 62px;
   border-radius: 50%;
   /* stylelint-disable-next-line -- 与 check-layers 无关：这里引用的是令牌，不是字面色值 */
-  background: conic-gradient(var(--line) 0deg 360deg);
+  background: conic-gradient(
+    var(--accent) 0 var(--ring-p, 0%),
+    var(--line) var(--ring-p, 0%) 360deg
+  );
   display: grid;
   place-items: center;
 }
@@ -972,10 +1007,5 @@
 @media (max-width: 860px) {
   .pf-pair {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pf-goal-item {
-    grid-template-columns: 68px minmax(0, 1fr) 34px;
-    gap: 8px;
   }
 }
