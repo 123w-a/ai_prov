@@ -59,6 +59,11 @@ import './styles/fav.css'
 import './styles/fav-cards.css'
 /* 服务房样式（第 5 步新增）。同理：只定义 .sv-* 新类名，放末层不挪动已有层叠。 */
 import './styles/service.css'
+/* 地图 overlay 样式（2026-10-19 新增）。`.amap-origin-marker` 一族的定义原本只在
+   旧入口 index.css 里，新前端没加载它 ⇒ 定位蓝点是空 div（不可见）、餐厅标记只剩
+   裸数字。本片只定义 .amap-* / .nearby-map-* 这几个类名，不碰 composer.css 里的
+   地图外壳尺寸。夹具台不展开附近餐厅（地图默认收起），故 fixture-main 未同步登记。 */
+import './styles/map.css'
 /* 浮层面板样式（2026-10-01 B 批次①③新增：家庭成员抽屉 + 历史会话侧栏）。
    从 base.css 拆出（base 加完两段越过 1000 行上限）：只定义 .sd-* / .rail-* /
    .tn-railbtn 新类名，与前面所有片选择器不相交，放末层不挪动已有层叠。
@@ -88,6 +93,11 @@ import './styles/profile-fridge.css'
    夹具台（fixture-main）不渲染周报房，不需要同步登记这一行。 */
 import './styles/weekly.css'
 import './styles/atmosphere.css'
+/* 历史会话（2026-10-19 新增）。只定义 .shell-session / .sr-* / .hs-* 三族新类名，
+   与前面所有片的选择器不相交，登记末层（atmosphere 之后）不挪动已有层叠。
+   内容：左栏常驻会话块（SessionRail portal 落点）+ 历史轮次纵向列表 +
+   滚动区/共享书写面/「回到底部」。顺序必须与 main.tsx 里的导入一致。 */
+import './styles/session.css'
 
 import Shell from './app/Shell.tsx'
 import TonightApp from './app/TonightApp.tsx'

@@ -35,22 +35,31 @@ export function WeekGuardCard({
   const fbTags = feedback ? Object.entries(feedback.tags) : []
   return (
     <section className="wk-card is-guard">
-      <CardHead n="4" title="护栏提示" />
+      {/* 编号由 4 改 2（2026-10-19）：三列是独立堆叠的，物理阅读顺序是
+          卡1 → 卡4 → 卡2 → 卡3 → 卡5 → 卡6 → 卡7。原稿编号（1,2,5 / 3,4,6）
+          是"内容标签"，但读者会按编号找顺序，于是视线上下横跳七次。
+          改成按视觉顺序编号，编号与位置一致。 */}
+      <CardHead n="2" title="护栏提示" />
       <ul className="wk-bullets">
         <li>
           {guardrail > 0
             ? `本周触发 ${guardrail} 次饮食禁忌护栏（已避开或已给替换）`
             : '本周没有触发饮食禁忌护栏'}
         </li>
-        {off.map((l) => (
-          <li key={l.nutrient}>
-            {l.nutrient}
-            {l.red > 0 ? ` 有 ${l.red} 顿红灯` : ''}
-            {l.red > 0 && l.yellow > 0 ? '、' : ''}
-            {l.yellow > 0 ? `${l.red > 0 ? '' : ' 有 '}${l.yellow} 顿基本达标` : ''}
-            <span className="wk-bullet-tail">，还没到绿灯</span>
-          </li>
-        ))}
+        {off.map((l) => {
+          /* 「顿」改「道」（2026-10-19）：lights 的计数单位是**菜**——同一顿里
+           * 两道菜都超钠，这里就记 2。而卡 7 数的是"顿"，于是出现
+           * "3 顿红灯 vs 2 顿超标"这种看起来自相矛盾的两组数。
+           * 说清楚单位后，3 道菜 / 2 顿整餐就讲得通了。 */
+          const bits: string[] = []
+          if (l.red > 0) bits.push(`${l.red} 道超标`)
+          if (l.yellow > 0) bits.push(`${l.yellow} 道接近上限`)
+          return (
+            <li key={l.nutrient}>
+              {l.nutrient}：{bits.join('、')}
+            </li>
+          )
+        })}
         {off.length === 0 && lights.length > 0 ? (
           <li>这几项营养本周都到了绿灯</li>
         ) : null}

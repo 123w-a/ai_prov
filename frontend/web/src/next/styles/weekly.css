@@ -940,6 +940,185 @@
   .wk-grid {
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   }
+
+  /* 矩阵卡在窄屏必须跨满整行（2026-10-19 实测 920px）：
+     auto-fit 把它塞进 ~250px 的列里，7 个格子只剩 25px，
+     "周三早"这种格子根本看不出有没有颜色。
+     `display: contents` 拆掉列容器、让卡片直接当 grid 项，才有 grid-column 可跨——
+     卡片间距仍由 .wk-cols 的 gap 给，视觉上不断档。 */
+  .wk-col {
+    display: contents;
+  }
+
+  .wk-card {
+    min-width: 0;
+  }
+
+  .wk-card.is-meals {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── 卡 2 逐顿矩阵（2026-10-19 替换 169 点阵）─────────────────────────────
+   7 天 × 早/午/晚，一格一顿。四种状态用「浅底 + 同色细框 + 符号」表达：
+   符号（✓ / ~ / ! / —）是**第二信息通道**，色觉障碍下仍能分出三档，
+   不是只靠颜色说话。
+   黄/红没有对应的 soft token（tokens.css 只有 --green-soft），就地给值：
+   这两个浅底目前只在本卡用，为它们改全局 tokens 是把局部需求摊给所有房间。 */
+.wk-meal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wk-meal-head .wk-card-k {
+  margin-bottom: 4px;
+}
+
+.wk-meal-range {
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.wk-meal-grid {
+  display: grid;
+  gap: 5px 4px;
+  align-items: center;
+  margin: 10px 0 12px;
+}
+
+.wk-meal-th,
+.wk-meal-side {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.wk-meal-side {
+  text-align: left;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+/* 格子高度 28px：比点阵的 13px 圆点大一倍多，红格才有存在感；
+   再高会把这卡顶到 260px 以上，列 2 就被推长了。 */
+.wk-meal-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: default;
+}
+
+.wk-meal-cell[data-c='green'] {
+  background: var(--green-soft);
+  border-color: #9ec9ad;
+  color: var(--green);
+}
+
+.wk-meal-cell[data-c='yellow'] {
+  background: #f7efd8;
+  border-color: #ddc08a;
+  color: var(--yellow);
+}
+
+.wk-meal-cell[data-c='red'] {
+  background: #f8e2e0;
+  border-color: #d9a09c;
+  color: var(--red);
+}
+
+/* 没记录：虚线空框，与「有记录但没评估」的点线框区分开——
+   两者都不是"吃得差"，但成因不同，混成一个样子就是不诚实。 */
+.wk-meal-cell[data-c='none'] {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  color: var(--ink-faint);
+}
+
+.wk-meal-cell[data-unevaluated='y'] {
+  border-style: dotted;
+  border-color: var(--ink-faint);
+  color: var(--ink-faint);
+}
+
+.wk-meal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  /* 2026-10-19：图例移到矩阵上方，分隔线由 border-top 改 border-bottom。 */
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.wk-meal-legend li[data-c='green'] { color: var(--green); }
+.wk-meal-legend li[data-c='yellow'] { color: var(--yellow); }
+.wk-meal-legend li[data-c='red'] { color: var(--red); }
+.wk-meal-legend li[data-c='none'] { color: var(--ink-faint); }
+
+/* ── 卡 7「本周 N 处超标」────────────────────────────────────────────────
+   左边一条红竖线是唯一强调手段，不再加红底：一张卡里三块红叠一起，
+   红就不值钱了，真正严重的那条反而看不出。 */
+.wk-card.is-over .wk-card-k {
+  margin-bottom: 10px;
+}
+
+.wk-over-item {
+  padding: 10px 0 10px 12px;
+  border-left: 3px solid var(--red);
+  border-bottom: 1px solid var(--line);
+}
+
+.wk-over-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.wk-over-h {
+  margin: 0;
+  font-size: var(--fs-data);
+  color: var(--ink);
+}
+
+.wk-over-h b {
+  font-weight: 500;
+}
+
+.wk-over-h span {
+  color: var(--ink-soft);
+}
+
+.wk-over-v {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--red);
+}
+
+.wk-over-v em {
+  margin-left: 2px;
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+.wk-over-t {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
 }
 
 

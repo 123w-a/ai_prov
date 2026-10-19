@@ -24,6 +24,7 @@ const STAGE_LABEL: Record<StreamStage, string> = {
   generating_image: '生成配图中',
   structuring: '整理结构化',
   switching_model: '切换模型',
+  initializing: '初始化',
 }
 
 /** 一次发送的四种结局。四态必须分明，不许把失败画成空。 */

@@ -17,7 +17,10 @@ import type { ChefAnswer, StreamStage } from '../../types.ts'
  * 任何不在这个集合里的"进度"都不许出现在界面上。
  */
 
-/** 后端 stage 枚举的中文说法。只翻译，不发明。七种一个都不能漏——用 Record 逼穷尽。 */
+/** 后端 stage 枚举的中文说法。只翻译，不发明。八种一个都不能漏——用 Record 逼穷尽。
+ *  `initializing` 是 2026-10-19 实地自测补上的：后端 chat_route.py 一直会发它
+ *  （每轮开场第一拍），此前前端七态里没有 ⇒ 等待页的「当前工位」渲染成
+ *  「正在undefined」约 5 秒（实测），这是融合缺口不是设计。 */
 const STAGE_LABEL: Record<StreamStage, string> = {
   thinking: '思考',
   writing: '撰写',
@@ -26,10 +29,12 @@ const STAGE_LABEL: Record<StreamStage, string> = {
   generating_image: '配图',
   structuring: '整理',
   switching_model: '切换模型',
+  initializing: '初始化',
 }
 
 export function stageLabel(stage: StreamStage): string {
-  return STAGE_LABEL[stage]
+  // 同 stageSentence 的兜底：未知阶段宁可说「处理」，不印 undefined。
+  return (STAGE_LABEL as Record<string, string | undefined>)[stage] ?? '处理'
 }
 
 /**
@@ -57,14 +62,18 @@ const STAGE_PHRASE: Record<StreamStage, string> = {
   generating_image: '准备菜品呈现',
   structuring: '整理成一份能照着做的方案',
   switching_model: '切换处理方式',
+  initializing: '为这顿饭做准备',
 }
 
 export function stageSentence(stage: StreamStage): string {
-  return `正在${STAGE_PHRASE[stage]}`
+  // 兜底是防「正在undefined」：as 记录绕开编译期之后，后端将来再加阶段仍会
+  // 走到这里。宁可说一句中性的「处理这顿饭」，也不印出 undefined。
+  const phrase = (STAGE_PHRASE as Record<string, string | undefined>)[stage] ?? '处理这顿饭'
+  return `正在${phrase}`
 }
 
 export function stagePhrase(stage: StreamStage): string {
-  return STAGE_PHRASE[stage]
+  return (STAGE_PHRASE as Record<string, string | undefined>)[stage] ?? '处理这顿饭'
 }
 
 /** 到达过的真实阶段事件。`at` 是距发送的毫秒数。 */
@@ -126,6 +135,12 @@ export interface RunState {
    */
   restored?: boolean
   /**
+   * true = 这是历史会话里的只读轮次。
+   * 历史记录没有保存当时的流式阶段、用时与动作状态，所以恢复时必须隐藏过程账目、
+   * 收藏/评分、配图入口、重做和输入框；答案本身的展示样式保持不变。
+   */
+  history?: boolean
+  /**
    * 这一轮在后端会话里的落点，由 finish 事件权威给出；★收藏 / 赞 / 踩都靠它定位记录。
    * 只有收到过 finish 的轮才有它——失败/中断轮天然没有，动作条据此整体隐藏（宁可不画，
    * 也不能把动作写到错误的记录上）。
@@ -137,6 +152,19 @@ export interface RunState {
    * 刚跑完的新轮不带它——新记录必然是未收藏/未评分，不用回查。
    */
   archive?: boolean
+  /**
+   * true = 这一轮是「配图 / 换一张图」图片轮，不是新一轮对话。
+   * 图片轮给已有卡片补图，**永远不追加进历史**（它没有自己的问答）；
+   * 卡片归档时用的是原卡的原话与落点，"给X配张图"这句按钮句不会变成历史问题。
+   */
+  imageTurn?: boolean
+  /**
+   * true = 后端已明说「正在整理卡片」（裸 structuring 事件），结构化答案马上就到。
+   * 只由那条裸事件置位——`stage:'structuring'` 更宽（候选轮也会发，而那轮根本不
+   * 出卡），拿它当占位触发源会让候选轮显示「正在整理卡片…」然后永远没有卡
+   * （2026-10-19 实地自测逮到的触发源错位）。
+   */
+  cardPending?: boolean
   /** 正文第一个字符到达的时刻；用来把"开头那段沉默"标出来。 */
   firstTokenAt: number | null
   error: string | null

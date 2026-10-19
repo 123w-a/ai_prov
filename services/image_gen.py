@@ -53,6 +53,10 @@ IMAGE_STRICT_RETRY_MIN_S = int(os.getenv("IMAGE_STRICT_RETRY_MIN_S", "12"))
 # 缓存文件路径：菜名 -> 自家 OSS URL，命中即秒出、零成本
 CACHE_PATH = os.path.join("resources", "dish_image_cache.json")
 CACHE_VERSION = "v4"
+# 缓存容量上限：条目只增不减会让缓存文件无限膨胀，同时这些图会永久占着 OSS 存储、
+# 每天产生流量费。超出上限后按「插入顺序」淘汰最旧的键（dict 在 Python 3.7+ 保序，
+# JSON 也保序），即 FIFO。被淘汰的菜下次请求会重新生图——可接受的代价。
+CACHE_MAX_ENTRIES = int(os.getenv("CHEF_DISH_IMAGE_CACHE_MAX", "400"))
 
 # ============================ 2. 提示词工程（最关键的一环） ============================ #
 # 为什么需要模板：把「红烧肉」这种裸中文菜名直接丢给文生图，效果一般（容易出奇葩构图/暗调）。
@@ -401,9 +405,31 @@ def cached_dish_image(dish_name: str):
     return _find_cached_url(_load_cache(), dish_name)
 
 
+def _prune_cache(cache: dict) -> int:
+    """把缓存裁到 CACHE_MAX_ENTRIES 以内，返回淘汰条数。
+
+    按插入顺序从最旧的开始删（dict 保序），不做真正的 LRU：
+    真 LRU 要在每次命中时写盘记时间戳，对一个「命中即秒出」的高频读路径来说
+    I/O 代价不划算，而这里的目的是防止无限膨胀，FIFO 已经完全够用。
+    """
+    overflow = len(cache) - CACHE_MAX_ENTRIES
+    if overflow <= 0:
+        return 0
+    for key in list(cache.keys())[:overflow]:
+        cache.pop(key, None)
+    return overflow
+
+
 def _save_cache(cache: dict) -> None:
     """把缓存落盘；失败仅打印，不影响主流程（缓存只是降本优化，非必须）。"""
     try:
+        pruned = _prune_cache(cache)
+        if pruned:
+            logger.info(
+                "[image_gen] 菜品图缓存超出上限 %d，淘汰最旧 %d 条",
+                CACHE_MAX_ENTRIES,
+                pruned,
+            )
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)

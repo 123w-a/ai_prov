@@ -1,0 +1,179 @@
+/* 地图 overlay 样式（2026-10-19 新增）。
+ *
+ * 为什么需要这个文件：`components/NearbyRestaurantMap.tsx` 是**新旧共用**的组件，
+ * 但它依赖的 `.amap-origin-marker` / `.amap-restaurant-marker` 一直只定义在
+ * `src/index.css`——那是旧前端的样式入口，新前端（`next/main.tsx`）压根没加载它。
+ *
+ * 后果（2026-10-19 实测截图发现）：
+ *   · 「我的位置」的 content 是个空 div，没有宽高 ⇒ **完全不可见**，用户以为没定位；
+ *   · 餐厅标记只剩 content 里的裸 `<span>1</span>` 文本 ⇒ 地图上是几个孤立数字。
+ *
+ * 本片只定义 `.amap-*` / `.nearby-map-*` 这些旧入口里已有的类名，不覆盖
+ * `composer.css` 里那两条 `.nearby-map-shell/.nearby-map-canvas`（地图外壳尺寸归它们管）。
+ */
+
+/* ── 我的位置 ────────────────────────────────────────────────────────
+ * 参照高德 App 的定位蓝点：白描边 + 实心蓝 + 外圈半透明光晕。
+ * 尺寸写 20px 且归入 border-box，Marker 那边的 offset 是 (-10,-10)，正好中心对准坐标；
+ * 改这里必须同步改 offset，否则蓝点会偏半个身位。
+ * 光晕用 ::after 往外铺 7px：map 容器不裁剪 overlay，不会被切掉。 */
+.amap-origin-marker {
+  box-sizing: border-box;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--seal-ink);
+  border-radius: 50%;
+  background: var(--map-origin);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--map-origin) 45%, transparent);
+}
+
+.amap-origin-marker::after {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--map-origin) 16%, transparent);
+  content: '';
+  animation: amap-origin-pulse 2.4s ease-out infinite;
+}
+
+/* 呼吸感：让"这是我"比静止圆点更容易一眼找到。幅度只到 1.35，不做夸张扩散。 */
+@keyframes amap-origin-pulse {
+  0% { opacity: 0.9; transform: scale(0.75); }
+  70% { opacity: 0.25; transform: scale(1.35); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amap-origin-marker::after { animation: none; opacity: 0.5; }
+}
+
+/* ── 餐厅标记 ────────────────────────────────────────────────────────
+ * 水滴形（左下角切平），底部尖端对准坐标，故 offset 是 (-17,-38)。 */
+.amap-restaurant-marker {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 38px;
+  place-items: center;
+  color: var(--seal-ink);
+  filter: drop-shadow(0 3px 4px color-mix(in srgb, var(--seal) 28%, transparent));
+}
+
+.amap-restaurant-marker::before {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--seal-ink);
+  border-radius: 50% 50% 50% 8px;
+  background: var(--seal);
+  content: '';
+  transform: rotate(-45deg);
+}
+
+.amap-restaurant-marker span {
+  position: relative;
+  z-index: 1;
+  margin-top: -7px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* ── 地图内的状态文案（加载中 / 不可用）──────────────────────────────── */
+.nearby-map-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  font-size: var(--fs-note, 12.5px);
+  color: var(--ink-faint);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ── 图例与选中卡（新前端目前两处都传 showLegend/showSelection=false，
+ *    这里先补齐：服务房以后把地图接成全屏工具时会用到，省得再踩一次样式缺失）。 */
+.nearby-map-legend {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 9px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+
+.nearby-map-legend button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nearby-map-legend button.active {
+  border-color: var(--seal);
+  color: var(--seal);
+}
+
+.nearby-map-legend button span {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--seal);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--seal-ink);
+}
+
+.nearby-map-selection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+
+.nearby-map-number {
+  display: grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--seal);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--seal-ink);
+}
+
+.nearby-map-selection strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.nearby-map-selection small {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.nearby-map-selection a {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--accent);
+  white-space: nowrap;
+}

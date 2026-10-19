@@ -27,6 +27,8 @@ import { rangeLabel, useMemberWeekly, useWeeklyReport } from '../data/firstScree
 import { MemberWeekCards } from '../blocks/MemberWeekCards.tsx'
 import { MemberWeekDrawer } from '../blocks/MemberWeekDrawer.tsx'
 import { WeekMealCount, WeekLights } from '../blocks/WeekStatCards.tsx'
+import { WeekMealGrid } from '../blocks/WeekMealGrid.tsx'
+import { WeekOverCard } from '../blocks/WeekOverCard.tsx'
 import { WeekRateCard } from '../blocks/WeekRateCard.tsx'
 import { WeekDishCard } from '../blocks/WeekDishCard.tsx'
 import { WeekGuardCard, WeekAdviceCard } from '../blocks/WeekTipCards.tsx'
@@ -109,7 +111,16 @@ export default function WeeklyView() {
             <WeekGuardCard guardrail={view.guardrail} lights={view.lights} feedback={view.feedback} />
           </div>
           <div className="wk-col">
-            <WeekLights mealsDetail={view.mealsDetail} />
+            {/* 卡 2 换形态（2026-10-19）：169 点阵 → 7 天 × 早/午/晚 的逐顿矩阵。
+                点阵是"一条记录一个点"，而记录是一道菜一笔，10-13 那 48 个点里
+                18 个是同一道宫保鸡丁，读起来像"吃了 48 顿"。
+                旧点阵（WeekLights）留着不删：后端没给 meal_grid 时（老版本）
+                仍要有东西顶住这个位置，比整块消失诚实。 */}
+            {view.mealGrid ? (
+              <WeekMealGrid grid={view.mealGrid} />
+            ) : (
+              <WeekLights mealsDetail={view.mealsDetail} />
+            )}
             <WeekDishCard
               dishes={view.dishes}
               dishImages={view.dishImages}
@@ -120,6 +131,9 @@ export default function WeeklyView() {
           <div className="wk-col">
             <WeekRateCard rate={view.rate} series={view.rateSeries} prev={view.prev} />
             <WeekAdviceCard recommendations={view.recommendations} />
+            {/* 卡 7（2026-10-19）：只列真的判红的顿。放在列 3 末尾，
+                正好接住这一列底部原来那片空——这一列本来就比列 2 短一截。 */}
+            <WeekOverCard items={view.overList} />
           </div>
         </div>
       </div>

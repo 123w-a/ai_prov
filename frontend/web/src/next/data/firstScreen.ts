@@ -191,6 +191,38 @@ export function familyRows(
 /** 一个营养素的各色计数（green/yellow/red 来自复合键拆分）。 */
 export type LightCounts = Array<{ nutrient: string; green: number; yellow: number; red: number }>
 
+/** 一格 = 一顿。`level: null` 且 records === 0 才是"没记录"，records > 0 是"记了没评估"。 */
+export type MealCell = {
+  level: 'green' | 'yellow' | 'red' | null
+  records: number
+  dishes: string[]
+  bad: Array<{ dish: string; nutrient: string }>
+}
+
+/** 7 天 × 早/午/晚 的逐顿矩阵（后端 `settle_meals`）。 */
+export type MealGrid = {
+  range: [string, string]
+  slots: string[]
+  days: Array<{ date: string; weekday: string; isToday: boolean }>
+  cells: MealCell[][]
+  legend: { green: number; yellow: number; red: number; none: number }
+  total: number
+  /** 被裁掉的"今天"日期（当天完全无记录时才裁）；null = 没裁。 */
+  droppedToday: string | null
+}
+
+/** 「本周 N 处超标」的一条：一顿 + 该顿里真的判红的菜与营养素。 */
+export type OverItem = {
+  date: string
+  weekday: string
+  slot: string
+  records: number
+  dishes: string[]
+  bad: Array<{ dish: string; nutrient: string }>
+  nutrients: string[]
+  advice: string
+}
+
 export type WeekView =
   | { isEmpty: true; message: string }
   | {
@@ -282,6 +314,16 @@ export type WeekView =
        * 上一周同期整户。`null` 表示后端没给这个键（空周）。`rate: null` = 上周零记录。
        */
       prev: { meals: number; onTarget: number; rate: number | null } | null
+      /**
+       * 逐顿矩阵（2026-10-19）：7 天 × 早/午/晚，一格一顿。
+       *
+       * 它替代了原来的 169 点阵卡：点阵是"一条记录一个点"，而记录是一道菜一笔，
+       * 10-13 那 48 个点里 18 个是同一道宫保鸡丁。矩阵先把菜归并成顿。
+       * `null` = 后端没给（旧后端），前端退回不渲染这张卡。
+       */
+      mealGrid: MealGrid | null
+      /** 「本周 N 处超标」清单。空数组 = 这周没有红灯，那张卡不渲染。 */
+      overList: OverItem[]
     }
 
 /**
@@ -354,6 +396,33 @@ export function weekView(r: Weekly | null): WeekView | null {
           rate: r.prev.rate ?? null,
         }
       : null,
+    // 逐顿矩阵（2026-10-19）。缺字段的老后端 ⇒ mealGrid 为 null，卡片直接不渲染，
+    // 不拿 mealsDetail 在前端拼一个替代品：那会是第二套"怎么算一顿"的实现。
+    mealGrid: r.meal_grid
+      ? {
+          range: r.meal_grid.range,
+          slots: r.meal_grid.slots ?? [],
+          days: (r.meal_grid.days ?? []).map((d) => ({
+            date: d.date,
+            weekday: d.weekday,
+            isToday: d.is_today ?? false,
+          })),
+          cells: r.meal_grid.cells ?? [],
+          legend: r.meal_grid.legend ?? { green: 0, yellow: 0, red: 0, none: 0 },
+          total: r.meal_grid.total ?? 0,
+          droppedToday: r.meal_grid.dropped_today ?? null,
+        }
+      : null,
+    overList: (r.over_list ?? []).map((o) => ({
+      date: o.date,
+      weekday: o.weekday,
+      slot: o.slot,
+      records: o.records ?? 0,
+      dishes: o.dishes ?? [],
+      bad: o.bad ?? [],
+      nutrients: o.nutrients ?? [],
+      advice: o.advice ?? '',
+    })),
   }
 }
 

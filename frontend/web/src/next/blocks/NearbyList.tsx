@@ -1,22 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { NearbyResult, NearbyRestaurant } from '../../types'
 import { enterIntent } from '../data/enterToSend.ts'
 
 /**
  * 附近餐厅块（服务房分区二）。
- *
- * 三条诚实线（与 lave 商定的降级矩阵）：
- *   · source / warning 是后端原话，常驻列表上方——现在是 mock 就写模拟，
- *     不把模拟参考餐厅画成真数据；
- *   · amap_configured=false 时写「地图能力未配置」，不画地图或地图占位；
- *   · guardrail 是点单提醒，紧贴餐厅信息展示，不藏进详情。
- * 查询走后端 /api/nearby 的 query 参数，前端不做定位（无 JS Key 也无从画）。
- *
- * 2026-10-12 两处**可选**参数（首屏「出去吃」入口条用），服务房调用点不传、
- * 行为与文案一字不变：
- *   · emptyText —— 无结果时那句话由调用方给（首屏要「这一带没查到，换个词试试」）；
- *   · navUrl    —— 给一家店生成高德外链（没坐标返回 null，此时不渲染链接，
- *                  **不编一个假的 href**）。导航仍是外链，页面里不画地图。
+ * source / warning / guardrail 均按后端原话展示；没有坐标就不生成导航链接。
+ * 首屏可额外传入空结果文案、导航外链和地图选中联动，服务房调用保持原行为。
  */
 export function NearbyList({
   nb,
@@ -26,6 +15,8 @@ export function NearbyList({
   onRetry,
   emptyText,
   navUrl,
+  selectedIndex,
+  onSelect,
 }: {
   nb: NearbyResult | null
   loading: boolean
@@ -36,8 +27,17 @@ export function NearbyList({
   emptyText?: string
   /** 由调用方算好的导航外链（它才知道有没有起点坐标）。返回 null = 这家不给链接。 */
   navUrl?: (r: NearbyRestaurant) => string | null
+  /** 与地图 marker 联动的选中项；不传时保持原列表行为。 */
+  selectedIndex?: number | null
+  onSelect?: (index: number) => void
 }) {
   const [q, setQ] = useState('')
+  const itemRefs = useRef<Array<HTMLLIElement | null>>([])
+
+  useEffect(() => {
+    if (selectedIndex == null) return
+    itemRefs.current[selectedIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [selectedIndex])
 
   return (
     <>
@@ -47,10 +47,7 @@ export function NearbyList({
           e.preventDefault()
           onSearch(q.trim())
         }}
-        /* Enter = 查询（用户原话：「按一下 enter 键就应该要开始了」）。判定复用
-           data/enterToSend.ts，与今晚房、身体档案房同一份；'newline'/'ignore' 放行不拦
-           （输入法拼字回车在这里尤其危险：那是选词确认，不等于"我要查这一家"）。
-           拦下后走 requestSubmit——本表单现成的 onSubmit，查询中或空词不提交。 */
+        /* Enter 走统一的 enterToSend 判定，避开输入法选词回车。 */
         onKeyDown={(e) => {
           if (enterIntent(e.nativeEvent) !== 'send') return
           e.preventDefault()
@@ -98,8 +95,31 @@ export function NearbyList({
           {nb.restaurants.map((r, i) => {
             const href = navUrl ? navUrl(r) : null
             return (
-              <li key={`${r.name}-${i}`}>
+              <li
+                key={`${r.name}-${i}`}
+                ref={(node) => {
+                  itemRefs.current[i] = node
+                }}
+                className={selectedIndex === i ? 'is-selected' : undefined}
+                role={onSelect ? 'button' : undefined}
+                tabIndex={onSelect ? 0 : undefined}
+                onClick={onSelect ? () => onSelect(i) : undefined}
+                onKeyDown={
+                  onSelect
+                    ? (event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return
+                        event.preventDefault()
+                        onSelect(i)
+                      }
+                    : undefined
+                }
+              >
                 <div className="sv-rest-h">
+                  {selectedIndex != null && (
+                    <span className="sv-rest-no" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                  )}
                   <span className="sv-rest-name">{r.name}</span>
                   <span className="sv-rest-meta">
                     {r.cuisine}

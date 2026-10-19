@@ -1,5 +1,10 @@
 import { useCallback, useState } from 'react'
-import { fetchNearby, resolveLocation } from '../../api/client.ts'
+import {
+  fetchNearby,
+  fetchNearbyMap,
+  resolveLocation,
+  type NearbyMapResult,
+} from '../../api/client.ts'
 import type { NearbyResult } from '../../types.ts'
 import { wgs84ToGcj02 } from '../../utils/nearbyNavigation.ts'
 import {
@@ -33,12 +38,16 @@ export function useNearbySearch(draft: string) {
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [locating, setLocating] = useState(false)
+  const [mapData, setMapData] = useState<NearbyMapResult | null>(null)
+  const [mapError, setMapError] = useState<string | null>(null)
   /** 已拿到的坐标（GCJ-02）。空串 = 没定位，此时只按关键词查。 */
   const [origin, setOrigin] = useState('')
 
   const load = useCallback((keyword: string, location: string) => {
     setLoading(true)
     setError(null)
+    setMapData(null)
+    setMapError(null)
     /* 不带 query 也不带 location ⇒ 后端走它自己的默认查询（服务房一直这么用）。
        这里**不编一个"中性词"**去凑 query。 */
     const params = location
@@ -46,9 +55,17 @@ export function useNearbySearch(draft: string) {
       : keyword.length > 0
         ? { query: keyword }
         : undefined
-    return fetchNearby(params)
-      .then((r) => setNb(r))
-      .catch((e) => setError(errText(e)))
+    return Promise.allSettled([
+      fetchNearby(params)
+        .then((r) => setNb(r))
+        .catch((e) => setError(errText(e))),
+      fetchNearbyMap(params)
+        .then((r) => setMapData(r))
+        .catch((e) => {
+          setMapData(null)
+          setMapError(errText(e))
+        }),
+    ])
       .finally(() => setLoading(false))
   }, [])
 
@@ -101,5 +118,17 @@ export function useNearbySearch(draft: string) {
     )
   }, [draft, load])
 
-  return { nb, loading, error, note, locating, origin, searchByKeyword, retry, useMyLocation }
+  return {
+    nb,
+    mapData,
+    mapError,
+    loading,
+    error,
+    note,
+    locating,
+    origin,
+    searchByKeyword,
+    retry,
+    useMyLocation,
+  }
 }

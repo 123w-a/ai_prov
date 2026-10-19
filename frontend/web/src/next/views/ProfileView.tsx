@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import type { MemberInput } from '../../api/client.ts'
-import { addFridge, setFridge } from '../../api/client.ts'
+import { useEffect, useState } from 'react'
+import type { IntakeTips, MemberInput } from '../../api/client.ts'
+import { addFridge, fetchIntakeTips, setFridge } from '../../api/client.ts'
 import { FridgePhotoButton } from '../blocks/FridgePhotoButton.tsx'
 import { MemberForm } from '../blocks/MemberForm.tsx'
 import { bmiFact, progressLine } from '../data/fieldFacts.ts'
@@ -260,6 +260,27 @@ export function ProfileView({
    * 所以这点重复读不会造成"同一份数据两个值"。
    */
   const { fridge } = useHousehold()
+
+  /* ── 今日饮食建议（2026-10-19 接线）────────────────────────────────────
+   * 后端 `GET /api/reports/intake-tips` 只取最近 6 餐、按**家庭整体**算：
+   * 判据是「黄红灯占该指标样本的比例」，不是趋势——实测钠的黄红占比 61% 时
+   * 三类趋势全是 improving，只看趋势会一言不发（详见 domain/intake_tips.py）。
+   *
+   * 口径与档案无关，所以这里自己拉一次，不占 useHousehold 的那份 family：
+   * 建议看的是「这个家最近吃什么」，不是「当前生效成员是谁」。
+   * 读失败不影响页面其余部分——这块降级成一句说明，档案仍可用。 */
+  const [intake, setIntake] = useState<IntakeTips | null>(null)
+  const [intakeErr, setIntakeErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetchIntakeTips()
+      .then((res) => { if (alive) setIntake(res) })
+      .catch((err) => {
+        if (alive) setIntakeErr(err instanceof Error ? err.message : String(err))
+      })
+    return () => { alive = false }
+  }, [])
 
   /* ── 冰箱的写路径（2026-10-14 接线）──────────────────────────────────
    * 后端早就有 `/fridge/set`（覆盖）与 `/fridge/add`（补货），新版前端此前
@@ -622,20 +643,35 @@ export function ProfileView({
           </ul>
         </section>
 
-        {/* 今日饮食建议：稿上是三条无勾选的要点。后端本页没有"今日建议"字段，
-            所以只保留三条要点槽位的形制，内文为中性占位——绝不编一条看似专业的建议
-            （"多吃优质蛋白"这种话在这里会被当成系统给出的医嘱）。 */}
+        {/* 今日饮食建议：稿上是三条无勾选的要点。内容来自后端按「最近 6 餐的
+            钠/糖/脂肪灯色」算出的确定性建议，每条都能追到一个真实统计量。
+            条数**不补位**——有几条说几条，凑不满三条就只显示两条（凑数等于编造）。 */}
         <section className="pf-rail-card">
           <h3 className="pf-rail-h">今日饮食建议</h3>
-          <ul className="pf-tips">
-            {[0, 1, 2].map((i) => (
-              <li className="pf-tip" key={i}>
-                <span className="pf-tip-dot" aria-hidden="true" />
-                <span className="pf-tip-v">{TODO}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="pf-rail-body">建议内容后端暂未提供，先按稿留出三条的位置。</p>
+          {intake && intake.tips.length > 0 ? (
+            <>
+              <ul className="pf-tips">
+                {intake.tips.map((tip, i) => (
+                  <li className="pf-tip" key={`${tip.kind}-${tip.metric ?? 'x'}-${i}`}>
+                    <span className="pf-tip-dot" aria-hidden="true" />
+                    <span className="pf-tip-v">
+                      {tip.text}
+                      {tip.detail && <span className="pf-tip-detail">{tip.detail}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="pf-rail-body">
+                按最近 {intake.meals} 餐的钠、糖、脂肪统计，全家的账一起算。
+              </p>
+            </>
+          ) : (
+            <p className="pf-rail-body">
+              {intakeErr
+                ? `建议暂时读不出来：${intakeErr}`
+                : '还没有饮食记录——聊一道菜，吃完自动记一笔，这里就有内容了。'}
+            </p>
+          )}
         </section>
 
         {/* 好好吃饭：稿上右栏最下面那一条寄语。它是固定文案（不是数据），照稿落。 */}

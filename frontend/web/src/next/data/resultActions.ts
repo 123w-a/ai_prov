@@ -44,7 +44,11 @@ export function useResultActions(run: RunState): ResultActions {
   const sid = origin?.sessionId
   const recId = origin?.recordId
   const visible =
-    run.status === 'succeeded' && !run.restored && typeof sid === 'string' && typeof recId === 'number'
+    run.status === 'succeeded' &&
+    !run.restored &&
+    !run.history &&
+    typeof sid === 'string' &&
+    typeof recId === 'number'
 
   const [starred, setStarred] = useState(false)
   const [feedback, setFeedback] = useState<RateValue>(null)

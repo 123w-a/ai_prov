@@ -157,7 +157,7 @@ export interface Session {
 
 export type DecisionMode = 'home' | 'dining' | 'health'
 
-export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring' | 'switching_model'
+export type StreamStage = 'thinking' | 'writing' | 'searching' | 'auditing' | 'generating_image' | 'structuring' | 'switching_model' | 'initializing'
 
 export interface ChatMessage {
   id: string
@@ -235,6 +235,54 @@ export interface WeeklyReport {
     member?: string | null
     lights?: Array<{ nutrient: string; level: string }>
     on_target?: boolean
+  }>
+  /**
+   * 逐顿矩阵（2026-10-19 新增，见 reports_route.py 的 `settle_meals`）：
+   * 7 天 × 早/午/晚 = **一格一顿**。
+   *
+   * 为什么要有它：记账是一道菜一笔，营养灯判的是"这一份菜谱的用料"。
+   * 直接拿记录当"餐"，10-13 一天 48 条记录就变成 48 个点（同一道宫保鸡丁 18 次）。
+   * 先把菜归并成顿、一格一顿，才看得出"是哪一顿吃咸了"。
+   *
+   * `cells` 是 3 行 × N 列：行序与 `slots` 对齐，列序与 `days` 对齐。
+   * `level: null` 有**两种**成因，靠 `records` 区分：
+   *   records === 0 → 这一顿**没记录**（不等于没吃）
+   *   records  > 0 → 记了，但没给营养评估
+   * 界面必须区别对待，不许把前者写成"没吃"。
+   */
+  meal_grid?: {
+    range: [string, string]
+    slots: string[]
+    days: Array<{ date: string; weekday: string; is_today: boolean }>
+    cells?: Array<Array<{
+      level: 'green' | 'yellow' | 'red' | null
+      records: number
+      dishes: string[]
+      bad: Array<{ dish: string; nutrient: string }>
+    }>>
+    legend: { green: number; yellow: number; red: number; none: number }
+    total: number
+    /**
+     * 被裁掉的"今天"（只有当天**完全没记录**时才裁，日期形如 `2026-10-19`）。
+     * 裁的理由：滚动窗口跨 8 个日历日，最后一列常常是今天且全空，它把 7 列挤成 8 列。
+     * 前端要据此写一句「今天还没有记录」，不然用户会以为矩阵少画了一天。
+     */
+    dropped_today?: string | null
+  }
+  /**
+   * 「本周 N 处超标」（2026-10-19 新增，见 `_meal_over_list`）：只收真的出现红灯的顿。
+   * 黄灯不进来——黄是"接近上限"，与超标混在一张卡里会让人以为黄也得改。
+   * `advice` 是按营养素给的通用做法，不是针对这道菜的定制建议（记账行里没存做法）。
+   */
+  over_list?: Array<{
+    date: string
+    weekday: string
+    slot: string
+    records: number
+    dishes?: string[]
+    bad?: Array<{ dish: string; nutrient: string }>
+    nutrients?: string[]
+    advice?: string
   }>
   /**
    * 每位成员本周一行摘要（2026-10-15 后端新增，见 `_member_week_rows`）。

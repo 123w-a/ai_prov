@@ -31,6 +31,33 @@ const SETTLED_MS = 15_000
  */
 const BENCH_STALE_MS = 60_000
 
+/** 「已等待」的起步线（旧前端同款阈值：15 秒内不报时，报了也是噪音）。 */
+const WAITED_SHOW_MS = 15_000
+
+/**
+ * 「已等待 Ns」后缀（2026-10-19 从旧前端找回，用户点名要回）。
+ *
+ * 它是**事实**不是进度：说的是"这一轮已经跑了多久"，不是"还剩多少"——
+ * 后者必然编造（整轮时长实测 4~35s 不稳定），前者是页面上真的有钟。
+ * 两处刻意不出现在内文里：
+ *   · writing / structuring 阶段——那时正文/卡片正在到达，页面本身就在动，
+ *     再报秒数只是噪音（旧前端同一道闸）；
+ *   · 取消/失败之后——那一轮的时间已经停了，再说"已等待"是骗人。
+ * 15s 起步与旧前端一致：短轮转瞬即过，报时无益。
+ */
+export function waitedSuffix(run: RunState): string {
+  if (run.orphaned || run.status === 'failed') return ''
+  if (run.currentStage === 'writing' || run.currentStage === 'structuring') return ''
+  if (run.elapsed < WAITED_SHOW_MS) return ''
+  return `已等待 ${Math.floor(run.elapsed / 1000)}s`
+}
+
+/** 把「已等待」接到工位句尾。没有就不加，保持原句逐字不变。 */
+function withWaited(text: string, run: RunState): string {
+  const wait = waitedSuffix(run)
+  return wait ? `${text} · ${wait}` : text
+}
+
 /**
  * 「当前工位」那一行该说什么 —— 等待页唯一会由真实事件驱动变化的文案。
  *
@@ -55,7 +82,7 @@ export function benchLine(run: RunState): { text: string; key: string; quiet: bo
   }
   // 原文案是「已接单」——那是外卖/快递的语言，一个做饭的页面说"接单"是错位的。
   if (!run.currentStage) {
-    return { text: '你的要求已经收到，正在开始', key: 'start', quiet: false }
+    return { text: withWaited('你的要求已经收到，正在开始', run), key: 'start', quiet: false }
   }
   const last = run.events.length > 0 ? run.events[run.events.length - 1].at : 0
   if (run.elapsed - last >= BENCH_STALE_MS) {
@@ -63,12 +90,12 @@ export function benchLine(run: RunState): { text: string; key: string; quiet: bo
     // 那一句确实诚实，但它把"刚才在做核对"这个**我们真的知道的事**一起丢掉了，
     // 用户于是拿不到任何信息。现在改成说清"上一步是什么"+"还没有新的"。
     return {
-      text: `上一步是${stagePhrase(run.currentStage)}，还没有新的进展。`,
+      text: withWaited(`上一步是${stagePhrase(run.currentStage)}，还没有新的进展。`, run),
       key: 'stale',
       quiet: true,
     }
   }
-  return { text: stageSentence(run.currentStage), key: run.currentStage, quiet: false }
+  return { text: withWaited(stageSentence(run.currentStage), run), key: run.currentStage, quiet: false }
 }
 
 /** 底部连接行。心跳只能证明连接，绝不证明工作前进了一格（lave 两席一致点名）。 */

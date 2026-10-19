@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { NearbyRestaurant } from '../types'
-import { buildAmapNavigationUrl, wgs84ToGcj02 } from '../utils/nearbyNavigation'
+import {
+  buildAmapNavigationUrl,
+  wgs84ToGcj02,
+  type CoordinateSystem,
+} from '../utils/nearbyNavigation'
 
 type Coordinate = [number, number]
 
@@ -13,6 +17,7 @@ type AMapInstance = {
   destroy: () => void
   panTo: (position: Coordinate) => void
   remove: (overlays: unknown[]) => void
+  resize: () => void
   setFitView: (overlays?: unknown[], immediately?: boolean, avoid?: number[], maxZoom?: number) => void
 }
 
@@ -34,6 +39,17 @@ type AMapWindow = Window & {
 interface Props {
   restaurants: NearbyRestaurant[]
   origin: string
+  /** 地图中心点；与 origin 使用同一种坐标系。 */
+  center?: string
+  /** 旧页和 ChatArea 传 WGS-84；新版附近餐厅传 GCJ-02。 */
+  coordinateSystem?: CoordinateSystem
+  /** 外部列表控制选中项时使用；不传则沿用组件内部选择。 */
+  selectedIndex?: number
+  onSelectRestaurant?: (index: number) => void
+  variant?: 'default' | 'embedded'
+  showLegend?: boolean
+  showSelection?: boolean
+  emptyMessage?: string
 }
 
 const AMAP_LOADER_ID = 'amap-jsapi-loader'
@@ -88,18 +104,38 @@ const loadAmap = (key: string, securityCode: string): Promise<AMapNamespace> => 
   return amapLoaderPromise
 }
 
-export function NearbyRestaurantMap({ restaurants, origin }: Props) {
+export function NearbyRestaurantMap({
+  restaurants,
+  origin,
+  center = '',
+  coordinateSystem = 'wgs84',
+  selectedIndex: controlledSelectedIndex,
+  onSelectRestaurant,
+  variant = 'default',
+  showLegend = true,
+  showSelection = true,
+  emptyMessage = '当前批次没有可用于地图展示的坐标',
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<AMapInstance | null>(null)
   const amapRef = useRef<AMapNamespace | null>(null)
   const markersRef = useRef<AMapMarker[]>([])
+  const lastSelectionRef = useRef(controlledSelectedIndex ?? 0)
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState('')
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [internalSelectedIndex, setInternalSelectedIndex] = useState(0)
+  const selectedIndex = controlledSelectedIndex ?? internalSelectedIndex
 
   const apiKey = (import.meta.env.VITE_AMAP_JS_KEY as string | undefined)?.trim() ?? ''
   const securityCode = (import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined)?.trim() ?? ''
-  const originCoordinate = useMemo(() => parseCoordinate(wgs84ToGcj02(origin)), [origin])
+  const originCoordinate = useMemo(
+    () => parseCoordinate(coordinateSystem === 'gcj02' ? origin : wgs84ToGcj02(origin)),
+    [origin, coordinateSystem],
+  )
+  const centerCoordinate = useMemo(
+    () => parseCoordinate(coordinateSystem === 'gcj02' ? center : wgs84ToGcj02(center)),
+    [center, coordinateSystem],
+  )
   const validRestaurants = useMemo(
     () => restaurants
       .map((restaurant, sourceIndex) => ({
@@ -110,10 +146,15 @@ export function NearbyRestaurantMap({ restaurants, origin }: Props) {
       .filter((item): item is typeof item & { coordinate: Coordinate } => item.coordinate !== null),
     [restaurants],
   )
+  const initialCenter = useMemo(
+    () => centerCoordinate ?? originCoordinate ?? validRestaurants[0]?.coordinate ?? null,
+    [centerCoordinate, originCoordinate, validRestaurants],
+  )
+  const initialCenterKey = initialCenter ? initialCenter.join(',') : ''
 
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [restaurants])
+    if (controlledSelectedIndex === undefined) setInternalSelectedIndex(0)
+  }, [restaurants, controlledSelectedIndex])
 
   useEffect(() => {
     if (!apiKey || !securityCode) {
@@ -121,23 +162,28 @@ export function NearbyRestaurantMap({ restaurants, origin }: Props) {
       return
     }
     if (!containerRef.current) return
+    if (!initialCenter) {
+      setMapReady(false)
+      setMapError(emptyMessage)
+      return
+    }
 
     let cancelled = false
+    let resizeObserver: ResizeObserver | null = null
+    setMapReady(false)
     void loadAmap(apiKey, securityCode)
       .then((AMap) => {
         if (cancelled || !containerRef.current) return
-        const initialCenter = originCoordinate ?? validRestaurants[0]?.coordinate
-        if (!initialCenter) {
-          setMapError('当前批次没有可用于地图展示的坐标')
-          return
-        }
         amapRef.current = AMap
-        mapRef.current = new AMap.Map(containerRef.current, {
+        const map = new AMap.Map(containerRef.current, {
           center: initialCenter,
           zoom: 15,
           mapStyle: 'amap://styles/normal',
           viewMode: '2D',
         })
+        mapRef.current = map
+        resizeObserver = new ResizeObserver(() => map.resize())
+        resizeObserver.observe(containerRef.current)
         setMapReady(true)
         setMapError('')
       })
@@ -149,12 +195,13 @@ export function NearbyRestaurantMap({ restaurants, origin }: Props) {
 
     return () => {
       cancelled = true
+      resizeObserver?.disconnect()
       mapRef.current?.destroy()
       mapRef.current = null
       amapRef.current = null
       markersRef.current = []
     }
-  }, [apiKey, securityCode])
+  }, [apiKey, securityCode, initialCenterKey, emptyMessage])
 
   useEffect(() => {
     const map = mapRef.current
@@ -171,45 +218,73 @@ export function NearbyRestaurantMap({ restaurants, origin }: Props) {
         position: originCoordinate,
         title: '我的位置',
         zIndex: 120,
-        offset: new AMap.Pixel(-9, -9),
+        /* 与 map.css 的 .amap-origin-marker 对齐：那边是 20×20（border-box），
+           所以偏移取半宽 -10，蓝点中心才落在真实坐标上。改一边必须同步改另一边。 */
+        offset: new AMap.Pixel(-10, -10),
         content: '<div class="amap-origin-marker" aria-label="我的位置"></div>',
       }))
     }
 
-    validRestaurants.forEach((item, markerIndex) => {
+    validRestaurants.forEach((item) => {
       const marker = new AMap.Marker({
         position: item.coordinate,
         title: item.restaurant.name,
         zIndex: 100,
         offset: new AMap.Pixel(-17, -38),
-        content: `<div class="amap-restaurant-marker"><span>${markerIndex + 1}</span></div>`,
+        content: `<div class="amap-restaurant-marker"><span>${item.sourceIndex + 1}</span></div>`,
       })
       marker.on('click', () => {
-        setSelectedIndex(markerIndex)
+        if (controlledSelectedIndex === undefined) {
+          setInternalSelectedIndex(item.sourceIndex)
+        }
+        onSelectRestaurant?.(item.sourceIndex)
+        lastSelectionRef.current = item.sourceIndex
         map.panTo(item.coordinate)
       })
       nextMarkers.push(marker)
     })
 
-    map.add(nextMarkers)
+    if (nextMarkers.length > 0) map.add(nextMarkers)
     markersRef.current = nextMarkers
-    map.setFitView(nextMarkers, false, [54, 54, 54, 54], 17)
-  }, [mapReady, originCoordinate, validRestaurants])
+    if (validRestaurants.length > 0) {
+      map.setFitView(nextMarkers, false, [54, 54, 54, 54], 17)
+    } else if (initialCenter) {
+      map.panTo(initialCenter)
+    }
+  }, [
+    mapReady,
+    originCoordinate,
+    validRestaurants,
+    controlledSelectedIndex,
+    onSelectRestaurant,
+    initialCenter,
+  ])
 
-  const selected = validRestaurants[selectedIndex] ?? validRestaurants[0]
+  useEffect(() => {
+    if (!mapReady || lastSelectionRef.current === selectedIndex) return
+    const target = validRestaurants.find((item) => item.sourceIndex === selectedIndex)
+    if (!target) return
+    lastSelectionRef.current = selectedIndex
+    mapRef.current?.panTo(target.coordinate)
+  }, [mapReady, selectedIndex, validRestaurants])
+
+  const selected =
+    validRestaurants.find((item) => item.sourceIndex === selectedIndex) ?? validRestaurants[0]
   const navigationUrl = selected
-    ? buildAmapNavigationUrl(selected.restaurant, origin)
+    ? buildAmapNavigationUrl(selected.restaurant, origin, undefined, coordinateSystem)
     : null
 
   const focusRestaurant = (index: number) => {
-    const target = validRestaurants[index]
+    const target = validRestaurants.find((item) => item.sourceIndex === index)
     if (!target) return
-    setSelectedIndex(index)
+    if (controlledSelectedIndex === undefined) setInternalSelectedIndex(index)
+    onSelectRestaurant?.(index)
+    lastSelectionRef.current = index
     mapRef.current?.panTo(target.coordinate)
   }
 
   return (
-    <div className="nearby-map-shell">
+    <div className={`nearby-map-shell${variant === 'embedded' ? ' is-embedded' : ''}`}>
       <div
         ref={containerRef}
         className={mapError ? 'nearby-map-canvas unavailable' : 'nearby-map-canvas'}
@@ -218,25 +293,25 @@ export function NearbyRestaurantMap({ restaurants, origin }: Props) {
         {!mapReady && !mapError && <span className="nearby-map-status">地图加载中…</span>}
         {mapError && <span className="nearby-map-status">{mapError}</span>}
       </div>
-      {mapReady && validRestaurants.length > 0 && (
+      {showLegend && mapReady && validRestaurants.length > 0 && (
         <div className="nearby-map-legend" aria-label="地图餐厅标记">
-          {validRestaurants.map((item, index) => (
+          {validRestaurants.map((item) => (
             <button
               type="button"
               key={`${item.restaurant.name}-${item.sourceIndex}`}
-              className={selectedIndex === index ? 'active' : ''}
-              onClick={() => focusRestaurant(index)}
+              className={selectedIndex === item.sourceIndex ? 'active' : ''}
+              onClick={() => focusRestaurant(item.sourceIndex)}
               title={`在地图上查看 ${item.restaurant.name}`}
             >
-              <span>{index + 1}</span>
+              <span>{item.sourceIndex + 1}</span>
               {item.restaurant.name}
             </button>
           ))}
         </div>
       )}
-      {mapReady && selected && (
+      {showSelection && mapReady && selected && (
         <div className="nearby-map-selection" aria-live="polite">
-          <span className="nearby-map-number">{selectedIndex + 1}</span>
+          <span className="nearby-map-number">{selected.sourceIndex + 1}</span>
           <div>
             <strong>{selected.restaurant.name}</strong>
             <small>

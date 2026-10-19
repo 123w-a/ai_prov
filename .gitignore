@@ -82,8 +82,10 @@ kb/chroma/
 kb_corpus_chroma/
 resources/cleaned_preview/
 *.sqlite3
-*.bak
-*.bak_*
+# 编辑备份统一用 `*.bak*`：旧的 `*.bak` / `*.bak_*` 匹配不到带日期后缀的变体
+# （`.bak-20261018`、`.bak2-20261018`、`.bak-day-20261019-142305`、`.bak7-…-wps原版`），
+# 那些备份会一直以"未跟踪"身份躺在 git status 里，一次 `git add -A` 就整批入库。
+*.bak*
 
 # 本地模型缓存（HuggingFace 下载，体积大，可重建，不入库）
 .hf_cache/
