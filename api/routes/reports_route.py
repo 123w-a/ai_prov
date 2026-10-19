@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from api.routes.fridge_route import _PANTRY_LOG, get_fridge
+from domain.intake_tips import build_intake_tips
 from storage.meal_attribution import (
     MEALS_PATH,
     attribution_stats,
@@ -447,6 +448,24 @@ def _week_rate_series(data: list[dict], now: datetime | None = None, weeks: int 
     return out
 
 
+@router.get("/reports/intake-tips")
+def intake_tips():
+    """按最近几餐的成分摄入水平给出饮食建议（确定性，不调 LLM）。
+
+    供「身体档案」右栏的「今日饮食建议」使用。口径是**家庭整体最近 N 餐**，
+    不分成员——成员归属覆盖率仍很低（实测 meals.json 443 条里只有 6 条带
+    `member`/`members`），按人筛会只剩个位数样本、永远出不了方向性结论。
+
+    `domain/intake_tips.py` 里的纯函数只取最近 6 餐（测试阶段刻意收窄）：
+    判据是「黄红灯占该指标样本的比例」，不是趋势——实测钠的黄红占比 61% 时
+    三类趋势全是 `improving`，只看趋势会一言不发。
+
+    裸返回（与 `/reports/*` 这族一致，不套 ApiEnvelope）：
+    没有数据时返回 `basis: "insufficient"` + 一句诚实说明，不是错误码。
+    """
+    return build_intake_tips(read_meals())
+
+
 @router.get("/reports/weekly")
 def weekly_report():
     """近 7 天聚合：餐数、菜品 Top、红绿灯计数、护栏触发次数。空数据返回诚实提示。"""
@@ -469,6 +488,8 @@ def weekly_report():
     dishes = Counter(m["dish"] for m in recent if m.get("dish"))
     lights = Counter(l for m in recent for l in m.get("lights", []))
     top = dishes.most_common(5)
+    # 21 格矩阵：窗口与 `recent` 完全同源（同一个 since/now），不另起一把尺子。
+    _grid = settle_meals(recent, since.date(), now.date(), today=now.date())
     return {
         "has_data": True,
         "meals": len(recent),
@@ -478,6 +499,12 @@ def weekly_report():
         # top_dishes 有多处消费者（agent_tools / 旧周报页 / ChatArea / next 周报页），
         # 把它的类型从"计数"改成"列表"等于四处一起改契约。
         "meals_detail": _meals_detail(recent),
+        # 逐顿矩阵（2026-10-19）：把记录归并成「顿」，排成 7 天 × 早/午/晚 的 21 格。
+        # 与 meals_detail **并行**给出、不改它的结构——卡 3 的逐条展开仍在用明细，
+        # 矩阵只是给卡 2 换了一个"按顿看"的入口。口径见 settle_meals。
+        "meal_grid": _grid,
+        # 「本周 N 处超标」清单（设计稿第二张卡）：只收真的出现红灯的顿。
+        "over_list": _meal_over_list(_grid),
         "top_dishes": top,
         # 2026-10-10 周报方向稿（用户第 3 条「要数据真实」）：趋势图与菜品配图
         # 都要有真数据来源。两个新字段与 top_dishes **并行**给出，不改它的结构——
@@ -556,6 +583,216 @@ def _meals_detail(recent: list[dict]) -> list[dict]:
             "on_target": is_meal_on_target(m.get("lights")),
         })
     return rows
+
+
+# ------------------------------------------------ 逐顿矩阵（2026-10-19 新增）
+# 用户口径：「营养达标情况应该按周算，不该按餐算」，并给了设计稿：
+# 7 天 × 早/午/晚 = 21 格，**一格一顿**。
+#
+# 为什么既不是「按菜」也不是「按记录」：记账是一条菜写一笔（`record_meal` 每菜一笔），
+# 而营养灯是模型看**这一份菜谱的用料**判的。直接拿记录当"餐"，一天 48 条记录就变成
+# 48 个点（实测 10-13 正是如此，其中「宫保鸡丁（无花生·家庭减钠版）」重复 18 次）。
+# 先把「菜」归并成「顿」，一格一顿，才既符合人的直觉、又不丢"哪一顿出了问题"。
+#
+# 为什么不按「一周摄入总量」判：`meals.json` 只有 7 个字段，没有份量、没有克数、
+# 也没有"是否真吃"（本周 169 条里 ingredients 0 条、amount_g 0 个）。没有份量还算
+# 一周钠总量，得到的是伪精确——与技术报告 5.4「七是」自曝的缺陷同源。
+
+# 归并阈值：相邻两条记录间隔 ≤ 60 分钟算同一顿。
+# 实测本周：30 分钟 → 25 顿（超 21 格）；120 分钟 → 13 顿（把两顿并了）；
+# 60 分钟 → 17 顿，正好落在 21 格里、留 4 个"未记录"，与设计稿的 17/4 一致。
+_MEAL_MERGE_SECONDS = 60 * 60
+
+# 三行固定为 早/午/晚（设计稿）。夜宵不单开第四行——多一行就要重算整套版面，
+# 而本周落在 0–5 点的只有 10-15 那 7 条（本身就是可疑的测试数据）。
+_SLOTS = ("早", "午", "晚")
+
+_LEVEL_RANK = {"green": 0, "yellow": 1, "red": 2}
+
+# 超标那一格的通用处理建议（确定性文案，不经模型）。
+# 只按**营养素**给通用做法，不假装知道这道菜该改哪一勺——`meals.json` 没存做法，
+# 编出"把豆瓣酱减半"这种话就是无据之言。
+_NUTRIENT_ADVICE = {
+    "钠": "下次这道菜少放盐与酱料，或改用清蒸、白灼。",
+    "糖": "少放糖，甜味尽量用食材本味替代。",
+    "脂肪": "换瘦肉部位，并配一份白灼青菜。",
+}
+
+
+def _slot_of_hour(hour: int) -> str:
+    """小时 → 早/午/晚。0–5 点并入「晚」（夜宵），不单开一行。"""
+    if 5 <= hour < 10:
+        return "早"
+    if 10 <= hour < 15:
+        return "午"
+    return "晚"
+
+
+def _bump_level(level: str | None, new: str | None) -> str | None:
+    """合并同一格里的多盏灯：取更差的那一档。"""
+    if new not in _LEVEL_RANK:
+        return level
+    if level is None:
+        return new
+    return new if _LEVEL_RANK[new] > _LEVEL_RANK[level] else level
+
+
+def settle_meals(rows: list[dict], start, end, today=None) -> dict:
+    """把记账行归并成「顿」，排成 7 天 × 早/午/晚 的 21 格（周报卡 2 的主体）。
+
+    三步，口径只写在这里，前端不重算：
+
+      1. **按天分组、按时间排序**：用 `ts` 的本地日期，与 `week_window` 同一把尺子。
+         坏 `ts` 跳过，不猜它属于哪天。
+      2. **相邻 ≤60 分钟归为同一顿**（见 `_MEAL_MERGE_SECONDS` 的实测依据）。
+         一顿按**首条记录**的小时落到早/午/晚。
+      3. **同一天同一档若有多顿，合并取最差**：一天吃两顿晚饭，不能因为其中一顿
+         好就把另一顿的红抹掉。
+
+    格子的 `records` 是**该格所有记录的条数**，不是去重后的道数：同一道菜生成 18 次
+    就是 18 条，如实报（`dishes` 才是去重后的菜名）。少报条数等于把"生成了 18 次"
+    说成"只做了一次"。
+
+    格子的档位：该顿任一盏红灯 → red；全部绿灯 → green；其余 → yellow；
+    **一条带灯的记录都没有 → None**（前端画虚线空格）。注意 None 有两种成因，
+    靠 `records` 区分：`records=0` 是"没记"，`records>0` 是"记了但没给营养评估"。
+    把后者说成"没吃"是本项目明令禁止的补造。
+
+    参数 `start` / `end` 是 `date`（闭区间）；`today` 只用来标 `is_today`。
+    返回的 `cells` 是 3 行 × N 列，行序与 `slots` 对齐，列序与 `days` 对齐。
+    """
+    buckets: dict = {}
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        try:
+            dt = datetime.fromisoformat(str(m.get("ts") or ""))
+        except (TypeError, ValueError):
+            continue
+        if start <= dt.date() <= end:
+            buckets.setdefault(dt.date(), []).append((dt, m))
+
+    days: list[dict] = []
+    day = start
+    while day <= end:
+        days.append({
+            "date": day.isoformat(),
+            "weekday": "一二三四五六日"[day.weekday()],
+            "is_today": bool(today and day == today),
+        })
+        day += timedelta(days=1)
+
+    # 末尾那一列"今天"如果**一条记录都没有**，就不画：
+    # `week_window` 是滚动 7×24 小时，跨 8 个日历日，最后那格常常是今天且空着。
+    # 它整列都是空框，纯占位，却把 7 列挤成 8 列（列 2 只有 310px，每格窄 4px、
+    # 表头「周一」比格子还宽，会压到隔壁）。
+    # **只在当天完全无记录时裁**：今天有记录就必须显示，宁可挤也不丢数据。
+    dropped = None
+    if len(days) > 1 and days[-1]["is_today"]:
+        last_date = datetime.fromisoformat(days[-1]["date"]).date()
+        if not buckets.get(last_date):
+            dropped = days.pop()["date"]
+
+    grid: dict[str, dict[str, dict]] = {slot: {} for slot in _SLOTS}
+    for d_info in days:
+        key = d_info["date"]
+        items = sorted(buckets.get(datetime.fromisoformat(key).date(), []), key=lambda x: x[0])
+        clusters: list[list] = []
+        for dt, m in items:
+            if clusters and (dt - clusters[-1][-1][0]).total_seconds() <= _MEAL_MERGE_SECONDS:
+                clusters[-1].append((dt, m))
+            else:
+                clusters.append([(dt, m)])
+        for cluster in clusters:
+            slot = _slot_of_hour(cluster[0][0].hour)
+            cell = grid[slot].get(key)
+            if cell is None:
+                cell = {"level": None, "records": 0, "dishes": [], "bad": []}
+                grid[slot][key] = cell
+            cell["records"] += len(cluster)
+            for _, m in cluster:
+                dish = str(m.get("dish") or "")
+                if dish and dish not in cell["dishes"]:
+                    cell["dishes"].append(dish)
+                for raw in m.get("lights") or []:
+                    text = str(raw or "").strip()
+                    if not text:
+                        continue
+                    if ":" in text:
+                        label, level = text.rsplit(":", 1)
+                        label, level = label.strip(), level.strip().lower()
+                    else:
+                        # 无冒号的畸形串：档位按整串算（于是不等于 green），标签留空。
+                        label, level = "", text.lower()
+                    cell["level"] = _bump_level(cell["level"], level)
+                    if level == "red" and label:
+                        pair = {"dish": dish, "nutrient": label}
+                        if pair not in cell["bad"]:
+                            cell["bad"].append(pair)
+
+    legend = {"green": 0, "yellow": 0, "red": 0, "none": 0}
+    cells: list[list[dict]] = []
+    for slot in _SLOTS:
+        row: list[dict] = []
+        for d_info in days:
+            cell = grid[slot].get(d_info["date"]) or {
+                "level": None, "records": 0, "dishes": [], "bad": [],
+            }
+            row.append(cell)
+            legend[cell["level"] or "none"] += 1
+        cells.append(row)
+
+    return {
+        "range": [days[0]["date"], days[-1]["date"]] if days else [],
+        "slots": list(_SLOTS),
+        "days": days,
+        "cells": cells,
+        "legend": legend,
+        "total": len(days) * len(_SLOTS),
+        # 被裁掉的"今天"（完全没记录时才裁）。前端据此写一句
+        # 「今天还没有记录」，不然用户会以为矩阵少了一天。
+        "dropped_today": dropped,
+    }
+
+
+def _meal_over_list(grid: dict) -> list[dict]:
+    """把带红灯的格子摊成「本周 N 处超标」的清单（设计稿第二张卡）。
+
+    只列**真的出现红灯**的顿：黄灯不进来——黄的意思是"接近上限"，把它和超标
+    混在一张卡里，用户会以为黄也得改，而周报的重点是"哪一顿已经过线了"。
+
+    `advice` 按营养素给一句**通用做法**，不假装这道菜该怎么改（理由见
+    `_NUTRIENT_ADVICE` 上的注释）。同一顿有多个营养素超标时，取第一个给建议，
+    其余只列名字——一句话给三条改法，读起来像在凑字数。
+    """
+    out: list[dict] = []
+    days = grid.get("days") or []
+    slots = grid.get("slots") or []
+    cells = grid.get("cells") or []
+    for i, slot in enumerate(slots):
+        if i >= len(cells):
+            break
+        for j, cell in enumerate(cells[i]):
+            if j >= len(days):
+                break
+            bad = cell.get("bad") or []
+            if not bad:
+                continue
+            nutrients: list[str] = []
+            for item in bad:
+                if item["nutrient"] not in nutrients:
+                    nutrients.append(item["nutrient"])
+            out.append({
+                "date": days[j]["date"],
+                "weekday": days[j]["weekday"],
+                "slot": slot,
+                "records": cell.get("records") or 0,
+                "dishes": (cell.get("dishes") or [])[:4],
+                "bad": bad[:4],
+                "nutrients": nutrients,
+                "advice": _NUTRIENT_ADVICE.get(nutrients[0], "") if nutrients else "",
+            })
+    return out
 
 
 def _in_week(meal: dict, since: datetime) -> bool:

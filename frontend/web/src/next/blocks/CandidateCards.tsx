@@ -21,6 +21,7 @@ export function CandidateCards({
   list,
   onPick,
   onAsk,
+  readOnly = false,
 }: {
   list: Candidate[]
   onPick: (c: Candidate) => void
@@ -28,6 +29,8 @@ export function CandidateCards({
    *  这几句是需要他自己改口味的半成品（"换清淡一点"到底多清淡），
    *  直接发出去等于替他决定了没说的那一半。 */
   onAsk: (text: string) => void
+  /** 历史会话里的候选轮只留候选本身；选择与追问快捷操作属于当前可写轮次。 */
+  readOnly?: boolean
 }) {
   const asks: Array<{ label: string; icon: IconName }> = [
     { label: '换个口味', icon: 'utensils' },
@@ -49,29 +52,33 @@ export function CandidateCards({
                 的理由"），此前被解析器丢掉了。它在预期图里就是菜名下那一行小字。
                 没写理由的行不显示这一行——不拿菜名或别的字段凑一句出来。 */}
             {c.reason && <span className="cand-reason">{c.reason}</span>}
-            <button
-              className="cand-pick"
-              type="button"
-              onClick={() => onPick(c)}
-            >
-              选这个方案
-            </button>
+            {!readOnly && (
+              <button
+                className="cand-pick"
+                type="button"
+                onClick={() => onPick(c)}
+              >
+                选这个方案
+              </button>
+            )}
           </li>
         ))}
       </ul>
-      <div className="cand-more">
-        <span className="cand-more-label">以上都不想吃？</span>
-        <ul className="cand-asks">
-          {asks.map((a) => (
-            <li key={a.label}>
-              <button className="cand-chip" type="button" onClick={() => onAsk(a.label)}>
-                <Icon name={a.icon} />
-                {a.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {!readOnly && (
+        <div className="cand-more">
+          <span className="cand-more-label">以上都不想吃？</span>
+          <ul className="cand-asks">
+            {asks.map((a) => (
+              <li key={a.label}>
+                <button className="cand-chip" type="button" onClick={() => onAsk(a.label)}>
+                  <Icon name={a.icon} />
+                  {a.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

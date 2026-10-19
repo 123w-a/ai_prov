@@ -254,6 +254,8 @@ export function RunResult({
   week,
   fridge,
   readErr = null,
+  hideInput = false,
+  onDeleteTurn,
 }: {
   run: RunState
   onAgain: () => void
@@ -279,6 +281,15 @@ export function RunResult({
   /** 首屏读失败的原因（useFirstScreen().readError）。候选页右栏与首屏读同一份数据，
    *  读不到时同样要说得出来（透传，不加工）。 */
   readErr?: string | null
+  /**
+   * true = 本页的书写面让位给外面的「共享续问输入框」（历史会话视图用）。
+   * 页面上只能有一个输入框——结果页自带的 rs-say 在历史模式里必须让位，
+   * 否则同一页出现两个输入框，打字还不互通（其实状态同一份，但视觉是两份）。
+   * 历史轮（run.history）无条件隐藏，不必调用方再传。
+   */
+  hideInput?: boolean
+  /** 消息级删除（2026-10-19 找回）：删这一轮问答（真落了库的轮才有入口）。 */
+  onDeleteTurn?: (recordId: number) => void
 }) {
   const form = resultForm(run.answer)
   const sources = run.answer?.sources ?? []
@@ -288,8 +299,9 @@ export function RunResult({
   const chars = opening.length + (isStructured ? 0 : run.body.length)
   // 结构化路径的视图模型在这里建**一次**，往下传：组件不该各自再读一遍 answer。
   // 收藏恢复态传 null 用时——那一轮的真实用时没被收藏存下来，0 秒是编的。
+  // 历史轮同理：落库记录里没有当时的耗时，写 0 秒也是编账目。
   const vm = isStructured && run.answer
-    ? buildResultVM(run.answer, run.body, run.request, run.restored ? null : run.elapsed, guardText)
+    ? buildResultVM(run.answer, run.body, run.request, run.restored || run.history ? null : run.elapsed, guardText)
     : null
 
   // ★/赞/踩：可见性、初始态回查、写动作都在 useResultActions 里（契约见其文件头）。
@@ -320,7 +332,7 @@ export function RunResult({
       {run.restored ? (
         <p className="process-note fv-restored-note">
           这条来自收藏：收藏只存了当时的答案，没有存用时和阶段事件，
-          所以这里不列过程账目。想再跑一轮就点下面的「再做一顿」。
+          所以这里不列过程账目。想再跑一轮就接着说一句。
         </p>
       ) : (
         <details className="process">
@@ -414,14 +426,25 @@ export function RunResult({
                   {actions.actionError}
                 </span>
               )}
+              {/* 消息级删除（2026-10-19 从旧前端找回）：与收藏/赞/踩同一条动作带。
+                  只对真落了库的轮出现（run.origin），历史轮由 HistoryTurnsView 自带入口。 */}
+              {onDeleteTurn && run.origin && (
+                <button
+                  type="button"
+                  className="fv-btn"
+                  onClick={() => run.origin && onDeleteTurn(run.origin.recordId)}
+                >
+                  删除这轮
+                </button>
+              )}
             </>
           )}
         </div>
       )}
 
-      <button className="again" type="button" onClick={onAgain}>
-        再做一顿
-      </button>
+      {/* 「再做一顿」按钮 2026-10-19 用户裁决移除：会话历史 + 共享续问框就位后，
+          页底这个「清空重来」的出口已经不合适——接着说用书写面，开新顿用左栏
+          「新建会话」，回退由页头「返回今日方案」承担（onAgain 仍归它）。 */}
     </>
   )
 
@@ -432,20 +455,26 @@ export function RunResult({
           设计稿里那一行就是页头本身，不是结果区的一部分。
           用时/查证/依据这些系统账目也一律不在这里，它们落在页底的「真实过程」里：
           版面最贵的位置不该给内部计数，那是第二版被否决的原因之一。 */}
-      {/* 页眉照预期图：左「返回今日方案」回首屏书写面（与页底「再做一顿」同一动作
-          onAgain——顶部一个底部一个，不引入新行为），右侧完成态标记保留事实语义。 */}
+      {/* 页眉照预期图：左「返回今日方案」回首屏书写面（onAgain 的唯一入口——
+          页底「再做一顿」已按 2026-10-19 用户裁决移除），右侧完成态标记保留事实语义。
+          历史模式：返回按钮退场（这一页就是历史列表本身，回不去"今日方案"），
+          标记写「历史记录」——写「已完成」会让它冒充刚跑完的一轮。 */}
       <header className="result-head">
-        <button type="button" className="result-back" onClick={onAgain}>
-          ‹ 返回今日方案
-        </button>
+        {run.history ? null : (
+          <button type="button" className="result-back" onClick={onAgain}>
+            ‹ 返回今日方案
+          </button>
+        )}
         {/* 恢复态不是这一轮跑出来的「完成」，写「已完成」会让它冒充刚发生的事实。 */}
-        <span className="result-tick">{run.restored ? '来自收藏' : '已完成'}</span>
+        <span className="result-tick">{run.history ? '历史记录' : run.restored ? '来自收藏' : '已完成'}</span>
       </header>
 
       {/* 需求回显框（第 4 项）。它**不挂在 vm 上、也不跟着结果形态走**：
           结构化与纯散文两条路径都要有，因为"你要求了什么"在两处同样成立。
-          原话为空（收藏没存下它）时组件自己返回 null——绝不拿正文反推一句。 */}
-      <AskEcho text={run.request} at={run.askedAt} />
+          原话为空（收藏没存下它）时组件自己返回 null——绝不拿正文反推一句。
+          历史模式不渲染：用户问题由 HistoryTurnsView 在轮首直接画，回声是「这一页」
+          的装置，套在每一条历史上会把问题说两遍。 */}
+      {run.history ? null : <AskEcho text={run.request} at={run.askedAt} />}
 
       {vm ? (
         <StructuredResult
@@ -471,6 +500,7 @@ export function RunResult({
           <div className="ask-main">
             <CandidateCards
               list={cands}
+              readOnly={Boolean(run.history)}
               onPick={(c) => onPickCandidate(`第${c.index}个，${c.name}`)}
               onAsk={onText}
             />
@@ -481,8 +511,9 @@ export function RunResult({
               guards={[]}
             />
             {/* 页底三件事排在左栏散文之后（见上面 tail 的说明）：右栏比左栏高出一截，
-                它们留在这儿才能把左栏填满，不再把一片空地留在页面中段。 */}
-            <div className="rs-foot">{tail}</div>
+                它们留在这儿才能把左栏填满，不再把一片空地留在页面中段。
+                历史模式整块不渲染——.rs-foot 空着会留一圈空边距。 */}
+            {run.history ? null : <div className="rs-foot">{tail}</div>}
           </div>
           {/* 参考信息回到**右栏**、与候选卡并排（与 B 稿同构）：.ask-layout 的网格
               本来就是 `minmax(0,1fr) var(--rail)`，两个语境共用它，所以这里只把
@@ -501,15 +532,17 @@ export function RunResult({
       )}
 
       {/* 其余轮次（结构化 / 散文）页底三件事仍在原位置：顺序、间距、DOM 与改动前
-          逐字一致——它们没有"右栏比左栏高"的问题，不该跟着候选轮一起挪。 */}
-      {useCards && !vm ? null : (
+          逐字一致——它们没有"右栏比左栏高"的问题，不该跟着候选轮一起挪。
+          历史模式（run.history）整段不渲染：过程账目、动作条、再做一顿都是
+          "这一轮"的事，历史轮只读展示，画出来只能是 0 或编的。 */}
+      {useCards && !vm || run.history ? null : (
       <>
       {/* 「真实过程」只对真实跑出来的那一轮开放。收藏里没有当时的用时与阶段
           事件，恢复态照画只会得到「用时 0 · 0 个事件」——那是编账目，改成实话。 */}
       {run.restored ? (
         <p className="process-note fv-restored-note">
           这条来自收藏：收藏只存了当时的答案，没有存用时和阶段事件，
-          所以这里不列过程账目。想再跑一轮就点下面的「再做一顿」。
+          所以这里不列过程账目。想再跑一轮就接着说一句。
         </p>
       ) : (
         <details className="process">
@@ -603,14 +636,25 @@ export function RunResult({
                   {actions.actionError}
                 </span>
               )}
+              {/* 消息级删除（2026-10-19 从旧前端找回）：与收藏/赞/踩同一条动作带。
+                  只对真落了库的轮出现（run.origin），历史轮由 HistoryTurnsView 自带入口。 */}
+              {onDeleteTurn && run.origin && (
+                <button
+                  type="button"
+                  className="fv-btn"
+                  onClick={() => run.origin && onDeleteTurn(run.origin.recordId)}
+                >
+                  删除这轮
+                </button>
+              )}
             </>
           )}
         </div>
       )}
 
-      <button className="again" type="button" onClick={onAgain}>
-        再做一顿
-      </button>
+      {/* 「再做一顿」按钮 2026-10-19 用户裁决移除：会话历史 + 共享续问框就位后，
+          页底这个「清空重来」的出口已经不合适——接着说用书写面，开新顿用左栏
+          「新建会话」，回退由页头「返回今日方案」承担（onAgain 仍归它）。 */}
       </>
       )}
 
@@ -627,7 +671,9 @@ export function RunResult({
           改法：默认只留一行邀请 + 一枚暖色圆钮，点开才展开原来那个书写面。
           **没有退回"无处说下一句"**：从"摊开的表单"变成"一句邀请"而已。
           草稿非空时强制保持展开——否则刚说到一半点走再回来，字就"消失"了。 */}
-      {sayOpen || text.trim().length > 0 ? (
+      {/* 历史轮 / 历史会话视图的当前轮：书写面让位给外层的共享续问输入框，
+          这里再画一个就是同一页两个输入框（hideInput 语义见 props 注释）。 */}
+      {run.history || hideInput ? null : sayOpen || text.trim().length > 0 ? (
         <div className="rs-say-open">
           <AskComposer
             variant="followup"

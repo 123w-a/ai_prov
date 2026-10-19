@@ -27,6 +27,8 @@ _MOCK_RESTAURANTS = _legacy._MOCK_RESTAURANTS
 _amap_poi_search = _legacy._amap_poi_search
 
 _AMAP_REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
+# 高德是国内 API，直连即可；显式禁用环境代理，理由见 agent_tools/legacy.py 的 AMAP_NO_PROXY。
+_AMAP_NO_PROXY = {"http": None, "https": None}
 _COORDINATE_PAIR_RE = re.compile(
     r"(-?\d{1,3}(?:\.\d+)?)\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)"
 )
@@ -395,6 +397,7 @@ def resolve_location(location: str = ""):
                 "roadlevel": 0,
             },
             timeout=5,
+            proxies=_AMAP_NO_PROXY,
         )
         raw_text = getattr(resp, "text", "") or ""
         data = resp.json()

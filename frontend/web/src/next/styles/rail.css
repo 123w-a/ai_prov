@@ -544,3 +544,118 @@
     linear-gradient(var(--line), var(--line)) right bottom / 20px 1px no-repeat,
     linear-gradient(var(--line), var(--line)) right bottom / 1px 20px no-repeat;
 }
+
+/* ── 手机骨架：侧栏改为顶部横向导航（2026-10-19）────────────────────
+   旧骨架在 390px 视口仍固定两列，--nav-w 占掉 233.9px，主区只剩 156px，
+   附近地图的可用宽度最终只有 68px。这里不改 DOM，只把同一组导航、品牌和
+   「成员详情」收成一条可横向滚动的顶栏；所有房间与入口都保留。
+
+   用 `.shell .shell-body` 等双类选择器：本文件排在 base/frame 之后，但仍有
+   sheet.css 等后续样式，提高一级特异性可避免窄屏规则被无意盖掉。 */
+@media (max-width: 720px) {
+  .shell .shell-body {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+  }
+
+  .shell .shell-nav {
+    flex: none;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 10px 12px;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .shell .shell-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shell .shell-brand {
+    flex: none;
+    padding-left: 44px;
+    margin: 0 6px 0 0;
+    font-size: 19px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .shell .shell-brand::before {
+    width: 36px;
+    height: 36px;
+    margin-top: -18px;
+    background-size: 34px 34px;
+  }
+
+  .shell .shell-brand-note,
+  .shell .shell-rail-art {
+    display: none;
+  }
+
+  .shell .shell-tab,
+  .shell .shell-tab + .shell-tab {
+    flex: none;
+    width: auto;
+    margin-top: 0;
+    padding: 10px 11px;
+    gap: 7px;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+
+  .shell .shell-ctx {
+    flex: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin: 0 0 0 4px;
+    padding: 0 0 0 8px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+
+  .shell .shell-ctx-h,
+  .shell .shell-members {
+    display: none;
+  }
+
+  .shell .shell-ctx-btn {
+    flex: none;
+    margin: 0;
+    padding: 10px 6px;
+    white-space: nowrap;
+  }
+
+  .shell .shell-main {
+    width: 100%;
+  }
+
+  .shell .shell-room,
+  .shell .shell-room > section,
+  .shell .tn {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .shell .ask-main {
+    padding: 10px 8px 40px;
+  }
+
+  .shell > .sheet-foot {
+    width: 100%;
+    max-width: 100%;
+    padding: 16px 12px 22px;
+    flex-wrap: wrap;
+  }
+}

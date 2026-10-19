@@ -56,6 +56,17 @@ export interface SendChatParams {
   targetRecipeIndex?: number
   targetDishName?: string
   /**
+   * 本轮的 turn_id（2026-10-19）：随请求发给后端，取消时用同一个 id 才能落标。
+   *
+   * 为什么必须发：后端按 `_active_turn_key = session:turn_id` 记录本轮落点
+   * （chat_route.py:1285 _remember_turn_record），取消接口再按同一 key 找回
+   * 记录去 mark_message_cancelled / mark_message_image_cancelled。不发 turn_id
+   * 的话 key 对不上 → 取消只断了本地流，后端记录永远挂在 __pending__，
+   * 历史里这轮就永远显示「回答生成中」。旧前端传的是前端消息 id（从未随请求
+   * 发出）——同 key 对不上，这是它一直没暴露的缺口，这里一次补正。
+   */
+  turnId?: string
+  /**
    * 本餐用餐人（2026-10-15）：首屏选的那几位，原样送到后端去记账。
    *
    * 传 **JSON 数组字符串**（`["小美","我"]`）而不是逗号拼接——成员名字里可能带逗号，
@@ -89,6 +100,8 @@ export async function* streamChat(
   const body = new FormData()
   body.append('session_id', params.sessionId)
   body.append('message', params.message)
+  // turn_id 与取消接口共用同一个 key（见 SendChatParams.turnId 注释）。
+  if (params.turnId) body.append('turn_id', params.turnId)
   if (params.image) body.append('image', params.image)
   body.append('mode', params.mode ?? 'home')
   body.append('want_image', params.wantImage ? '1' : '0')

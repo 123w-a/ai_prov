@@ -38,21 +38,24 @@ export function WeekMealCount({
   prev: { meals: number; onTarget: number; rate: number | null } | null
 }) {
   const perHead = memberCount > 0 ? Math.round((meals / memberCount) * 10) / 10 : null
+  /* 文案口径（2026-10-19 改）：这里的统计单位是**一道菜一条记录**，不是"一顿饭"。
+   * 实测本周 168 条 ÷ 4 人 = 人均 42，而一周只有 21 顿——写"42 餐/周"会让人算不通。
+   * 「↑ 126」也要改：那个箭头在常见字号下和数字 1 几乎分不开，被读成 "1126 餐"。 */
   let prevLine = '上周无记录'
   if (prev && prev.meals > 0) {
     const delta = meals - prev.meals
-    if (delta === 0) prevLine = `较上周 持平（${prev.meals} 餐）`
-    else prevLine = delta > 0 ? `较上周 ↑ ${delta} 餐` : `较上周 ↓ ${-delta} 餐`
+    if (delta === 0) prevLine = `与上周持平（${prev.meals} 道）`
+    else prevLine = delta > 0 ? `比上周多 ${delta} 道` : `比上周少 ${-delta} 道`
   }
   return (
     <section className="wk-card is-count">
-      <CardHead n="1" title="本周餐次" />
+      <CardHead n="1" title="本周记录" />
       <p className="wk-big">
         <b>{meals}</b>
-        <i>餐</i>
+        <i>道</i>
       </p>
       <p className="wk-card-sub">{prevLine}</p>
-      {perHead === null ? null : <p className="wk-card-foot">人均 {perHead} 餐/周</p>}
+      {perHead === null ? null : <p className="wk-card-foot">平均每人 {perHead} 道</p>}
     </section>
   )
 }
@@ -78,7 +81,9 @@ export function WeekLights({ mealsDetail }: { mealsDetail: MealRow[] }) {
   const rated = pips.length
   return (
     <section className="wk-card is-lights">
-      <CardHead n="2" title="营养达标情况" note="（按餐次）" />
+      {/* 兜底卡（后端没给 meal_grid 时才出现）编号与 WeekMealGrid 一致 = 3；
+          口径也从「按餐次」改成「按菜品」：循环的是 mealsDetail，一条 = 一道菜。 */}
+      <CardHead n="3" title="营养达标情况" note="（按菜品）" />
       <div className="wk-card-lights">
         <span className="wk-pips" aria-hidden="true">
           {pips.map((p) => (

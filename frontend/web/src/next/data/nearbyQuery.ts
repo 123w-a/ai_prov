@@ -55,5 +55,5 @@ export function geoSelfNote(resolved: boolean, label: string, _warning?: string)
 
 /** 高德导航链接。坐标不全时返回 null（`buildAmapNavigationUrl` 的既有判据）。 */
 export function navUrlFor(restaurant: NearbyRestaurant, origin: string): string | null {
-  return buildAmapNavigationUrl(restaurant, origin)
+  return buildAmapNavigationUrl(restaurant, origin, undefined, 'gcj02')
 }

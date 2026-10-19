@@ -37,7 +37,7 @@ export function WeekDishCard({
   if (dishes.length === 0) return null
   return (
     <section className="wk-card is-dishes">
-      <CardHead n="3" title="常做的菜 Top 5" note="· 点一道回今天" />
+      <CardHead n="4" title="常做的菜 Top 5" note="· 点一道回今天" />
       <ul className="wk-dishes">
         {dishes.map(([name, n]) => {
           const img = dishImages[name]

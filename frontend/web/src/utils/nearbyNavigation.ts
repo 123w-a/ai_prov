@@ -5,6 +5,7 @@ const NEARBY_NAVIGATION_MODE = 'walk'
 const PI = Math.PI
 const EARTH_AXIS = 6378245.0
 const ECCENTRICITY = 0.00669342162296594323
+export type CoordinateSystem = 'wgs84' | 'gcj02'
 
 const hasValidCoordinate = (value: number | undefined, min: number, max: number) =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
@@ -58,6 +59,7 @@ export function buildAmapNavigationUrl(
   restaurant: NearbyRestaurant,
   origin = '',
   userAgent?: string,
+  originCoordinateSystem: CoordinateSystem = 'wgs84',
 ): string | null {
   if (
     !hasValidCoordinate(restaurant.lng, -180, 180) ||
@@ -75,7 +77,8 @@ export function buildAmapNavigationUrl(
     callnative: '1',
   })
 
-  const amapOrigin = wgs84ToGcj02(origin)
+  const amapOrigin =
+    originCoordinateSystem === 'gcj02' ? origin : wgs84ToGcj02(origin)
   if (!isMobileDevice(userAgent) && hasValidOrigin(amapOrigin)) {
     params.set('from', `${amapOrigin},我的位置`)
   }

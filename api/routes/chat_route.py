@@ -15,6 +15,8 @@ from main import (
     image_bytes_to_oss_url,
 )
 from agent.graph import (
+    asks_for_recipe_content,
+    extract_specific_dish_name,
     failover_llms,
     is_candidate_revision_request,
     is_execute_plan_request,
@@ -1315,7 +1317,17 @@ async def chat(
         )
 
     standalone_image_request = _is_standalone_image_request(message, want_image)
-    if not standalone_image_request and _wants_image(message, want_image) and not _is_recipe_change_request(message):
+    # 「只要图」才配走配图链路（2026-10-19 补闸）：配图链路出的是图卡（steps=[]，
+    # 开口只说"补上配图"），而带做法/方案诉求的句子要的是**全做法卡片＋图**——
+    # 正常单卡链路本来就出那个（实测「我想吃椰子鸡汤，直接给做法」= 全卡 + 补图线程）。
+    # E4 那条"要图是硬意图"防的是**被候选清单劫持**，不是防全卡：句子没被劫持
+    # 风险时（点名菜本就走单卡）就该让正常链路接。
+    if (
+        not standalone_image_request
+        and _wants_image(message, want_image)
+        and not _is_recipe_change_request(message)
+        and not asks_for_recipe_content(message)
+    ):
         try:
             from storage.sessions import find_recent_recipe_for_image
 
@@ -1378,7 +1390,11 @@ async def chat(
             # 换图 vs 补图：换图要的是「另一张」，下面的「已有图」拒绝与两层缓存
             # 都得为它让路。判定只看用户这句原话，不新增任何入参。
             is_revision = _is_image_revision_request(message, want_image)
-            requested_dish = _extract_requested_dish(message)
+            # 取名两条路都走（2026-10-19 补）：_extract_requested_dish 管引号/
+            # 动作词剥离那类句子；extract_specific_dish_name 管「做一道X，给完整
+            # 做法」这类点名句——后者是 _names_dish_for_image 放人进门的依据，
+            # 交不出名字就会提着空名走完链路、回「上一轮没有可换图的菜谱」。
+            requested_dish = _extract_requested_dish(message) or extract_specific_dish_name(message)
             target = None
             if target_record_id is not None:
                 target = find_recipe_for_image_target(

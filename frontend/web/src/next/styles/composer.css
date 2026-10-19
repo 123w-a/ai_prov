@@ -617,23 +617,99 @@
   color: var(--ink-faint);
 }
 
-/* 展开区的**高度护栏**：1366×900 实测（.tmp 取证见交付）——不加这条时
-   展开后 document.body.scrollHeight 1170 → 1190（列比示例卡高 20px），
-   而这一条把上限卡在 366px，展开/收起两态的 scrollHeight **严格相等**。
-   366 不是设计值，是"零净增"的实测边界：它依赖右栏三块的高度（904.34）
-   与示例卡的高度（159.5），换视口就不再精确。
-   内容更长时**内部滚动，不截断**——宁可让列表滚，也不能把版心拉长、
-   或者把某家店藏起来不说。要换成自适应得让 .ask-main 走 flex 列布局，
-   那会改动既有 margin 折叠行为（版心风险），本轮不做。 */
+/* 地图工作区：地图始终占满整行，餐厅列表放在下方。
+   旧版左右分栏会把地图压成一条窄柱；这里优先保证地图可读，
+   列表自己滚动，不反向挤压地图高度。 */
 .ask-nearby-body {
   margin-top: 12px;
-  max-height: 366px;
-  overflow: auto;
+  overflow: visible;
+}
+
+.ask-nearby-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.ask-nearby-map {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: clamp(520px, 58vh, 650px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+
+.ask-nearby-map .nearby-map-shell.is-embedded {
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ask-nearby-map .nearby-map-canvas,
+.ask-nearby-map .nearby-map-canvas.unavailable {
+  height: 100%;
+  min-height: 0;
+}
+
+.ask-nearby-map-notice {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-raise) 94%, transparent);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.55;
+  pointer-events: none;
+}
+
+.ask-nearby-list-pane {
+  min-width: 0;
+  width: 100%;
+  max-height: 430px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.ask-nearby-list-pane .sv-rest-h {
+  align-items: center;
+}
+
+/* 地图上的编号必须能在列表里找到同一个编号。只在传入 selectedIndex
+   （地图工作区）时渲染，服务房的附近餐厅列表保持原样。 */
+.ask-nearby-list-pane .sv-rest-no {
+  display: inline-grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--risk-fill);
+  color: var(--white);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .ask-nearby-tools {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 10px;
 }
@@ -642,6 +718,28 @@
   font-size: var(--fs-note);
   line-height: 1.6;
   color: var(--ink-soft);
+}
+
+@media (max-width: 980px) {
+  .ask-nearby-map {
+    height: clamp(430px, 54vh, 540px);
+  }
+
+  .ask-nearby-list-pane {
+    max-height: 480px;
+  }
+}
+
+@media (max-width: 560px) {
+  .ask-nearby-map {
+    height: clamp(360px, 50vh, 440px);
+  }
+
+  .ask-nearby-list-pane {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
 }
 
 /* 导航外链：「去这家店」是列表的下一步，与菜系/人均同级。

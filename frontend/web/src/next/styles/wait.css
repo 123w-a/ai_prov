@@ -634,15 +634,26 @@
 
 /* ── 「正在生成中…」正文面板 ───────────────────────────────────────────
  *
- * 稿实测：589..785（高 196）、与上面两块等宽，标题 16px、正文 17.5px/1.95、
+ * 稿实测：589..785（高 196）、与上面两块等宽，标题 16px、正文 17.5px、
  * 面板**自己滚动**（右侧 5px 细滚动条，稿里 x1204..1209 就是它）。
  *
- * 高度写死是这一版最要紧的一处：上一版把正文直接铺进页面流，长正文会把
- * "取消"推到屏幕外——用户在等待时连出口都看不见。 */
+ * 这里有一条从上一版继承下来的硬底线：正文绝不能铺进页面流——那样长正文会把
+ * "取消"推到屏幕外，用户在等待时连出口都看不见。2026-10-19 之前的做法是把
+ * 高度写死 196px 来保证这条底线，代价是正文只剩 4.5 行、流式几乎不可见。
+ * 现在改成 clamp 随视口生长（下限仍是 196），底线靠 calc 里预留的固定开销守住。 */
 .wait-stream {
   margin-top: 18px;
-  padding: 14px 18px 0;
-  height: 196px;
+  padding: 14px 18px 12px;
+  /* 高度不再写死 196：那是稿实测值，但 196 里扣掉上下内边距与标题后正文只剩
+   * 153px，按 34px 行高只能看到 4.5 行，流式输出几乎看不见（2026-10-19 实测）。
+   *
+   * 改成随视口生长，同时**守住原来那条底线**：不能把「取消」推出屏幕。
+   *   · clamp 下限 196 = 原稿值，小屏也至少是稿上的样子；
+   *   · 上限 480 = 再高就只是把空行拉长，信息密度反而降；
+   *   · 中间的 540px 常量 = 页头 67 + 「它已知的输入」约 310 + 处理详情 47
+   *     + 取消 44 + 各处间距 ——留给它们的固定开销，扣掉之后剩下的才归流式面板。
+   * 768 高的小笔记本 → 228px（5.5 行）；900 → 340px（9.8 行）；1080 → 触顶 480。 */
+  height: clamp(196px, calc(100vh - 540px), 480px);
   border: 1px solid var(--panel-line);
   border-radius: var(--radius);
   background: var(--bg-raise);
@@ -674,13 +685,59 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  white-space: pre-wrap;
-  /* 17.5px / 1.95：与旧版同一个取值。行宽从"整页通栏"收进 196px 高的框里以后，
-     长行会更需要行距，1.95 正好是旧版为长行调出来的那一档。 */
+  /* P1（2026-10-19）：正文改 renderRichText 富文本渲染，white-space:pre-wrap 退役——
+   * 段落/标题/列表由渲染块自己分行，pre-wrap 会把块间源码换行也算成空行。 */
+  /* 17.5px / 1.75：字号沿用旧版，行距从 1.95 收到 1.75。
+   * 1.95 是给「整页通栏长行」调出来的档位；正文收进框里之后行宽只有 300 字左右，
+   * 再给 1.95 会显得稀，还白白吃掉可见行数（34.1px → 30.6px，同高度多 1.5 行）。 */
   font-size: 17.5px;
-  line-height: 1.95;
+  line-height: 1.75;
   color: var(--ink);
   padding-right: 10px;
+}
+
+/* 富文本块（renderRichText 输出）在流式面板里的排版：照 .prose 同一套取值
+ * 等比收紧（面板高度有限），语义结构不动。标题是 .rt-heading（不是 h2/h3）。 */
+.wait-stream-body p {
+  margin: 0 0 12px;
+}
+
+.wait-stream-body p:last-child {
+  margin-bottom: 0;
+}
+
+.wait-stream-body .rt-heading {
+  margin: 18px 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.wait-stream-body ul,
+.wait-stream-body ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.wait-stream-body li {
+  margin-bottom: 5px;
+}
+
+.wait-stream-body strong {
+  font-weight: 650;
+}
+
+.wait-stream-body blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent-line);
+  color: var(--ink-soft);
+}
+
+.wait-stream-body hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 18px 0;
 }
 
 /* 细滚动条：稿里它是 5px 的浅灰条。用原生滚动条压窄，不引入任何 JS 滚动库。 */
@@ -715,6 +772,12 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 24px;
+  /* P0（2026-10-19）：活卡片长出来后页面会变长，出口必须还在手边——
+     sticky 贴在视口底，卡片再长也推不走「取消」。无卡片（多数轮次）时
+     它就在原位（sticky 不挪静态位置），稿上几何逐像素不变。 */
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
 }
 
 .wait-exit {
@@ -831,4 +894,29 @@
   .wait-members {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ── 活卡片（2026-10-19 P0）：answer 到达即渲染 ─────────────────────
+   等待页正文之下的卡片区：structuring 时静态占位、answer 时成卡。
+   成卡复用结果页同一套块（.result 体系自带几何），这里只给容器与
+   占位样式；卡片内部一个选择器都不重定义——同一张脸不画第二遍。 */
+
+.wait-answer {
+  margin-top: 18px;
+}
+
+/* 占位：静态空卡 + 一句话。刻意不画进度/骨架闪烁——动效会被读成进度。 */
+.wait-card-slot {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px dashed var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+}
+
+.wait-card-slot-h {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink-faint);
 }

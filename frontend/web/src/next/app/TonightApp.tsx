@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createSession, fetchSessions } from '../../api/client.ts'
+import {
+  cancelDecision,
+  clearSession,
+  createSession,
+  deleteMessage,
+  deleteSession,
+  fetchSessions,
+  renameSession,
+} from '../../api/client.ts'
 import { useHousehold } from '../data/household.ts'
 import {
   candidateView,
@@ -13,9 +21,18 @@ import { streamChat, ChatStreamError } from '../data/chatStream.ts'
 import type { ChefAnswer, Session, StreamStage } from '../../types.ts'
 import type { RunState, TraceEvent } from '../data/model.ts'
 import { EMPTY_RUN } from '../data/model.ts'
+import type { HistoryTurn } from '../data/historyTurns.ts'
+import {
+  appendHistoryTurnUnique,
+  runToHistoryTurn,
+  sessionMessagesToHistoryTurns,
+  updateHistoryTurnAnswer,
+} from '../data/historyTurns.ts'
 import { WaitCard } from '../blocks/WaitCard.tsx'
 import { SessionRail } from '../blocks/SessionRail.tsx'
+import { AskComposer } from '../blocks/AskComposer.tsx'
 import { RunResult } from '../views/ResultView.tsx'
+import { HistoryTurnsView } from '../views/HistoryTurnsView.tsx'
 import { AskView } from '../views/AskView.tsx'
 
 /**
@@ -32,6 +49,8 @@ import { AskView } from '../views/AskView.tsx'
 
 const SESSION_KEY = 'xiaoshan.sessionId'
 const RUN_KEY = 'xiaoshan.lastRun'
+/** 配图失败时落在卡上的说明（旧 App.tsx IMAGE_FAILED_NOTE 同款口径：图是附加物）。 */
+const IMAGE_FAILED_NOTE = '暂无成品图，文字做法完整可照做'
 
 /* 2026-10-12 用户裁决：**不再预填任何固定问句**。
  *
@@ -146,13 +165,17 @@ export default function TonightApp() {
   // 有真实存档就用存档里那句话，没有就留空——不再有代码自带的默认问句。
   const [text, setText] = useState(() => loadRun()?.text ?? '')
   const [run, setRun] = useState<RunState>(() => loadRun()?.run ?? EMPTY_RUN)
-  // 历史会话侧栏（B 批次③，lave 方案 A）：列表只读 fetchSessions()；
-  // 面板形态见 blocks/SessionRail.tsx 的头注释（常驻按钮 + 左浮层，不推挤主区）。
-  const [railOpen, setRailOpen] = useState(false)
+  // 历史会话侧栏（2026-10-19 改为左栏常驻块）：列表只读 fetchSessions()；
+  // 形态见 blocks/SessionRail.tsx 头注释（portal 进 #session-rail-slot，无开合）。
   const [railSessions, setRailSessions] = useState<Session[]>([])
   const [railLoading, setRailLoading] = useState(false)
   const [railError, setRailError] = useState<string | null>(null)
   const [railNotice, setRailNotice] = useState<string | null>(null)
+  const [railCreating, setRailCreating] = useState(false)
+  /** 历史会话的逐轮列表（数据层 historyTurns.ts）。
+   *  服务端真值由 effect 从 railSessions 灌入；发送前把当前轮归档追加到尾部；
+   *  图片轮收尾后按 recordId 回写配图（翻上去不能看到没图的旧卡）。 */
+  const [historyTurns, setHistoryTurns] = useState<HistoryTurn[]>([])
   /* 本餐用餐人（2026-10-15）。刻意拆成两个 state，它们的生命周期不一样：
      · `crewPicked` = 选了谁 → 持久化，下一顿默认沿用（loadCrew/saveCrew）；
      · `crewConfirmed` = 这一步确认过没有 → **只在内存里**，每次进首屏都重来。
@@ -162,6 +185,15 @@ export default function TonightApp() {
   const [crewConfirmed, setCrewConfirmed] = useState(false)
   const startedAt = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  /** 本轮 turn_id：随请求发给后端、取消时用同一个 id 落标（chatStream.SendChatParams.turnId）。 */
+  const turnIdRef = useRef<string | null>(null)
+  /** 历史会话视图的智能滚动（照旧前端 ChatArea 的 stickToBottom 三件套，原样移植）：
+   *  只有用户贴在底部（<80px）才自动跟滚；翻上去读历史时，新 token 不把他拽回来。
+   *  没有这套，"思考时还能往上翻看以往的答案"就等于没做——每来一批 token 都会
+   *  把页面抽回底部，历史看得见、读不着。 */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
   /** 定时存档用的最新值引用，避免把存档 effect 挂到每一批 token 上。 */
   const runRef = useRef(run)
   const textRef = useRef(text)
@@ -211,15 +243,49 @@ export default function TonightApp() {
     loadSessions()
   }, [loadSessions])
 
-  // 侧栏 Escape 关闭（与 Shell 抽屉同一约定：只在打开时挂监听，不打扰正常键入）。
+  /**
+   * 历史轮列表的服务端真值（实施单第 5 条：启动/切会话都从 fetchSessions() 灌）。
+   *
+   * 判据：railSessions 或 sessionId 一变就重算——服务端是真值，本地追加的归档轮
+   * （发送前那一步）与它按 recordId 去重合并，最坏只是提前拿到同一份内容。
+   * 新建的会话还没进列表时按空算：新会话就该从空历史开始，不能把上一个会话的
+   * 轮次错挂到它名下。
+   */
   useEffect(() => {
-    if (!railOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRailOpen(false)
+    const s = railSessions.find((x) => x.session_id === sessionId)
+    setHistoryTurns(sessionMessagesToHistoryTurns(s?.messages))
+  }, [railSessions, sessionId])
+
+  /**
+   * 智能滚动（旧前端 ChatArea L295-343 同款，语义一条不变）：
+   *   · 内容增长（新 token / 新轮）时，只有 stickToBottom 才滚到底；
+   *   · 滚动事件里按"距底 < 80px"判定贴不贴底，并据此亮/灭「回到底部」；
+   *   · 点「回到底部」才主动贴回去。
+   * 依赖 run 的完整对象：流式期间 body 每批 token 都换引用，正好驱动跟滚。
+   */
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    if (stickToBottomRef.current) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: historyTurns.length > 2 ? 'smooth' : 'auto' })
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [railOpen])
+  }, [historyTurns, run])
+
+  const handleFeedScroll = useCallback(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
+    stickToBottomRef.current = nearBottom
+    setShowScrollBtn(!nearBottom)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    stickToBottomRef.current = true
+    setShowScrollBtn(false)
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+  }, [])
 
   /**
    * 本地时钟只负责"已经过了多久"。它不猜测进度，也不推断剩余。
@@ -267,9 +333,35 @@ export default function TonightApp() {
     const target = imgBase?.origin      // 钉卡片用的落点；没有它就不该发这一轮
     if (img && !imgBase) return
 
+    // 发出即清空书写面（2026-10-19 用户裁决：「发出去了就不该还有文字」）。
+    // 只清**从框里发出**的问句：按钮句（候选「选这个方案」/ 图片轮「给X配张图」）
+    // 不碰草稿——那句话不是用户在框里打的，框里可能是他写到一半的另一句话，
+    // 清掉等于替他删了没发过的东西（图片轮原有契约同款理由）。
+    const keepDraft = Boolean(img) || typeof override === 'string'
+    if (!keepDraft) setText('')
+
     abortRef.current?.abort()
     const ac = new AbortController()
     abortRef.current = ac
+
+    // 发送前归档当前轮（实施单第 5 条）。两条边界：
+    //   · 图片轮（opts.image）永远不追加——它是给已有卡片补图，不是一条新问答，
+    //     "给X配张图"这句按钮句不能变成历史里的用户问题；
+    //   · 只归档跑出过结果的轮（成功 / 失败 / 中断）。失败与中断轮标 unfinished
+    //     一起进历史，免得当场被顶掉消失、刷新后又从后端冒出来，两边对不上。
+    if (!img) {
+      const cur = runRef.current
+      if (cur.status === 'succeeded' || cur.status === 'failed' || cur.orphaned) {
+        setHistoryTurns((prev) => appendHistoryTurnUnique(prev, runToHistoryTurn(cur)))
+      }
+    }
+    // 新轮起跑即贴底（旧前端 submit 同款）：刚发的那句在最下面，不贴底就看不到。
+    stickToBottomRef.current = true
+    setShowScrollBtn(false)
+
+    // 本轮 turn_id：本地生成、随请求发出、取消时用同一个 id（chatStream 的注释有链路图）。
+    const turnRef = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    turnIdRef.current = turnRef
 
     startedAt.current = Date.now()
     // askedAt 用 startedAt.current（不是再读一次钟）：它就摆在上一行，
@@ -283,6 +375,7 @@ export default function TonightApp() {
       askedAt: imgBase ? (imgBase.askedAt ?? null) : startedAt.current,
       answer: imgBase?.answer ?? null,
       origin: imgBase?.origin,
+      imageTurn: img ? true : undefined,
     })
 
     let sawFinish = false
@@ -321,6 +414,8 @@ export default function TonightApp() {
         {
           sessionId,
           message,
+          // 本轮 turn_id：取消时用同一个 id 才能让后端把记录标成「已取消」。
+          turnId: turnRef,
           wantImage: false,
           // 本餐用餐人（2026-10-15）。走 ref 取最新值，**不**把 crewPicked 加进
           // 下面 useCallback 的依赖：那会让 send 每勾一次人就变成一个新函数，
@@ -365,8 +460,19 @@ export default function TonightApp() {
             break
 
           case 'answer':
+            // 图片轮不采纳新的 answer：卡是原卡（imgBase），本轮只在它上面补图。
+            // 采纳了会让「给X配图」那条确认话的答案顶掉整张卡（卡与图配套就破了）。
+            if (img) break
             answer = ev.answer
             push({ answer, elapsed: at })
+            break
+
+          case 'structuring':
+            // 后端裸事件（chat_route L1987，紧邻 answer）：只有结构化出卡轮才发。
+            // 置 cardPending 供等待页长卡片占位（触发源必须是这条裸事件——
+            // stage:'structuring' 候选轮也会发，那轮没有卡）。
+            // 不进 events：stage:'structuring' 已由 case 'stage' 记过。
+            push({ cardPending: true, elapsed: at })
             break
 
           case 'finish':
@@ -397,11 +503,32 @@ export default function TonightApp() {
               }
               answer = next
               sawImage = true
-              break   // 只改局部量：卡片在收尾一次性落定，中途不 push
+              // P0（2026-10-19）：中途也 push——等待页的活卡片（WaitAnswer）要边流边贴图，
+              // 收尾一次性落定会让图"凭空出现"。收尾的 done 仍以 imgBase 为准整卡还回。
+              push({ answer: next, elapsed: at })
+              break
             }
             const card: ChefAnswer = answer ?? { recipes: [] }
             answer = { ...card, image_url: ev.url, image_ai_generated: ev.aiGenerated }
             push({ answer, elapsed: at })
+            break
+          }
+
+          case 'image_failed': {
+            // P0（2026-10-19）：被点名下标的菜最终没图——补一句失败说明（旧前端
+            // patchAnswerImageFailed 同款口径：图是附加物，文字做法完整可照做）。
+            // 之前这个事件被 default 静默吞掉，卡片上连失败痕迹都没有。
+            const base = answer ?? (img ? imgBase?.answer : null)
+            if (base) {
+              const note = base.image_note || IMAGE_FAILED_NOTE
+              const recipes = base.recipes.map((r, i) =>
+                ev.indexes.includes(i) ? { ...r, image_note: r.image_note || note } : r,
+              )
+              const next: ChefAnswer = { ...base, recipes, image_requested: true }
+              if (ev.indexes.includes(0)) next.image_note = recipes[0]?.image_note || note
+              answer = next
+              push({ answer: next, elapsed: at })
+            }
             break
           }
 
@@ -438,7 +565,7 @@ export default function TonightApp() {
             orphanCause: 'cancelled',
             elapsed: Date.now() - startedAt.current,
           }
-          saveRun(stopped, text)
+          saveRun(stopped, keepDraft ? text : '')
           return stopped
         })
         return
@@ -497,11 +624,20 @@ export default function TonightApp() {
             // 后端没给编号就不写（宁缺勿假），动作条会按「没有落点」整体隐藏。
             origin,
           }
-      // 图片轮落盘时草稿传当前草稿 text：message 是按钮句（给「X」配张图），
-      // 把它回填进输入框等于替用户打了一句话。
-      saveRun(done, imgBase ? text : message)
+      // 草稿落盘：从框里发出的问句已清空（refresh 不该把它回填进输入框）；
+      // 按钮句轮（候选/图片）留用户自己的草稿，不把按钮句当草稿存。
+      saveRun(done, keepDraft ? text : '')
       return done
     })
+
+    // 图片轮收尾（补充项 D）：把带图的新 answer 回写进历史里同 recordId 那轮。
+    // 不回写的话，这轮一旦归档/去重，翻上去看到的还是没图的旧卡——「卡与图
+    // 严格配套」必须在历史里同样成立。没落点/没答案就不回写（宁缺勿假）。
+    if (imgBase?.origin && answer) {
+      const recId = imgBase.origin.recordId
+      const withImage = answer
+      setHistoryTurns((prev) => updateHistoryTurnAnswer(prev, recId, withImage))
+    }
   }, [sessionId, text, run.status])
 
   /**
@@ -527,34 +663,53 @@ export default function TonightApp() {
 
   /** 取消：主动断开这一轮。仍然保持 running 态并标记 orphaned，
    *  这样界面留在"这一轮被中断了、以下是中断前真实收到的"上，而不是假装什么都没发生。 */
+  /**
+   * 取消（2026-10-19 接回 cancelDecision）：先让后端把这轮标成取消，再断流。
+   *
+   * 不接的话取消只是本地断线——后端记录永远挂在 __pending__，历史里这轮
+   * 就永远显示「回答生成中」（旧前端同样的缺口，这里补正）。落标必须带
+   * **发送时那个 turn_id**（turnIdRef）：后端按 `session:turn_id` 找回本轮
+   * 记录去 mark_message_cancelled / mark_message_image_cancelled。
+   *
+   * 普通轮与图片轮的落标不同：图片轮走 keep_text 分支（卡片/文字保留，
+   * 只放弃图），普通轮整轮标「已取消」。确认文案照旧前端两态口径。
+   */
   const cancel = useCallback(() => {
+    const cur = runRef.current
+    const keepText = Boolean(cur.imageTurn)
+    const confirmText = keepText ? '确定取消这次配图吗？卡片和文字会保留。' : '确定取消本次回答吗？'
+    if (!window.confirm(confirmText)) return
+    const sid = sessionId
+    const tid = turnIdRef.current
+    if (sid && tid) {
+      void cancelDecision(sid, tid, keepText).catch(() => {
+        // 后端没落上标也不断用户出口：下面的 abort 照走，本地中断痕迹照留。
+      })
+    }
     abortRef.current?.abort()
     abortRef.current = null
-  }, [])
+  }, [sessionId])
 
   /**
-   * 历史会话切换（B 批次③，lave「会话切换」契约的落地）。
+   * 历史会话切换（2026-10-19 重写：从「恢复最后一条」改成「进会话、纵向看全历史」）。
    *
-   * 四条硬规矩，一条都不能松：
-   *  1 正在跑的轮先真实断掉，**并且先存档再覆盖**：abort 前把
-   *    orphaned=cancelled 写进 RUN_KEY，否则 AbortError 到达时 run 已被
-   *    下面的 setRun 换成新内容，catch 里 `prev.status !== 'running'` 的
-   *    保护会让这一轮静默消失——那是在替用户抹掉他等过的事。
-   *    面板顶部同时给出明确文案（「是被取消，不是失败」）。
-   *  2 sessionId 要同步写回 localStorage：ensureSession 刷新时读的是缓存，
+   * 四步时序，一步都不能乱：
+   *  1 正在跑的轮**先存档再 abort**（旧硬规则）：abort 前把 orphaned=cancelled
+   *    写进存档，否则 AbortError 到达时 run 已被换成新内容，catch 里
+   *    `prev.status !== 'running'` 的保护会让这一轮静默消失。面板顶部同时给
+   *    明确文案（「是被取消，不是失败」）。这一轮的长期落点是后端记录——
+   *    回到这个会话时，它以「已取消 / 回答生成中」的如实状态出现在历史里。
+   *  2 sessionId 写回 localStorage：ensureSession 刷新时读的是缓存，
    *    不写的话切了也白切，一刷新就回到旧会话。
-   *  3 恢复只按该会话**真实存了什么**走：answer 是 JSON 字符串时 parse 成功
-   *    才恢复成只读详情（restored=true，动作条按契约隐藏）；parse 失败说明
-   *    这一轮落库的是**正文本身**（候选轮/纯散文轮），按正文恢复成 prose 结果；
-   *    只有 answer 为空才回提问态，绝不编造详情。
-   *  4 点当前会话不折腾（不触发取消、不重置界面）。
+   *  3 清空当前实跑状态（setRun(EMPTY_RUN) + remove RUN_KEY）：RUN_KEY 不清，
+   *    刷新会把旧会话的 run 恢复到新会话头上——那是把两顿饭记混。
+   *  4 重拉目标会话的全部消息：railSessions 刷新后，effect 把全量 messages 灌进
+   *    historyTurns——**纵向看全这个会话里的每一问每一答**（本次改造的主诉求）。
+   *  点当前会话不折腾（不触发取消、不重置界面）。
    */
   const pickSession = useCallback(
     (sid: string) => {
-      if (sid === sessionId) {
-        setRailOpen(false)
-        return
-      }
+      if (sid === sessionId) return
 
       const cur = runRef.current
       const runningNow = cur.status === 'running' && !cur.orphaned
@@ -576,48 +731,142 @@ export default function TonightApp() {
 
       localStorage.setItem(SESSION_KEY, sid)
       setSessionId(sid)
-
-      const s = railSessions.find((x) => x.session_id === sid)
-      const msgs = s?.messages ?? []
-      const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
-      const raw = last?.answer ?? ''
-      let detail: ChefAnswer | null = null
-      let prose = ''
-      if (raw) {
-        try {
-          detail = JSON.parse(raw) as ChefAnswer
-        } catch {
-          // 这一轮落库的就是正文本身（候选轮/纯散文轮不产出结构化 JSON）。
-          // 它不是「没有内容」，而是「内容不是卡片」——按正文恢复；
-          // 否则用户点开历史只会看到一个空的提问页，像是这一轮从没答过。
-          detail = null
-          prose = raw
-        }
-      }
-      setText(last?.user_text || '')
-      setRun(
-        detail
-          ? {
-              ...EMPTY_RUN,
-              status: 'succeeded',
-              request: last?.user_text ?? '',
-              answer: detail,
-              restored: true,
-            }
-          : prose
-            ? {
-                ...EMPTY_RUN,
-                status: 'succeeded',
-                request: last?.user_text ?? '',
-                body: prose,
-                restored: true,
-              }
-            : EMPTY_RUN,
-      )
-      setRailOpen(false)
+      localStorage.removeItem(RUN_KEY)
+      setRun(EMPTY_RUN)
+      stickToBottomRef.current = true
+      setShowScrollBtn(false)
+      // 目标会话的全量消息随 railSessions 刷新灌进 historyTurns（见上面的 effect）。
+      loadSessions()
     },
-    [sessionId, railSessions],
+    [sessionId, loadSessions],
   )
+
+  /**
+   * 新建会话（左栏「新建会话」）：先归档并中断正在跑的轮（同切换的第 1 步），
+   * 再建新会话、写回 SESSION_KEY、清空历史和结果。新会话从空历史 + 空输入开始。
+   */
+  const newSession = useCallback(async () => {
+    if (railCreating) return
+    const cur = runRef.current
+    if (cur.status === 'running' && !cur.orphaned) {
+      const stopped: RunState = {
+        ...cur,
+        orphaned: true,
+        orphanCause: 'cancelled',
+        elapsed: Date.now() - startedAt.current,
+      }
+      saveRun(stopped, textRef.current)
+      setRailNotice('上一轮正在跑，新建会话把它取消了——是被取消，不是失败，中断记录已存档。')
+      abortRef.current?.abort()
+      abortRef.current = null
+    } else {
+      setRailNotice(null)
+    }
+    setRailCreating(true)
+    try {
+      const s = await createSession()
+      localStorage.setItem(SESSION_KEY, s.session_id)
+      setSessionId(s.session_id)
+      localStorage.removeItem(RUN_KEY)
+      setRun(EMPTY_RUN)
+      setHistoryTurns([])
+      setText('')
+      stickToBottomRef.current = true
+      setShowScrollBtn(false)
+      loadSessions()
+    } catch (err: unknown) {
+      setRailError(`新建会话没有成功（当前会话没有变）：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setRailCreating(false)
+    }
+  }, [railCreating, loadSessions])
+
+  /**
+   * 改名（从旧前端 SessionSidebar 找回）。行内输入框在 SessionRow，这里只管落库
+   * 与刷新；失败说「重命名会话失败」并保持列表原样（旧 handleRenameSession 同语义）。
+   */
+  const renameSessionTitle = useCallback(
+    async (sid: string, title: string) => {
+      try {
+        await renameSession(sid, title)
+        loadSessions()
+      } catch (err: unknown) {
+        setRailError(`重命名会话失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [loadSessions],
+  )
+
+  /**
+   * 删除会话（从旧前端 SessionSidebar 找回，旧 handleDeleteSession 的善后逐条保留）：
+   *   1 confirm 原文照旧（「其中的历史记录将无法恢复」是事实，不是吓唬）；
+   *   2 删的不是当前会话 ⇒ 只刷新列表；
+   *   3 删的是当前会话 ⇒ 落位到剩余的第一个（pickSession 负责中断/清空/重拉）；
+   *      一个都不剩 ⇒ 新建一个空会话（旧实现同款），绝不把用户留在已删会话上。
+   */
+  const removeSession = useCallback(
+    async (sid: string) => {
+      if (!window.confirm('确认删除这个会话？其中的历史记录将无法恢复。')) return
+      try {
+        await deleteSession(sid)
+        if (sid === sessionId) {
+          const rest = railSessions.filter((x) => x.session_id !== sid)
+          if (rest.length > 0) {
+            pickSession(rest[0].session_id)
+          } else {
+            void newSession()
+          }
+          return // pickSession / newSession 自己会刷新列表
+        }
+        loadSessions()
+      } catch (err: unknown) {
+        setRailError(`删除会话失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [sessionId, railSessions, pickSession, newSession, loadSessions],
+  )
+
+  /**
+   * 删除这一轮问答（2026-10-19 从旧前端 handleDeleteTurn 找回，消息级操作）。
+   * 确认文案照旧（「删除这一轮问答？」）。删的若正是当前展示的那条，
+   * 结果区一起收掉——页面不能继续展示一条已经不存在的记录。
+   */
+  const deleteTurn = useCallback(
+    async (recordId: number) => {
+      if (!sessionId) return
+      if (!window.confirm('删除这一轮问答？')) return
+      try {
+        await deleteMessage(sessionId, recordId)
+        if (runRef.current.origin?.recordId === recordId) {
+          localStorage.removeItem(RUN_KEY)
+          setRun(EMPTY_RUN)
+        }
+        setHistoryTurns((prev) => prev.filter((t) => t.recordId !== recordId))
+        loadSessions()
+      } catch (err: unknown) {
+        setRailError(`删除问答失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [sessionId, loadSessions],
+  )
+
+  /**
+   * 清空本轮（2026-10-19 从旧前端「清空本轮」按钮找回）：清掉这个会话的
+   * 全部问答记录（会话本身还在）。确认里写明不可恢复——这是真删库，不是界面隐藏。
+   */
+  const clearTurns = useCallback(async () => {
+    if (!sessionId) return
+    if (!window.confirm('清空这个会话的全部问答记录？此操作无法恢复。')) return
+    try {
+      await clearSession(sessionId)
+      localStorage.removeItem(RUN_KEY)
+      setRun(EMPTY_RUN)
+      setHistoryTurns([])
+      loadSessions()
+    } catch (err: unknown) {
+      setRailError(`清空记录失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [sessionId, loadSessions])
 
   /**
    * 周报房点「常做的菜 → 再做一顿」时接住话头。
@@ -680,29 +929,96 @@ export default function TonightApp() {
 
   const running = run.status === 'running'
   const blocked = !sessionId
+  /* 历史会话视图（补充项 H 的路由）：有历史轮就走「纵向历史 + 当前轮 + 共享续问框」，
+     空历史（新会话）走原首屏 AskView（含用餐人确认关卡）——两者不混。
+     当前轮在最下、历史在上：思考/流式时也能往上翻看以往的答案（A 项硬需求）。 */
+  const historyMode = historyTurns.length > 0
 
+  // is-feed（2026-10-19）：历史/续问模式把 .tn 变成列布局——流式输出框吃满
+  // 剩余高度、书写面钉底，不再给书写面下方留空白（见 session.css）。
   return (
-    <div className="tn">
+    <div className={`tn${historyMode ? ' is-feed' : ''}`}>
       <header className="tn-head">
         <span className="tn-brand">小膳管家</span>
         <span className="tn-dot" />
         <h1 className="tn-title">今天吃什么</h1>
-        {/* 历史侧栏的常驻入口：只在今晚房（本组件）渲染，打开时顺手刷新列表。 */}
+        {/* 头部的「历史」开合按钮随浮层一起退役：会话栏改到左栏常驻
+            （#session-rail-slot），不再需要开关入口。
+            「清空本轮」（2026-10-19 找回）：旧前端在聊天页头同款位置、同款禁用条件
+            （没记录/正在跑时不可点）。 */}
         <button
           type="button"
-          className="tn-railbtn"
-          onClick={() => {
-            setRailOpen(true)
-            loadSessions()
-          }}
+          className="tn-clear"
+          disabled={historyTurns.length === 0 || running}
+          onClick={() => void clearTurns()}
         >
-          历史{railSessions.length > 0 ? ` ${railSessions.length}` : ''}
+          清空本轮
         </button>
         <span className={`tn-conn${sessionError ? ' is-bad' : ''}`}>
           {sessionError ? '会话不可用' : sessionId ? '就绪' : '连接中'}
         </span>
       </header>
 
+      {historyMode ? (
+        <>
+          {/* 历史会话视图（A 项）：历史轮**全程可见**——思考、流式、结果三种状态下
+              都在这条滚动流里，当前轮在最下。running 时 WaitCard 画的就是流程线
+              本体，一行没动；用户随时可以往上翻看以往的答案（智能滚动见 handleFeedScroll）。 */}
+          <div className="hs-feed" ref={scrollRef} onScroll={handleFeedScroll}>
+            <HistoryTurnsView
+              turns={historyTurns}
+              skipRecordId={run.origin?.recordId ?? null}
+              onDeleteTurn={(rid) => void deleteTurn(rid)}
+            />
+            {running && <WaitCard run={run} onCancel={cancel} onRestart={reset} />}
+            {run.status === 'succeeded' && (
+              <RunResult
+                run={run}
+                onAgain={reset}
+                text={text}
+                onText={setText}
+                onSend={() => void send()}
+                blocked={blocked}
+                onPickCandidate={(t) => void send(t)}
+                onRequestImage={requestImage}
+                fam={fam}
+                week={week}
+                fridge={fridgeBox}
+                readErr={firstScreenError}
+                /* 历史模式的当前轮：书写面让位给下面的共享续问框（一页只留一个输入框）。
+                   该轮的收藏/评分/配图/真实过程照旧——它就是真实跑出来的那一轮。 */
+                hideInput
+                onDeleteTurn={(rid) => void deleteTurn(rid)}
+              />
+            )}
+            {run.status === 'failed' && (
+              <div className="hs-fail" role="alert">
+                <p className="hs-fail-h">这一轮没有成功</p>
+                {run.error && <p className="hs-fail-e">{run.error}</p>}
+                <p className="hs-fail-note">下面仍然可以接着说；这轮的中断记录会如实留在历史里。</p>
+              </div>
+            )}
+            {showScrollBtn && (
+              <button type="button" className="hs-tobottom" onClick={scrollToBottom}>
+                ↓ 回到底部
+              </button>
+            )}
+          </div>
+          {/* 唯一的共享续问输入框（C 项）：常驻在滚动区之外，打字框不跟着内容滚
+              （旧前端 .composer-shell 同款位置）。结果页自带的书写面已按 hideInput 让位。 */}
+          <div className="hs-composer">
+            <AskComposer
+              variant="followup"
+              text={text}
+              onText={setText}
+              onSend={() => void send()}
+              running={running}
+              blocked={blocked}
+            />
+          </div>
+        </>
+      ) : (
+        <>
       {(run.status === 'idle' || run.status === 'failed') && (
         <AskView
           run={run}
@@ -769,19 +1085,25 @@ export default function TonightApp() {
           week={week}
           fridge={fridgeBox}
           readErr={firstScreenError}
+          onDeleteTurn={(rid) => void deleteTurn(rid)}
         />
       )}
+        </>
+      )}
 
-      {/* 历史会话侧栏：fixed 定位，不参与 .tn 的排版。 */}
+      {/* 历史会话侧栏（2026-10-19）：portal 进左栏 #session-rail-slot（成员区与
+          轨底藤蔓之间），常驻可见、无开合、无遮罩；新增「新建会话」。 */}
       <SessionRail
-        open={railOpen}
         sessions={railSessions}
         activeId={sessionId}
         notice={railNotice}
         loading={railLoading}
         error={railError}
+        creating={railCreating}
         onPick={pickSession}
-        onClose={() => setRailOpen(false)}
+        onNewSession={() => void newSession()}
+        onRename={(sid, title) => void renameSessionTitle(sid, title)}
+        onDelete={(sid) => void removeSession(sid)}
       />
     </div>
   )

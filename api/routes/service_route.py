@@ -41,7 +41,7 @@ HOME_SERVICE_VISION = {
         {
             "phase": 2,
             "title": "附近餐饮导航",
-            "status": "partial",
+            "status": "done",
             "description": "接入或预置附近餐厅推荐，形成“在家做 / 出门吃”的轻量决策入口。",
         },
         {

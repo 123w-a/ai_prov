@@ -968,6 +968,15 @@
   line-height: 1.5;
 }
 
+/* 统计口径小字（如「越线 3 / 样本 6」）：让每条建议都能被追到来源。
+   单独成行且弱化，不抢正文。 */
+.pf-tip-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-note, 12px);
+  color: var(--ink-faint);
+}
+
 /* 窄屏：并排的两块收成一列，否则会窄到放不下一个中文词。 */
 @media (max-width: 860px) {
   .pf-pair {

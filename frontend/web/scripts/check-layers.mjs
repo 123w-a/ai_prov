@@ -56,6 +56,10 @@ const STYLE_ORDER = [
   './styles/fav-cards.css',
   // 服务房（第 5 步）：只定义 .sv-* 新类名，同理登记为末层。
   './styles/service.css',
+  // 地图 overlay（2026-10-19）：.amap-* / .nearby-map-* 一族原本只在旧入口 index.css，
+  // 新前端未加载 ⇒ 定位蓝点与餐厅气泡全丢样式。只定义这几个类名，不覆盖
+  // composer.css 的 .nearby-map-shell/.nearby-map-canvas（地图外壳尺寸仍归它）。
+  './styles/map.css',
   // 浮层面板（2026-10-01 B 批次①③）：家庭成员抽屉 .sd-* + 历史侧栏 .rail-*，
   // 从 base.css 拆出（越 1000 行上限）；新前缀不与前面选择器相交，登记末层。
   './styles/panels.css',
@@ -78,6 +82,9 @@ const STYLE_ORDER = [
   // 它一直没进本表（0-10-10 之前是 main.tsx 里的"未登记导入"），f_样式顺序因此
   // 长期报一条违规——不是放水：本表的语义是"顺序基准"，基准漏项就该补上。
   './styles/atmosphere.css',
+  // 历史会话（2026-10-19）：.shell-session / .sr-* / .hs-* 三族新类名，
+  // 与前面选择器不相交，登记末层（atmosphere 之后）。顺序与 main.tsx 一致。
+  './styles/session.css',
 ]
 
 /** 方案第三节：依赖方向只允许 app → views → blocks → ui。 */

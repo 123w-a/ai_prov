@@ -381,6 +381,11 @@ const RAIL_WEEK: WeekView = {
   rate: 0.5,
   rateSeries: [],
   prev: { meals: 2, onTarget: 1, rate: 0.5 },
+  // 逐顿矩阵与超标清单（2026-10-19 新字段）：右栏（278px）放不下 7 天矩阵，
+  // 这一面本来就不画。`mealGrid: null` 让 WeeklyView 走"后端没给"的兜底分支，
+  // 与真实的旧后端同一条路径；`overList: []` 是"这周没红灯"的真形态。
+  mealGrid: null,
+  overList: [],
 }
 
 const RAIL_CAND: RailCand = {

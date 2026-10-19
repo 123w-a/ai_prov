@@ -1,20 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { NearbyRestaurantMap } from '../../components/NearbyRestaurantMap.tsx'
 import { NearbyList } from './NearbyList.tsx'
 import { useNearbySearch } from '../data/useNearby.ts'
 import { NEARBY_EMPTY_TEXT, navUrlFor, nearbyKeyword } from '../data/nearbyQuery.ts'
 
 /**
- * 「出去吃」入口条 + 就地展开的附近餐厅（2026-10-12）。
- *
- * 位置由 AskView 决定：书写面 `.composer-panel` **正下方、通栏**，展开时
- * 「试试这样问」与示例卡就地让位（同一位置互换），所以示例不会被挤到折叠线下面。
- *
- * 这个文件只管**渲染与展开/收起**；查询与定位的状态机在 data/useNearby.ts，
- * 那里写着三条边界：默认不请求系统定位、拿不到位置不假装已定位、失败就地重试。
- *
- * **不画地图**：前端没有高德 JS Key（服务房同一条边界），导航只给外链。
- * 餐厅列表复用服务房那份 NearbyList（来源/warning/guardrail/空结果全套），
- * 只多传两个可选参数（空结果文案、导航外链），服务房调用点一个字没改。
+ * 「出去吃」入口条 + 就地展开的附近餐厅。
+ * 地图只使用 /api/nearby/map 的真实坐标；mock 和空结果不补造 marker。
+ * 列表复用 NearbyList，额外传入空结果文案、导航外链和地图选中联动。
  */
 export function OpenNearby({
   draft,
@@ -26,8 +19,31 @@ export function OpenNearby({
   onOpenChange: (open: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
-  const { nb, loading, error, note, locating, origin, searchByKeyword, retry, useMyLocation } =
-    useNearbySearch(draft)
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const {
+    nb,
+    mapData,
+    mapError,
+    loading,
+    error,
+    note,
+    locating,
+    origin,
+    searchByKeyword,
+    retry,
+    useMyLocation,
+  } = useNearbySearch(draft)
+
+  const mapRestaurants = mapData?.markers ?? []
+  const mapCenter = mapData?.center ? `${mapData.center.lng},${mapData.center.lat}` : origin
+  const mapNotice =
+    mapData && mapData.markers.length === 0 && mapData.source !== 'amap'
+      ? '当前没有真实餐厅坐标，地图不展示餐厅标记'
+      : ''
+
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [nb])
 
   const toggle = () => {
     if (open) {
@@ -81,17 +97,42 @@ export function OpenNearby({
               </span>
             )}
           </div>
-          <NearbyList
-            nb={nb}
-            loading={loading}
-            error={error}
-            emptyText={NEARBY_EMPTY_TEXT}
-            /* 没定位时 origin 是空串：`buildAmapNavigationUrl` 只带目的地、
-               不带假起点（它自己判 hasValidOrigin）。 */
-            navUrl={(r) => navUrlFor(r, origin)}
-            onSearch={(q) => void searchByKeyword(nearbyKeyword(q))}
-            onRetry={retry}
-          />
+          <div className="ask-nearby-workbench">
+            <div className="ask-nearby-map">
+              <NearbyRestaurantMap
+                restaurants={mapRestaurants}
+                origin={origin}
+                center={mapCenter}
+                coordinateSystem="gcj02"
+                selectedIndex={selectedIndex}
+                onSelectRestaurant={setSelectedIndex}
+                variant="embedded"
+                showLegend={false}
+                showSelection={false}
+                emptyMessage="先点「用我的位置」，或查询到真实高德结果后显示地图"
+              />
+              {(mapNotice || mapError) && (
+                <p className="ask-nearby-map-notice">
+                  {mapError ? `地图数据读取失败：${mapError}` : mapNotice}
+                </p>
+              )}
+            </div>
+            <div className="ask-nearby-list-pane">
+              <NearbyList
+                nb={nb}
+                loading={loading}
+                error={error}
+                emptyText={NEARBY_EMPTY_TEXT}
+                /* 没定位时 origin 是空串：`buildAmapNavigationUrl` 只带目的地、
+                   不带假起点（它自己判 hasValidOrigin）。 */
+                navUrl={(r) => navUrlFor(r, origin)}
+                onSearch={(q) => void searchByKeyword(nearbyKeyword(q))}
+                onRetry={retry}
+                selectedIndex={selectedIndex}
+                onSelect={setSelectedIndex}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

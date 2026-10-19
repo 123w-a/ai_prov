@@ -1264,39 +1264,31 @@ def _is_recipe_detail_followup(messages, text) -> bool:
     )
 
 
-def _is_specific_dish_request(text) -> bool:
-    """用户是否已经点名了一道具体的菜。
+def _specific_dish_name(text) -> str | None:
+    """用户点名的具体菜名；没点名返回 None。**bool 判定与取名的唯一出处**。
 
-    - 「我想吃番茄炒蛋」「推荐一道清蒸鲈鱼」→ True：直接出单卡片；
-    - 「我有鸡胸肉和青菜」「推荐几道菜」「不知道吃什么」→ False：先出候选列表。
-    只报食材、口味约束或“吃不了某味道”都不算点名。
+    - 「我想吃番茄炒蛋」「推荐一道清蒸鲈鱼」→ '番茄炒蛋' / '清蒸鲈鱼'：直接出单卡片；
+    - 「我有鸡胸肉和青菜」「推荐几道菜」「不知道吃什么」→ None：先出候选列表。
+    只报食材、口味约束或"吃不了某味道"都不算点名。
+
+    两条抽取路径的**顺序刻意与旧实现相反**（点名句 → 做法句）：bool 与顺序无关
+    （任一路径命中即非 None），但取名有关——「做一道芒果糯米饭，给完整做法」
+    这类句子两条都能命中，做法句（_DISH_HOWTO_PATTERN）会把逗号后「给完整」
+    抠成名字，点名句（_DISH_REQUEST_PATTERN）才抠得出「芒果糯米饭」。
+    配图链路拿名字去生图，抠错＝生一张字面叫「给完整」的图（2026-10-19 实测）。
     """
     raw = str(text or "").strip()
     if not raw:
-        return False
+        return None
     if _RECOMMENDATION_COUNT_PATTERN.search(raw):
-        return False
+        return None
     if is_non_recipe_information_request(raw):
-        return False
+        return None
     if _NEGATED_EATING_PATTERN.search(raw) and not _DISH_REQUEST_PATTERN.search(raw):
-        return False
+        return None
     # 「先别给做法」是元指令，不是点名菜（详见 _NO_RECIPE_HOWTO_PATTERN 注释）。
     if _NO_RECIPE_HOWTO_PATTERN.search(raw):
-        return False
-
-    howto_match = _DISH_HOWTO_PATTERN.search(raw)
-    if howto_match:
-        name = _clean_howto_dish_name(howto_match.group(1))
-        if (
-            len(name) >= 2
-            and not _is_generic_dish_name(name)
-            and not _TASTE_COMPLAINT_PATTERN.search(name)
-            and not _DISH_NAME_NOISE.search(name)
-            and not any(word in name for word in _REQUEST_FILLER_WORDS)
-            and not any(word in name for word in _NON_DISH_VERBS)
-            and not any(ref in name for ref in _CONTEXTUAL_DISH_REFS)
-        ):
-            return True
+        return None
 
     for match in _DISH_REQUEST_PATTERN.finditer(raw):
         name = _LEADING_QUANTIFIER.sub("", match.group(1).strip())
@@ -1315,13 +1307,73 @@ def _is_specific_dish_request(text) -> bool:
             continue
         if any(word in name for word in _NON_DISH_VERBS):
             continue
-        return True
-    return False
+        return name
+
+    howto_match = _DISH_HOWTO_PATTERN.search(raw)
+    if howto_match:
+        name = _clean_howto_dish_name(howto_match.group(1))
+        if (
+            len(name) >= 2
+            and not _is_generic_dish_name(name)
+            and not _TASTE_COMPLAINT_PATTERN.search(name)
+            and not _DISH_NAME_NOISE.search(name)
+            and not any(word in name for word in _REQUEST_FILLER_WORDS)
+            and not any(word in name for word in _NON_DISH_VERBS)
+            and not any(ref in name for ref in _CONTEXTUAL_DISH_REFS)
+        ):
+            return name
+    return None
+
+
+def _is_specific_dish_request(text) -> bool:
+    return _specific_dish_name(text) is not None
 
 
 def is_specific_dish_request(text) -> bool:
     """对外别名：路由层（chat_route）与 Agent 层必须同源，避免两层判定漂移。"""
     return _is_specific_dish_request(text)
+
+
+def extract_specific_dish_name(text) -> str | None:
+    """对外取名入口：**谁放人进门（is_specific_dish_request），谁就得交出名字**。
+
+    2026-10-19 实测缺口：`_names_dish_for_image` 靠 is_specific_dish_request
+    放「做一道芒果糯米饭，给完整做法」进配图链路，链路里却只用
+    `_extract_requested_dish` 取名（12 字需求句闸挡下 → None），于是提着空名字
+    走完链路，回「上一轮没有可换图的菜谱」——用户明明点名了菜。
+    """
+    return _specific_dish_name(text)
+
+
+# 「要做法/方案」这类**过程内容**的词面。与 _NO_RECIPE_HOWTO_PATTERN 互补：
+# 「先别给做法」也含"做法"二字，但它是元指令（明确不要），命中否定式就不算要。
+_RECIPE_CONTENT_WORDS = (
+    "做法", "怎么做", "如何做", "怎样做", "咋做", "怎么烹饪", "烹饪",
+    "食谱", "菜谱", "步骤", "教程", "方案",
+)
+
+# 否定式元指令的第二种语序（「做法先别给」）：_NO_RECIPE_HOWTO_PATTERN 只认
+# 「先别给做法」这种动词在前的写法，名词在前会漏——漏了就等于"用户说了别给
+# 做法，却给了做法"（2026-10-19 探针逮到的诚实缺口）。
+_NO_RECIPE_HOWTO_REVERSE = re.compile(
+    r"(?:做法|步骤|过程|流程|菜谱|食谱)[^，。！？]{0,6}?(?:先)?"
+    r"(?:别|不要|不用|无需|不需要|不必)(?:再)?(?:给|说|讲|写)"
+)
+
+
+def asks_for_recipe_content(text) -> bool:
+    """句子是否在要「做法/方案」这类过程内容——而不只是要一张图。
+
+    用途（2026-10-19）：路由层把「点名菜 + 要图」硬派进配图链路（E4 决策，
+    防的是被候选清单劫持），但配图链路只出图卡（steps=[]，开口只说"补上配图"）。
+    带做法诉求的句子（「做一道X，给完整做法」「做一道X，完整方案，要配图」）
+    要的是**全做法卡片＋图**——正常单卡链路本来就出这个（实测「我想吃椰子鸡汤，
+    直接给做法」= 全卡 + 补图线程），把它塞进纯图链路是答非所问。
+    """
+    raw = str(text or "")
+    if _NO_RECIPE_HOWTO_PATTERN.search(raw) or _NO_RECIPE_HOWTO_REVERSE.search(raw):
+        return False
+    return any(word in raw for word in _RECIPE_CONTENT_WORDS)
 
 
 # 明确要图时用户要的是成品图，不是候选清单：此时不进入候选阶段。

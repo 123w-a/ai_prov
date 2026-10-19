@@ -13,6 +13,13 @@ import sys
 import time
 import urllib.request
 
+# OpenBLAS 在首次导入时就会按默认线程数申请内存。Windows 上默认值可能过大，
+# 启动预热时会出现 "Memory allocation still failed" 并让后端退出。
+# 必须在导入 uvicorn / api.main_app 之前设置，显式配置过的环境变量保持优先。
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import uvicorn
 
 from api.main_app import app

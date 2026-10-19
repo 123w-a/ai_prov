@@ -4,6 +4,7 @@ import { benchLine, connLine } from '../data/waitLines.ts'
 import { WaitFacts } from './WaitFacts.tsx'
 import { WaitDetail } from './WaitDetail.tsx'
 import { WaitStream } from './WaitStream.tsx'
+import { WaitAnswer } from './WaitAnswer.tsx'
 
 /**
  * 等待界面（2026-10-12 第四轮改版：照 .tmp-img/wait-redesign-r1.png 重排）。
@@ -107,10 +108,10 @@ export function WaitCard({
 
       {run.error && <p className="wait-error">{run.error}</p>}
 
-      {/* 顺序照稿：记录 → 过程稿 → 出口。 */}
+      {/* 顺序照稿：记录 → 过程稿 → 出口。活卡片在过程稿之后（详见 WaitAnswer 头注释）。 */}
       <WaitDetail run={run} />
-
       <WaitStream run={run} />
+      <WaitAnswer run={run} />
 
       {/* 出口留在右下角，且是一条**低调文字**而不是整宽按钮：稿这一处是"想清楚
           再点"的位置，不是主行动（主行动在结果页）。 */}

@@ -570,13 +570,40 @@ export async function fetchMemberWeekly(name: string): Promise<MemberWeeklyRepor
   )
 }
 
+/** 单条饮食建议。`kind` 决定前端怎么标注来源语气：
+ *  intake=某项超标要改 / positive=这项没问题 / progress=在变好 / variety=菜式轮换 / sample=样本不足。 */
+export interface IntakeTip {
+  text: string
+  kind: 'intake' | 'positive' | 'progress' | 'variety' | 'sample'
+  metric: string | null
+  detail: string | null
+}
+
+export interface IntakeTips {
+  basis: 'ok' | 'insufficient'
+  window: { meals: number; latest: string | null; earliest: string | null }
+  meals: number
+  metrics: Record<string, { off: number; total: number; ratio: number }>
+  tips: IntakeTip[]
+}
+
+/**
+ * 「今日饮食建议」：按最近几餐的成分摄入水平算出来的要点（2026-10-19 接线）。
+ *
+ * 后端只取最近 6 餐、按**家庭整体**口径算，不分成员——原因是记账里带成员归属的
+ * 比例还很低，按人筛会只剩个位数样本、永远出不了方向性结论。
+ * 与 `/api/reports/*` 这族一样是裸返回；样本不足时 `basis: "insufficient"`，
+ * `tips` 里会有一条诚实说明，**不是**错误码。
+ */
+export async function fetchIntakeTips(): Promise<IntakeTips> {
+  return jsonRequest<IntakeTips>('/api/reports/intake-tips')
+}
+
 export interface WeeklySummaryResponse {
   ai_summary: string | null
   reason?: string
   cached?: boolean
-}
-
-export async function fetchWeeklySummary(refresh = false): Promise<WeeklySummaryResponse> {
+}export async function fetchWeeklySummary(refresh = false): Promise<WeeklySummaryResponse> {
   return jsonRequest<WeeklySummaryResponse>(
     `/api/reports/weekly-summary${refresh ? "?refresh=1" : ""}`,
   )

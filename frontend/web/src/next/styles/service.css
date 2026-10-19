@@ -279,6 +279,23 @@
   gap: 7px;
 }
 
+.sv-rest > li[role='button'] {
+  cursor: pointer;
+}
+
+.sv-rest > li.is-selected {
+  margin: 0 -10px;
+  padding-right: 10px;
+  padding-left: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.sv-rest > li:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .sv-rest-h {
   display: flex;
   align-items: baseline;
