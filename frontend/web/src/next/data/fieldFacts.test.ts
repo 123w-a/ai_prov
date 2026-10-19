@@ -12,7 +12,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { bmiFact, dislikesIntersection, favoritedAtLabel, memberBodyExtras, progressLine } from './fieldFacts.ts'
+import { bmiFact, dislikesIntersection, favoritedAtLabel, memberBodyExtras, progressLine, weightLine } from './fieldFacts.ts'
 import type { FamilyMember } from '../../types.ts'
 
 /** 实测（GET /profile，旧档案）：basic 里两个新键的值为 null。 */
@@ -179,4 +179,79 @@ test('dislikesIntersection：顺序跟随第一位成员，不排序（排序会
 
 test('dislikesIntersection：同一成员内重复项去重', () => {
   assert.deepEqual(dislikesIntersection([M(['芹菜', '芹菜']), M(['芹菜'])]), ['芹菜'])
+})
+
+/* 体重记录那一行（2026-10-18 新增，配身体档案页的「记录体重」）。
+ *
+ * 这几条钉住三件事，每件都对应一个真实的读错方式：
+ *  ① 一条记录算不出变化 → 后端给 null（不是 0.0），文案必须说"再记一次"。
+ *     渲染成 `+0.0kg` 会被读成"体重没变"，而事实是"还比不了"。
+ *  ② 两条以上要给**可核对的表达**：起止日期 + 带符号差值。只给差值不给日期，
+ *     用户没法判断这个变化是几天内发生的（也就无从判断算快算慢）。
+ *  ③ **不得出现任何胖瘦/达标评价**：孕期增重有医学推荐区间，但那是产检的事。
+ *     一个膳食规划助手说"这个增速偏快"，就是越界替医生下结论。
+ */
+
+test('weightLine：一条都没记 → 说清怎么让它有值，且不出现百分比', () => {
+  const t = weightLine({ count: 0, latest: null, earliest: null, change_kg: null })
+  assert.match(t, /还没有体重记录/)
+  assert.match(t, /记一次/)
+  assert.doesNotMatch(t, /%/, '体重不是百分比指标')
+})
+
+test('weightLine：只有一条 → 说"再记一次"，绝不写 0.0', () => {
+  const t = weightLine({
+    count: 1,
+    latest: { date: '2026-10-18' },
+    earliest: { date: '2026-10-18' },
+    change_kg: null,
+  })
+  assert.match(t, /再记一次/)
+  assert.doesNotMatch(t, /0\.0/, '一条记录算不出变化，写 +0.0kg 会被读成"体重没变"')
+  assert.doesNotMatch(t, /\+/, '没有变化量就不该出现正号')
+})
+
+test('weightLine：两条 → 起止日期 + 带符号差值（真实「我」录入后的形态）', () => {
+  const t = weightLine({
+    count: 2,
+    earliest: { date: '2026-10-11', weight_kg: 62.8 },
+    latest: { date: '2026-10-18', weight_kg: 63.4 },
+    change_kg: 0.6,
+  })
+  assert.match(t, /2026-10-11/)
+  assert.match(t, /2026-10-18/)
+  assert.match(t, /\+0\.6kg/)
+})
+
+test('weightLine：减少时保留负号，不许取绝对值', () => {
+  const t = weightLine({
+    count: 2,
+    earliest: { date: '2026-10-11' },
+    latest: { date: '2026-10-18' },
+    change_kg: -1.2,
+  })
+  assert.match(t, /-1\.2kg/)
+})
+
+test('weightLine：null / undefined / 缺字段都不炸，也不编数字', () => {
+  for (const bad of [null, undefined, {}, { count: null }]) {
+    assert.match(weightLine(bad as never), /还没有体重记录/)
+  }
+})
+
+test('weightLine：count 说有两条但 change 缺失 → 落"再记一次"，不猜差值', () => {
+  const t = weightLine({ count: 2, change_kg: null, earliest: { date: 'a' }, latest: { date: 'b' } })
+  assert.match(t, /再记一次/)
+})
+
+test('weightLine：不出现任何胖瘦/达标评价（孕期增重属于产检）', () => {
+  const t = weightLine({
+    count: 2,
+    earliest: { date: '2026-10-11' },
+    latest: { date: '2026-10-18' },
+    change_kg: 2.4,
+  })
+  for (const banned of ['达标', '正常', '偏快', '偏慢', '超标', '健康', '建议']) {
+    assert.doesNotMatch(t, new RegExp(banned), `不许出现「${banned}」这类评价词`)
+  }
 })

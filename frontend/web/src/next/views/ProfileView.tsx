@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import type { IntakeTips, MemberInput } from '../../api/client.ts'
-import { addFridge, fetchIntakeTips, setFridge } from '../../api/client.ts'
+import {
+  addFridge,
+  fetchIntakeTips,
+  fetchNutritionCoverage,
+  fetchWeightLog,
+  postWeight,
+  setFridge,
+  type NutritionCoverage,
+  type WeightSummary,
+} from '../../api/client.ts'
 import { FridgePhotoButton } from '../blocks/FridgePhotoButton.tsx'
 import { MemberForm } from '../blocks/MemberForm.tsx'
-import { bmiFact, progressLine } from '../data/fieldFacts.ts'
+import { bmiFact, progressLine, weightLine } from '../data/fieldFacts.ts'
 import { memberBodyExtras, notifyFridgeChanged, useHousehold, type FamilyData } from '../data/household.ts'
 
 /**
@@ -48,6 +57,25 @@ const SEX_LABEL: Record<string, string> = { male: '男', female: '女', other: '
 /** 数值位的中性占位。用一个字面「待补」而不是 0 或一个像样的数字：
  *  0 会被当成"真的是零"，数字会被当成"真的是这个值"——两者在健康信息上都是撒谎。 */
 const TODO = '待补'
+
+/**
+ * 右栏四个环的维度与显示名（2026-10-18）。
+ *
+ * 原稿是「蛋白质 / 碳水化合物 / 脂肪 / 维生素」，但后端给不出这四个达成率：
+ * `meals.json` 的菜名没有重量，算不出摄入克数；`lights` 里实测只出现过
+ * 「钠 / 糖 / 脂肪」三种灯，**没有蛋白质、碳水、维生素**。所以四个环改成
+ * 能被原文证明的四维**覆盖度**，名字也必须跟着改——继续挂「碳水化合物」「维生素」
+ * 的牌子而填别的东西，比留个「待补」更糟（用户会拿它当营养结论）。
+ *
+ * 「维生素」这一维被换掉的原因最硬：`data/china_food_components.csv` 里
+ * 只有 `维生素Cmg`，没有 A/D/E/K/B 族，合不出"维生素"这一个百分比。
+ */
+const COVERAGE_RINGS = [
+  { key: 'protein', label: '优质蛋白' },
+  { key: 'staple', label: '主食' },
+  { key: 'fat', label: '脂肪灯' },
+  { key: 'produce', label: '蔬果' },
+] as const
 /** 档案里确实没登记这一项时画它（与 TODO 区分：一个是"后端没有这个字段"，
  *  一个是"这一项用户没填"）。 */
 const NIL = '—'
@@ -118,7 +146,13 @@ function withBodyFields(input: MemberInput, m: FamilyData['members'][number]): M
  *  于是「我」渲染成 `BMI 20.3 待补`——真值被自己的签说成占位。现在只有算不出
  *  （缺身高或体重）时才画「待补」，且缺哪一项由小注点名；算得出就只给值。
  *  保持这条：**值是真的时候，槽里不许出现任何占位字样**。 */
-function BasicData({ m }: { m: FamilyData['members'][number] }) {
+function BasicData({
+  m,
+  weight,
+}: {
+  m: FamilyData['members'][number]
+  weight?: WeightSummary
+}) {
   const b = m.profile.basic
   const pregnant = m.profile.conditions.some((c) => c.includes('孕'))
   const { gestationalWeeks, bodyFatRate, nutrition } = memberBodyExtras(m)
@@ -130,9 +164,20 @@ function BasicData({ m }: { m: FamilyData['members'][number] }) {
   // BMI 由身高体重真算（推导在 data/fieldFacts.ts 的 bmiFact，有 node --test 钉着）。
   // 算得出就只给值，**不挂任何签**：2026-10-12 实测页面把「我」的真值渲染成了
   // `BMI 20.3 待补`——真值旁边挂占位签，等于把真数说成假的。
-  const bmi = bmiFact(b)
-  const mainCol: Array<[string, string, string | null]> = b?.weight_kg
-    ? [['体重', `${b.weight_kg}kg`, age]]
+  /**
+   * 体重取值优先级：**体重记录的最新一条 → 档案里登记的 weight_kg**。
+   *
+   * 体重要靠日积月累才看得出趋势，用户记了新的就不该继续拿建档时的旧值算 BMI
+   * （否则页面会出现"体重 65kg"旁边写着按 63kg 算出来的 BMI，两个数互相矛盾）。
+   * 但从没记过的人不能因此变成"算不出"，所以要回落档案值。
+   */
+  const kg = weight?.latest?.weight_kg ?? b?.weight_kg ?? null
+  // BMI 由身高体重真算（推导在 data/fieldFacts.ts 的 bmiFact，有 node --test 钉着）。
+  // 算得出就只给值，**不挂任何签**：2026-10-12 实测页面把「我」的真值渲染成了
+  // `BMI 20.3 待补`——真值旁边挂占位签，等于把真数说成假的。
+  const bmi = bmiFact({ height_cm: b?.height_cm, weight_kg: kg })
+  const mainCol: Array<[string, string, string | null]> = kg != null
+    ? [['体重', `${kg}kg`, age]]
     : sex
       ? [['性别', sex, age]]
       : [['体重', NIL, age]]
@@ -157,6 +202,8 @@ function BasicData({ m }: { m: FamilyData['members'][number] }) {
   // 让"这几成"能对上账；null（判据未定 / 该成员本周没有已记录餐次）就照实说未给出。
   // 文案推导在 data/fieldFacts.ts（纯函数，有 node --test 兜着）。
   const progressNote = progressLine(nutrition)
+  // 体重记录那一行的话（三种状态都不写 0.0kg，推导见 fieldFacts.weightLine）。
+  const weightNote = weightLine(weight)
 
   return (
     <section className="pf-basic">
@@ -182,36 +229,109 @@ function BasicData({ m }: { m: FamilyData['members'][number] }) {
         {bmi.missing === null ? '' : `BMI 因缺${bmi.missing}暂算不出；`}
         {pregnant && gestationalWeeks === null ? '孕周尚未登记，数值位为占位；' : ''}
         {bodyFatRate === null ? '体脂率尚未登记，数值位为占位；' : ''}
-        各项目标进度百分比后端暂未提供，数值位为占位。
+        {weightNote}
         {` ${progressNote}`}
       </p>
     </section>
   )
 }
 
-/** 「目标与进度」（照稿：小标题 + 三条「名称 + 进度条 + 百分比」）。
- *  三条的名称随成员的目标变：孕妇走孕期口径，其余走增肌口径（稿上就是这个分法）。
- *  百分比后端没有，所以轨道照画、填充宽度留空——填一个 70% 就是在编造进度。 */
-function GoalProgress({ m }: { m: FamilyData['members'][number] }) {
-  const pregnant = m.profile.conditions.some((c) => c.includes('孕'))
-  const rows = pregnant
-    ? ['体重增长', '营养均衡', '胎儿发育']
-    : ['体重增长', '肌肉量提升', '体脂率控制']
+/**
+ * 成员卡内的「记录体重」（2026-10-18 新增）。**数据由用户自己录入** ——
+ * 本页其它数字都来自档案或后端统计，只有这一项是用户主动交上来的。
+ *
+ * 三个刻意的取舍：
+ *  - **保存后不本地拼值，而是回调 `onSaved` 重拉**：同一天重复记在后端是**覆盖**
+ *    语义，本地往数组里 push 会把"今天已经记过"拼成两条，页面显示 2 条而后端只有 1 条。
+ *  - **日期可改**：用户常常隔几天才想起来补记。如果只能记"今天"，
+ *    「体重变化」永远算不出来（分母永远只有当天一条）。
+ *  - **出错原样显示后端的话**：体重超范围、日期格式坏都是后端判的（400 + detail）。
+ *    前端另编一句就会与真实规则分叉——后端改了边界，这里还在念旧的。
+ */
+function WeightEntry({
+  name,
+  summary,
+  err,
+  onSaved,
+}: {
+  name: string
+  summary?: WeightSummary
+  err: string
+  onSaved: () => void
+}) {
+  const [value, setValue] = useState('')
+  const [day, setDay] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const submit = () => {
+    const text = value.trim()
+    if (!text) {
+      setMsg('先填一个体重（kg）。')
+      return
+    }
+    const kg = Number(text)
+    if (!Number.isFinite(kg)) {
+      setMsg('体重得是数字。')
+      return
+    }
+    setSaving(true)
+    setMsg('')
+    postWeight(name, kg, day.trim() || undefined)
+      .then(() => {
+        setValue('')
+        setMsg('已记录。')
+        onSaved()
+      })
+      .catch((e) => setMsg(e instanceof Error ? e.message : '没能记上，稍后再试。'))
+      .finally(() => setSaving(false))
+  }
+
+  const count = summary?.count ?? 0
 
   return (
-    <section className="pf-goal">
-      <h4 className="pf-blk-h">{pregnant ? '孕期目标与进度' : '增肌目标与进度'}</h4>
-      <ul className="pf-goal-list">
-        {rows.map((r) => (
-          <li className="pf-goal-item" key={r}>
-            <span className="pf-goal-k">{r}</span>
-            {/* 空轨道 = 后端无百分比。aria-hidden：它不是"0%"这个事实，读屏也不该读成 0。 */}
-            <span className="pf-bar" aria-hidden="true" />
-            <span className="pf-goal-v">{TODO}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div className="pf-weight">
+      <div className="pf-weight-row">
+        <input
+          className="pf-weight-in"
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          min="20"
+          max="400"
+          placeholder="体重 kg"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
+        />
+        <input
+          className="pf-weight-day"
+          type="date"
+          aria-label="记录日期"
+          value={day}
+          onChange={(e) => setDay(e.target.value)}
+        />
+        <button type="button" className="pf-act" onClick={submit} disabled={saving}>
+          {saving ? '记录中…' : '记录体重'}
+        </button>
+      </div>
+      {/* 空态说清怎么让它有值；有记录就报条数与最新一条的日期。
+          这里**不写任何百分比、不做任何胖瘦评价**——它只陈述"记了几次"。 */}
+      <p className="pf-weight-hint">
+        {err
+          ? err
+          : count === 0
+            ? '还没有记录。记一次，这里会显示最新体重并参与 BMI 计算。'
+            : `已记录 ${count} 次，最新一条 ${summary?.latest?.date ?? NIL}。`}
+      </p>
+      {msg && (
+        <p className="pf-weight-msg" role="status">
+          {msg}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -281,6 +401,59 @@ export function ProfileView({
       })
     return () => { alive = false }
   }, [])
+
+  /* ── 本周四维营养覆盖度（2026-10-18 接线）────────────────────────────
+   * 右栏「本周营养覆盖」那四个环的数据。此前是四个空环恒写「待补」：后端
+   * 从来没有这个字段，前端照 v5 稿留了槽位（见本文件头注释第 2 条）。
+   *
+   * 口径是**覆盖度而不是达成率**：meals.json 的 dish 是自由文本菜名、没有任何
+   * 重量，算不出摄入克数，所以「吃到目标的百分之几」在这个数据面上不存在；编一个
+   * 默认份量去凑，在孕期成员身上就是错误医嘱。四个环报的是能被原文证明的事实——
+   * 本周有几分之一的餐吃到了蛋白源 / 主食 / 蔬果，以及脂肪灯为绿的比例
+   * （lights 里确实有脂肪灯，是唯一能取实值的一维）。完整论证见
+   * storage/nutrition_coverage.py 与 api/client.ts 的 fetchNutritionCoverage。
+   *
+   * 不传成员名：后端按档案的 active_id 取，与右栏「当前生效」视角一致。
+   * 切换生效成员后必须重取，所以依赖 active_id。
+   */
+  const [coverage, setCoverage] = useState<NutritionCoverage | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetchNutritionCoverage()
+      .then((d) => {
+        if (alive) setCoverage(d)
+      })
+      .catch(() => {
+        if (alive) setCoverage(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [family?.active_id])
+
+  /* ── 体重记录（2026-10-18 接线）──────────────────────────────────────
+   * 由用户在成员卡里自己录入（见 BasicData 里的「记录体重」）。**一次拉全家**：
+   * 档案页一屏要画所有成员卡片，按人拉 N 次会读到不同时点的 weight_log.json，
+   * 同屏出现互相矛盾的两个体重。
+   *
+   * 这份数据有两个用途：
+   *  ① 覆盖「体重」显示位与 BMI 的输入值（优先级：记录最新一条 → 档案值）；
+   *  ② 供小注说明变化量。**不判断这个变化正不正常**——孕期增重有医学推荐区间，
+   *     但那是产检的事，详见 data/fieldFacts.ts 的 weightLine。
+   */
+  const [weights, setWeights] = useState<Record<string, WeightSummary>>({})
+  const [weightErr, setWeightErr] = useState('')
+  const reloadWeights = useCallback(() => {
+    fetchWeightLog()
+      .then((d) => {
+        setWeights(d)
+        setWeightErr('')
+      })
+      .catch(() => setWeightErr('体重记录没读出来。'))
+  }, [])
+  useEffect(() => {
+    reloadWeights()
+  }, [reloadWeights, family?.active_id])
 
   /* ── 冰箱的写路径（2026-10-14 接线）──────────────────────────────────
    * 后端早就有 `/fridge/set`（覆盖）与 `/fridge/add`（补货），新版前端此前
@@ -471,7 +644,13 @@ export function ProfileView({
                 />
               ) : (
                 <>
-                  <BasicData m={m} />
+                  <BasicData m={m} weight={weights[m.name]} />
+                  <WeightEntry
+                    name={m.name}
+                    summary={weights[m.name]}
+                    err={weightErr}
+                    onSaved={reloadWeights}
+                  />
                   {shown.length > 0 && (
                     <dl className="pf-rows">
                       {shown.map(([label, value]) => (
@@ -482,7 +661,6 @@ export function ProfileView({
                       ))}
                     </dl>
                   )}
-                  <GoalProgress m={m} />
                 </>
               )}
             </li>
@@ -627,20 +805,48 @@ export function ProfileView({
           </ul>
         </section>
 
-        {/* 营养目标达成：稿上是 2×2 四个圆环。后端没有达成率，所以环里不写百分比——
-            环只画轨道，圆心写中性占位。四个维度名照稿保留。 */}
+        {/* 本周营养覆盖：2026-10-18 接上后端真数据。
+            此前是四个恒写「待补」的空环（后端从来没有"达成率"这个字段，前端照
+            v5 稿留槽位）。现在的口径是**覆盖度**——菜名原文能证明「这一餐有没有
+            吃到蛋白源/主食/蔬果」，脂肪用现成的营养灯。分母为 0（本周还没记到
+            这位成员的餐，例如孕期成员至今零归属）→ 仍写「待补」，绝不写 0%。 */}
         <section className="pf-rail-card">
-          <h3 className="pf-rail-h">营养目标达成情况</h3>
+          <h3 className="pf-rail-h">本周营养覆盖</h3>
           <ul className="pf-ring-grid">
-            {['蛋白质', '碳水化合物', '脂肪', '维生素'].map((k) => (
-              <li className="pf-ring-item" key={k}>
-                <span className="pf-ring-k">{k}</span>
-                <span className="pf-ring" aria-hidden="true">
-                  <span className="pf-ring-hole">{TODO}</span>
-                </span>
-              </li>
-            ))}
+            {COVERAGE_RINGS.map(({ key, label }) => {
+              const dim = coverage?.[key]
+              /* 先收窄成一个数再画：`has` 只保证「有值」，TS 不会据此把 dim.value
+                 从 number|null 收窄，直接乘 100 会报 TS18047。 */
+              const pct =
+                dim && dim.value != null && dim.denominator > 0
+                  ? Math.round(dim.value * 100)
+                  : null
+              const has = pct != null
+              return (
+                <li className="pf-ring-item" key={key}>
+                  <span className="pf-ring-k">{label}</span>
+                  <span
+                    className="pf-ring"
+                    aria-hidden="true"
+                    /* 环的填充比例。无数据时给 0%（整圈轨道色）而不是省略：
+                       省略会回落到 CSS 默认值，语义上变成"这个属性没人管"。 */
+                    style={{ '--ring-p': has ? `${pct}%` : '0%' } as CSSProperties}
+                  >
+                    <span className="pf-ring-hole">
+                      {has ? `${pct}%` : NIL}
+                    </span>
+                  </span>
+                  <span className="pf-ring-sub">
+                    {has && dim ? `${dim.numerator}/${dim.denominator} 餐` : '本周未记到餐次'}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
+          <p className="pf-rail-body">
+            口径：按菜名判定这一周有几分之一的餐吃到了对应类别，「脂肪灯」取该餐营养灯为绿的比例。
+            菜名里没有重量的餐算不出摄入量，所以这里给的是覆盖度而非达成率。
+          </p>
         </section>
 
         {/* 今日饮食建议：稿上是三条无勾选的要点。内容来自后端按「最近 6 餐的

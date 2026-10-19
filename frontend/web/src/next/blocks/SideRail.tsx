@@ -1,8 +1,9 @@
 import { formatStamp } from '../data/model.ts'
+import type { SourceFile } from '../data/sources.ts'
 import { isShown, type ResultVM } from '../data/viewModel.ts'
 import { Icon } from '../ui/Icon.tsx'
 import { Panel } from '../ui/Panel.tsx'
-import { RailEvidence } from './RailEvidence.tsx'
+import { AuthorityFiles } from './AuthorityFiles.tsx'
 import { SafetyNotice } from './SafetyNotice.tsx'
 
 /**
@@ -17,8 +18,10 @@ import { SafetyNotice } from './SafetyNotice.tsx'
  * 中区不再有这四段的副本（Sources 已同源去重）——同一句话一屏只印一遍。
  *
  * 有意保留与预期图的两处差异（内容忠实优先于标题忠实）：
- *   · 第四段叫「本轮依据」不叫「数据来源」：这一段列的是"条件 + 规则 + 出处 + 页码"
- *     的可逐条核对链，换成「数据来源」会把"能拿去翻书核对"这层语义抹平。
+ *   · 第四段 2026-10-19 由「本轮依据」改为**「权威文件」**（用户裁决：结果页右栏
+ *     不放本周/冰箱这类背景信息，要放权威文件本体，且能点开看原文）。列表内容
+ *     仍是"本轮检索命中的文件 + 确定性规则出处"，可逐条核对的语义没有丢，
+ *     只是把"能翻到那一页"从文件名升级成可展开的原文。
  *   · 成员段标题用真名字「{成员} 适配提示」，不补身份括注（孕中期/增肌期）：
  *     answer 里没有身份字段，编一个就是替档案说话。
  *
@@ -33,7 +36,7 @@ import { SafetyNotice } from './SafetyNotice.tsx'
  */
 export function SideRail({ vm, sources, askedAt }: {
   vm: ResultVM
-  sources: Array<{ source: string }>
+  sources: SourceFile[]
   /** 本轮询问时刻（回声条同款）。列尾 meta 用；无时刻不渲染（AskEcho 纪律 3）。 */
   askedAt?: number | null
 }) {
@@ -105,9 +108,11 @@ export function SideRail({ vm, sources, askedAt }: {
           </section>
         )}
 
-        {/* ── 段四：本轮依据（确定性出处优先，模型自述标注后兜底） ─────
-            2026-10-10 拆到 ./RailEvidence.tsx（规模上限）。 */}
-        <RailEvidence evidence={evidence} sources={sources} />
+        {/* ── 段四：权威文件（本轮命中的文件可点开看原文；规则出处只有文件名+页码） ──
+            2026-10-19 由 ./RailEvidence.tsx 升级为 ./AuthorityFiles.tsx。
+            RailEvidence 文件保留不删：它记录的"确定性出处优先 / 模型自述须标注"
+            这两条判据仍原样住在 AuthorityFiles 里，回退时可对照。 */}
+        <AuthorityFiles refs={sources} rules={evidence} />
       </Panel>
       {/* 列尾 meta（2026-10-09 · lave2 解 A，用户已批）：四段卡组收在 Panel
           底，下面那片同层纸带缺的不是高度、是终止符。时间取回声条同款

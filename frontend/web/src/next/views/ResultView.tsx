@@ -24,7 +24,7 @@ import { ExtraRecipes } from '../blocks/ExtraRecipes.tsx'
 // 数据由 app 层算好传下来——AskRail 自己是只读展示组件，不许在这里再拉一份，
 // 否则"首屏说的人"和"候选页说的人"会变成两份可能不一致的数据。
 import { AskRail } from '../blocks/AskRail.tsx'
-import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
+import type { FamilyMemberRow } from '../data/firstScreen.ts'
 import { Fold } from '../ui/Fold.tsx'
 import { Icon } from '../ui/Icon.tsx'
 import { DishHero } from '../blocks/DishHero.tsx'
@@ -251,8 +251,6 @@ export function RunResult({
   onPickCandidate,
   onRequestImage,
   fam,
-  week,
-  fridge,
   readErr = null,
   hideInput = false,
   onDeleteTurn,
@@ -273,11 +271,11 @@ export function RunResult({
   /** 菜名右侧「配图 / 换一张图」（图片轮，无落点不发）。可见性不在这里判：
    *  与★/评分同一道闸（useResultActions.visible）在下面统一放行。 */
   onRequestImage?: (dishName: string, revision: boolean) => void
-  /** 候选页右栏那三块的数据（第 F 项）。只有候选轮用得上，其余形态传 null
-   *  ——普通散文轮与结构化轮不该因为这次改动多出一个右栏。 */
+  /** 候选页右栏那块「匹配的饮食档案」（第 F 项）。只有候选轮用得上，其余形态传 null
+   *  ——普通散文轮与结构化轮不该因为这次改动多出一个右栏。
+   *  2026-10-19 用户裁决后，候选页右栏**不再收**本周与冰箱（见下面候选分支的注释），
+   *  故这里没有 week / fridge 两个入口：数据不再从 app 层流进来。 */
   fam?: { members: FamilyMemberRow[]; shared: string[] } | null
-  week?: WeekView | null
-  fridge?: { count: number; names: string } | null
   /** 首屏读失败的原因（useFirstScreen().readError）。候选页右栏与首屏读同一份数据，
    *  读不到时同样要说得出来（透传，不加工）。 */
   readErr?: string | null
@@ -519,8 +517,14 @@ export function RunResult({
               本来就是 `minmax(0,1fr) var(--rail)`，两个语境共用它，所以这里只把
               <AskRail> 放回 .ask-main 之外，不再覆盖网格本身。
               cand 传 null：那个"待确认"块是首屏专属（它是档案里待用户拍板的事项），
-              候选页要回答的是"为什么是这三个"，混进待确认事项只会跑题。 */}
-          <AskRail fam={fam ?? null} week={week ?? null} cand={null} fridge={fridge ?? null} readErr={readErr} variant="candidate" />
+              候选页要回答的是"为什么是这三个"，混进待确认事项只会跑题。
+              2026-10-19 用户裁决：**结果页右栏不要「本周已做过」「冰箱现有食材」**
+              ——那两块是"提问时的背景"，答案已出来后它们只是在占地方；右栏留给
+              "凭什么给这三个"（匹配的饮食档案）。权威文件在选定菜品后由 SideRail
+              的第四段给出（那里才有本轮检索命中的文件与原文）。故这里两块都不传，
+              AskRail 的这两个入参是可选、不传即整块不渲染——组件本身仍保留它们给首屏
+              （AskView 传的是真实数据，提问页的右栏一个字都没改）。 */}
+          <AskRail fam={fam ?? null} week={null} cand={null} fridge={null} readErr={readErr} variant="candidate" />
         </div>
       ) : (
         <ProseResult

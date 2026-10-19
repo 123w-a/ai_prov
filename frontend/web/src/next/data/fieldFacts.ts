@@ -123,6 +123,44 @@ export function progressShort(nutrition: NutritionProgress | null | undefined): 
   return n === null || d === null ? `本周达标 ${percent}` : `本周 ${n}/${d} 餐达标 · ${percent}`
 }
 
+/** `weightLine` 只需要的字段。刻意不写在这里 import 结构：
+ *  `api/client.ts` 的 `WeightSummary` 天然满足它，两边各自演进时不会互相拖住。 */
+export interface WeightFactLike {
+  count?: number | null
+  change_kg?: number | null
+  earliest?: { date?: string | null } | null
+  latest?: { date?: string | null } | null
+}
+
+/** 体重记录那一行的说明（2026-10-18 新增，配身体档案页的「记录体重」）。
+ *
+ *  三种状态各有各的话，**任何一种都不写 `0.0kg`**：
+ *  - 一条都没记 → 说清"记一次就能开始看变化"。用户在这个页面看到体重，
+ *                 第一反应是"为什么是空的"，得直接告诉他怎么让它有值
+ *                 （这与「目标与进度」那类无采集入口的空块刚好相反——那个该删，
+ *                 这个有入口，所以留着且说清）。
+ *  - 只有一条   → 说清"再记一次才能算变化"。一条记录算不出变化，写 `+0.0kg`
+ *                 会被读成"体重没变"，而事实是"还比不了"（后端此时给的是 null，
+ *                 不是 0 —— 与 `bmiFact` 的「空值不许变成 0」同一条纪律）。
+ *  - 两条以上   → 给**可核对的表达**：起止日期 + 差值，正号显式写出来。
+ *                 只报差值不给日期的话，用户没法判断这个变化是几天内发生的。
+ *
+ *  本函数**只陈述变化量，不判断是否正常**：孕期增重有医学推荐区间，但那是产检的
+ *  事。一个膳食规划助手说"这个增速偏快"，就是越界替医生下结论。
+ */
+export function weightLine(summary: WeightFactLike | null | undefined): string {
+  const n = num(summary?.count) ?? 0
+  if (n <= 0) return '还没有体重记录，记一次就能开始看变化。'
+  const change = num(summary?.change_kg)
+  const earliest = summary?.earliest?.date
+  const latest = summary?.latest?.date
+  if (change === null || !earliest || !latest) {
+    return '体重只有一条记录，再记一次才能算出变化。'
+  }
+  const sign = change > 0 ? '+' : ''
+  return `体重较 ${earliest} ${sign}${change}kg（到 ${latest}）。`
+}
+
 /** 「收藏于」那一格的取值（收藏页用）：后端给了收藏动作时间就显示 MM-DD
  *  （与稿的粒度一致）；null / 空 / 畸形串一律给「待补」。
  *  **绝不**拿 turnedAt（那一轮提问的时间）顶：那会把"什么时候收的"说成假的。 */

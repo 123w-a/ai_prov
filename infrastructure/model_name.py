@@ -153,8 +153,14 @@ def _build_llm(
         "base_url": final_base_url,
         "temperature": temperature,
         "streaming": True,  #意思是能流式但也不阻止invoken（）的阻塞式
-        "timeout": timeout if timeout is not None else 75,  # 上游偶发黑洞(180s+无响应)，75s 剪断后由 max_retries 重试一次；短任务（视觉审核等）可传更小值
-        "max_retries": 1,
+        "timeout": timeout if timeout is not None else 75,  # 上游偶发黑洞(180s+无响应)，75s 剪断后由 max_retries 重试；短任务（视觉审核等）可传更小值
+        # 2026-10-19 由 1 提到 2（用户批准）：上游代理通道过载时会回
+        # 「Our servers are currently overloaded」，实测一次重试不够，整轮直接失败。
+        # 走的是 openai SDK 内置重试，**只对可重试状态码退避**（408/409/429/5xx），
+        # 400 这类请求本身的错误不会重试——所以不会把真正的坏请求重放三遍。
+        # 代价：过载期一轮最多 3 次尝试（75s × 3），等待页会明显变慢；
+        # 换来的是瞬时过载不再直接丢掉用户这一轮。
+        "max_retries": 2,
     }
     # max_tokens=None 时不传入，避免部分厂商 API 因接收 null 而报错
     if max_tokens is not None:#如果传了参就传进去，没传参就是大模型去默认别写个null在这里

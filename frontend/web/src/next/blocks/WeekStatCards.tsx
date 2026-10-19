@@ -5,11 +5,19 @@
  *   · 卡 1 的「较上周」直接用后端 `prev.meals`；上周零记录（`prev.meals === 0`）
  *     写「上周无记录」，**不写 +0**——上次没记不是"没有变化"。
  *     人均是按档案里的成员数除出来的，成员数为 0 时不显示这一行（除零）。
- *   · 卡 2 的点阵**一餐一个点**，取那一顿最差的那盏灯（有红取红、无红有黄取黄、
+ *   · 卡 2 的比例条**一餐一格**，格色取那一顿最差的那盏灯（有红取红、无红有黄取黄、
  *     全绿取绿）。这是**展示口径**，不是达标判据——达标仍然只看 `on_target`
  *     （它由后端 `is_meal_on_target` 判定，全后端只此一处）。
- *     之所以不按"灯"铺点：一顿饭同时有钠/糖/脂肪三盏灯，按灯铺的话 8 餐会变成
- *     24 个点，"绿 6 黄 1"这种读法就对不上了。按餐铺，点数 = 餐数，一眼能数。
+ *     之所以不按"灯"铺格：一顿饭同时有钠/糖/脂肪三盏灯，按灯铺的话 8 餐会变成
+ *     24 个格子，"绿 6 黄 1"这种读法就对不上了。按餐铺，格数 = 餐数，一眼能数。
+ *
+ * 2026-10-19 用户判「绿 6 / 黄 13 这堆点不好看」，本卡重做为**能量条式比例条**：
+ *   · 旧版问题不是配色，是**同一件事说了两遍**——19 个圆点已经等于"19 餐"，
+ *     右侧又用文字写一遍"绿 6 黄 13"，还带三行图例占掉半卡宽度；圆点换行后
+ *     末行残缺（11+8），比例读不出来，整卡像散落的糖豆。
+ *   · 新版：一条由 19 个小段拼起来的条（段长均分、段间 2px 缝），**长度即比例**；
+ *     条下是一行三档读数（色块 + 名称 + 等宽数字）。比例交给条，数量交给数字，
+ *     不再有重复的文字汇总。格数与口径一字未动，改的只是呈现。
  */
 import { CardHead } from './WeekCardShell'
 
@@ -61,7 +69,7 @@ export function WeekMealCount({
 }
 
 export function WeekLights({ mealsDetail }: { mealsDetail: MealRow[] }) {
-  const pips: Array<{ c: 'g' | 'y' | 'r'; key: string }> = []
+  const cells: Array<{ c: 'g' | 'y' | 'r'; key: string }> = []
   let green = 0
   let yellow = 0
   let red = 0
@@ -75,52 +83,55 @@ export function WeekLights({ mealsDetail }: { mealsDetail: MealRow[] }) {
     if (c === 'g') green += 1
     else if (c === 'y') yellow += 1
     else red += 1
-    pips.push({ c, key: m.ts + m.dish })
+    cells.push({ c, key: m.ts + m.dish })
   }
-  if (pips.length === 0) return null
-  const rated = pips.length
+  if (cells.length === 0) return null
+  const rated = cells.length
+  // 读屏用整句话，视觉用条：条上的小段对读屏是噪声，所以整条给一个 aria-label。
+  const summary = [
+    green > 0 ? `达标 ${green} 道` : '',
+    yellow > 0 ? `基本达标 ${yellow} 道` : '',
+    red > 0 ? `未达标 ${red} 道` : '',
+  ]
+    .filter(Boolean)
+    .join('、')
   return (
     <section className="wk-card is-lights">
-      {/* 兜底卡（后端没给 meal_grid 时才出现）编号与 WeekMealGrid 一致 = 3；
-          口径也从「按餐次」改成「按菜品」：循环的是 mealsDetail，一条 = 一道菜。 */}
+      {/* 兜底卡（后端没给 meal_grid 时才出现）编号与 WeekMealGrid 保持一致 = 3；
+          口径是「按菜品」：循环的是 mealsDetail，一条 = 一道菜。呈现沿用 2026-10-19
+          用户裁决后的能量条（旧点阵的段色/段数口径不变，只换了画法）。 */}
       <CardHead n="3" title="营养达标情况" note="（按菜品）" />
-      <div className="wk-card-lights">
-        <span className="wk-pips" aria-hidden="true">
-          {pips.map((p) => (
-            <i className="wk-pip" data-c={p.c} key={p.key} />
-          ))}
-        </span>
-        <div className="wk-card-legend">
-          <p className="wk-card-sum">
-            {green > 0 ? (
-              <span className="wk-sum is-g">绿 {green}</span>
-            ) : null}
-            {yellow > 0 ? (
-              <span className="wk-sum is-y">黄 {yellow}</span>
-            ) : null}
-            {red > 0 ? (
-              <span className="wk-sum is-r">红 {red}</span>
-            ) : null}
-          </p>
-          <ul className="wk-legend">
-            <li>
-              <i className="wk-pip" data-c="g" aria-hidden="true" />
-              绿（达标）
-            </li>
-            <li>
-              <i className="wk-pip" data-c="y" aria-hidden="true" />
-              黄（基本达标）
-            </li>
-            <li>
-              <i className="wk-pip" data-c="r" aria-hidden="true" />
-              红（未达标）
-            </li>
-          </ul>
-        </div>
+      <div className="wk-meter" role="img" aria-label={`本周 ${rated} 道菜的营养灯：${summary}`}>
+        {cells.map((p) => (
+          <i className="wk-meter-cell" data-c={p.c} key={p.key} />
+        ))}
       </div>
+      <ul className="wk-meter-key">
+        {green > 0 ? (
+          <li data-c="g">
+            <i aria-hidden="true" />
+            达标
+            <b>{green}</b>
+          </li>
+        ) : null}
+        {yellow > 0 ? (
+          <li data-c="y">
+            <i aria-hidden="true" />
+            基本达标
+            <b>{yellow}</b>
+          </li>
+        ) : null}
+        {red > 0 ? (
+          <li data-c="r">
+            <i aria-hidden="true" />
+            未达标
+            <b>{red}</b>
+          </li>
+        ) : null}
+      </ul>
       <p className="wk-card-foot">
-        本周共 {rated} 餐有营养评估
-        {unrated > 0 ? `，另有 ${unrated} 餐没给营养灯` : ''}
+        本周共 {rated} 道菜有营养评估
+        {unrated > 0 ? `，另有 ${unrated} 道菜没给营养灯` : ''}
       </p>
     </section>
   )
