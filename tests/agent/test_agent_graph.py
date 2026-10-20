@@ -266,6 +266,28 @@ class TestStructureImagePolicy(unittest.TestCase):
         self.assertTrue(payload["image_requested"])
         self.assertEqual(payload["image_url"], "http://x/egg.jpg")
 
+    def test_candidate_turn_with_unparsed_names_keeps_plain_text(self):
+        """候选轮抠不出候选名时只保留正文，不得静默补整篇菜谱（2026-10-20）。
+
+        实测 user_31d2064c93：用户说的是「我要吃带水豆腐的菜品」——食材方向，不是点名
+        一道菜，`_is_candidate_turn` 正确判成候选轮；但 chef_think 写的是没有编号的散文，
+        `_extract_candidate_names` 抠出 0 个名字，于是静默落进 build_structured_answer，
+        用 9521ms 生成了一整篇完整做法卡片。用户原话：「我尽管已经在向他询问，但是他还是
+        直接给我结果了」。基线第 3 条要求候选轮不得误触发结构化，兜底方向必须是纯文本。
+        """
+        state = {
+            "messages": [
+                HumanMessage(content="今天喉咙不舒服，我要吃带水豆腐的菜品"),
+                AIMessage(
+                    content="喉咙疼先别放辣椒。豆腐蒸蛋滑嫩，鸡丝汤面温润，西兰花豆腐羹浓滑，都适合你现在吃。"
+                ),
+            ]
+        }
+        with patch("agent.graph.build_structured_answer") as builder:
+            result = structure_answer_node(state)
+        self.assertEqual(result["messages"], [])
+        builder.assert_not_called()
+
     def test_toggle_without_image_keeps_loading_state(self):
         answer = ChefAnswer(
             recipes=[
@@ -447,6 +469,47 @@ class TestToolBudgetFinalize(unittest.TestCase):
         content = result["messages"][-1].content
         self.assertIn("番茄炒蛋", content)
         self.assertNotIn("配图开关", content)
+
+
+class InformationAnswerRuleTest(unittest.TestCase):
+    """「能不能吃」这类提问本轮只答疑，不许配菜（2026-10-20 用户报）。
+
+    用户原话：「我尽管已经在向他询问，但是他还是直接给我结果了」。
+    第二条路径：「今天喉咙不舒服，水豆腐能不能吃？」同时命中
+    is_non_recipe_information_request 和 looks_like_dining_request（含"吃"字），
+    intent 判成 recommend，既不进候选规则也没被拦，直接吃了默认单菜规则 ——
+    模型理解成"给他配这道菜"，正文写成一整套做法。卡片层早有闸（不出卡），
+    缺的是正文层：本轮该回答问题，不该配菜。
+    """
+
+    class _CapturingLLM:
+        def __init__(self):
+            self.system_prompt = ""
+
+        def invoke(self, payload):
+            self.system_prompt = payload[0].content
+            return AIMessage(content="能吃，彻底煮透就行。")
+
+    def _system_prompt_for(self, text):
+        import agent.graph as g
+
+        fake = self._CapturingLLM()
+        with patch.object(g, "_ensure_llms"), \
+                patch.object(g, "_should_force_web_search", return_value=False), \
+                patch.object(g, "llm_with_tools", fake), \
+                patch.object(g, "summary_llm", None):
+            g.chef_agent_node({"messages": [HumanMessage(content=text)]})
+        return fake.system_prompt
+
+    def test_safety_question_gets_answer_only_rule(self):
+        prompt = self._system_prompt_for("今天喉咙不舒服，水豆腐能不能吃？")
+        self.assertIn("本轮是回答问题", prompt)
+        # 同轮不许再叠加「默认单菜规则」，否则模型又会去配一道菜
+        self.assertNotIn("默认单菜规则", prompt)
+
+    def test_plain_meal_request_does_not_get_answer_only_rule(self):
+        prompt = self._system_prompt_for("今晚想喝个快手汤，清淡一点")
+        self.assertNotIn("本轮是回答问题", prompt)
 
 
 if __name__ == "__main__":

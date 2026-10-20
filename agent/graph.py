@@ -345,6 +345,28 @@ SINGLE_RECIPE_RULE = (
     "\n\n【默认单菜规则】用户没有明确要求多个选择时，"
     "每次最终只回答最合适的一道菜，不要列出第二道、备选菜或并列方案。"
 )
+# 信息问答规则：用户在做「能不能吃 / 合不合适 / 为什么 / 怎么处理」这类提问，
+# 而不是让你配一顿饭时追加。**与候选清单、单菜规则互斥**。
+#
+# 背景（2026-10-20 用户报「我在向他询问，他却直接给我结果」的第二条路径）：
+# 「喉咙不舒服，水豆腐能不能吃」这类句子同时命中 is_non_recipe_information_request
+# 和 looks_like_dining_request（含"吃"字），intent 判成 recommend，于是既不进候选
+# 规则、也没被任何规则拦，直接吃了默认的 SINGLE_RECIPE_RULE —— 模型理解成"给他配
+# 这道菜"，正文写成一整套做法。用户问的是"能不能"，拿到的是"怎么做"。
+# 卡片层早就有闸（structure_answer 里 is_non_recipe_information_request → 不出卡），
+# 缺的是**正文层**：本轮该回答问题，不该配菜。
+ANSWER_ONLY_RULE = (
+    "\n\n【本轮是回答问题，不是配菜·最高优先级】"
+    "用户问的是「能不能吃 / 合不合适 / 会不会怎样 / 为什么 / 怎么处理」这类问题，"
+    "不是让你安排这一顿，也不是让你给做法。"
+    "1. 第一句就给结论（能吃 / 不能吃 / 要少吃 / 看情况，按事实选，不要含糊）——不许先铺垫。"
+    "2. 再用一到两句说依据；涉及健康原则时按既有要求标注《指南》文件名，检索不到就如实说。"
+    "3. 结论是「不能」或「要少吃」时，紧接一句「怎样做才能吃」的具体替代（改做法 / 换部位 / 控量 / 换搭配），"
+    "替代要能直接执行，不要只说「注意少吃」。"
+    "4. 本轮禁止：编号候选清单、完整菜谱、用料用量清单、「回复序号」这类收尾、难度星级、"
+    "以及「1. 2. 3.」步骤式做法。用户没问做法，就不要顺手推一整套。"
+    "5. 讲清楚就收，篇幅按问题大小定，不要为了显得周到而扩写成一篇。"
+)
 # 外食找店规则：只在确定性意图判成 restaurant 时追加。
 # 它与「单菜/候选清单」规则互斥，避免夜宵配酒找店被模型带回菜谱模板。
 RESTAURANT_SCENE_RULE = (
@@ -2770,6 +2792,14 @@ def chef_agent_node(state: "ChefState"):
     turn_intent = _classify_turn_intent(messages)
     if turn_intent == "restaurant":
         prompt_content += RESTAURANT_SCENE_RULE
+    # 信息问答（能不能吃 / 合不合适 / 为什么）优先于候选与单菜：本轮只答疑，不配菜。
+    # 放在候选轮之前——同一句「水豆腐能不能吃」既含食材又含"吃"字，若不在这里截住，
+    # 会一路落进下面的 SINGLE_RECIPE_RULE，被理解成"给他配这道菜"。
+    # 已选定菜品后的做法追问不适用（用户真的要做法），所以排除 _is_recipe_detail_followup。
+    elif is_non_recipe_information_request(
+        latest_text
+    ) and not _is_recipe_detail_followup(messages, latest_text):
+        prompt_content += ANSWER_ONLY_RULE
     # 两阶段点菜：泛推荐轮出候选清单（不出卡片），其余轮次保持单菜规则。
     elif _is_candidate_turn(
         messages,
@@ -4303,6 +4333,31 @@ def structure_answer_node(state: "ChefState"):#结构化回答节点
                         AIMessage(content=json.dumps(candidate_payload, ensure_ascii=False))
                     ]
                 }
+        elif (
+            not candidate_names
+            # 只在**真首轮**收窄：没有任何已交付卡片、也没有任何候选锚点（含可回收的旧清单）。
+            # 已出卡后的「再推荐一道 / 换一道」和序号失效后的清单回收都必须保持原路——
+            # 前者要出新菜，后者要把回收清单重新登记成候选 payload（见 test_candidate_flow.py
+            # 的 DeliveredCardFollowupGuardTest / StaleIndexRecoveryTest），被这里吞掉就等于
+            # 用户说了要菜却什么都没发生。
+            and not _has_delivered_card(messages)
+            and not _recent_candidates(messages)
+            and not _older_candidates(messages)
+        ):
+            # 2026-10-20 修（用户报「我在向他询问，他却直接给我结果」）：
+            # 候选轮抠不出任何候选名时，本轮**只保留正文**，绝不补一整篇菜谱。
+            #
+            # 实测 user_31d2064c93 第 1 轮：用户说的是"我要吃带水豆腐的菜品"——这是
+            # 食材方向，不是点名一道菜，_is_candidate_turn 正确判成候选轮；但 chef_think
+            # 写了一段没有编号的散文，_extract_candidate_names 抠出 0 个名字，于是静默
+            # 落进下面的 build_structured_answer，用 9521ms 生成了一整篇完整做法卡片。
+            # 同一句话 01:55 那轮给了 3 个候选、9:59 复现也给了候选——差别只在模型这一轮
+            # 写没写成编号清单，于是「同样的问法，有时让你挑、有时直接替你定」。
+            #
+            # 这正是基线第 3 条要挡的现象（候选轮不得误触发结构化）。抠名失败的兜底方向
+            # 原本反了：应当退回纯文本，而不是升级成完整菜谱。抠出恰好 1 个名字时不拦——
+            # 那说明模型只推荐了一道，等同选定，交给下面出单卡。
+            return {"messages": []}
     # 候选锚点只约束 chef_think 生成本轮结论，不能在结构化阶段再次覆盖结论。
     # `_build_structure_context` 已明确要求菜名和食材以本轮 Agent 回答为准；若用户同时
     # 补充了新条件，Agent 可能据此调整菜品，recipes 必须跟随这个最终结论，不能被旧锚点拉回。
