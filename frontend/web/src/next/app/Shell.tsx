@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { switchActiveMember, addMember, updateMember, deleteMember } from '../../api/client.ts'
 import type { MemberInput } from '../../api/client.ts'
 import { familyFacts, notifyMemberSwitched, useHousehold, type FamilyData } from '../data/household.ts'
-import { familyRows } from '../data/firstScreen.ts'
 import { ProfileView } from '../views/ProfileView.tsx'
 
 /**
@@ -195,67 +194,6 @@ export default function Shell({
             但按新稿**移到成员区之后**：稿里成员块不贴底、叶子在它下方的留白生长。
             旧注释"不要随意挪"是旧布局的实测约束（art 在成员前吃中间空），新位置
             由新稿裁决，同样靠 flex:1 吸收高度差。装饰内容与样式见 rail.css。 */}
-        {/* 家庭成员（2026-10-01 B 批次①，2026-10-05 竖栏补密时展开成区块）：
-            它是全局上下文、不是房间，所以挂在本组件、由 React state 控制，
-            hash 不承载它的状态（打开抽屉不该多一条历史、不该让后退键迷路）。
-
-            为什么要展开：竖栏 900px 里导航只占 135px，空掉约 78%，而"再加几个房间"
-            在数学上填不满（九项也才 300px）。这里展开是**零新数据**的——family 已经在
-            useHousehold 手里，pick() 也早就存在（原先只被抽屉用）。所以它不是把留白
-            装饰掉，而是把一件本来只能进抽屉做的事挪到看得见的地方：不进任何房间就能换人。
-
-            与抽屉的分工：这里管"换人"（一次点击即生效），抽屉管"管理"（增删改在身体档案页）。
-            两者不冲突，也不互相取代。 */}
-        <span className="shell-ctx">
-          <span className="shell-ctx-h">家庭成员</span>
-          {family && family.members.length > 0 ? (
-            /* 2026-10-10 画风对齐：行数据改走 familyRows()（右栏「按谁的档案来定」用的
-               同一个转换），于是姓名 / 条件标签 / 是否当前生效**一处定义、两处同源**——
-               左轨不再自己从 FamilyMember 上取字段（那样取不到 tags，因为真实
-               API 的脸是 { id, name, profile }，标签要由 profile.conditions + goal 推）。 */
-            <ul className="shell-members">
-              {(familyRows(family)?.members ?? []).map((m) => {
-                const on = m.isActive
-                return (
-                  <li key={m.id}>
-                    <button
-                      type="button"
-                      className={`shell-member${on ? ' is-on' : ''}`}
-                      aria-current={on ? 'true' : undefined}
-                      disabled={switching !== null}
-                      title={on ? '当前生效' : `切换到 ${m.name}`}
-                      onClick={() => void pick(m.id)}
-                    >
-                      {/* 头像圆（2026-10-10 画风对齐）：**实底陶圆 + 白色人形剪影**
-                          （稿的画法）。图形由 .shell-member-av 的 --av-people 背景图供给，
-                          内部不再放 Icon——两形叠加会变成"圆里套圆"。
-                          红线仍是无肖像：人形剪影不是脸。 */}
-                      <span className="shell-member-av" aria-hidden="true" />
-                      <span className="shell-member-name">{m.name}</span>
-                      {/* 「孕妇 / 增肌」标签（2026-10-10 按稿）：稿里成员名右侧有身份小片。
-                          数据取 familyRows() 推的 tags（真实档案字段，不是为对齐设计图补的文案）。 */}
-                      {m.tags.map((t) => (
-                        <span key={t} className="shell-member-tag">
-                          {t}
-                        </span>
-                      ))}
-                      {on && <span className="shell-member-on">当前</span>}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <span className="shell-member-empty">还没有读出来</span>
-          )}
-          {/* 抽屉与上面那几行的分工：这里只有名字（快速换人），抽屉里有每个人的
-              画像摘要标签与共同忌口（要不要换、换了会怎样，得先看清）。所以按钮叫
-              「成员详情」——原先叫「管理成员 · 我」，后缀与上面已列出的当前成员重复，
-              「管理」也不准：增删改在身体档案房，抽屉里只是看与切换。 */}
-          <button type="button" className="shell-ctx-btn" onClick={() => setDrawer(true)}>
-            成员详情
-          </button>
-        </span>
         {/* 历史会话常驻块（2026-10-19）：插在家庭成员区与轨底藤蔓之间——
             成员管「这一顿给谁吃」，会话管「以前问过什么」，两者都是全局上下文，
             相邻放；藤蔓仍在其下吃剩余高度。块体由 SessionRail portal 进来

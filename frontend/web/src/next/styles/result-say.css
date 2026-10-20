@@ -1,0 +1,75 @@
+/* 结果页的追问条 + 散文形态的对齐列（2026-10-20 新增）。
+ *
+ * 为什么单独一个文件：这两组规则本来写在 session.css 末尾，但那文件因此涨到
+ * 1014 行、越过 1000 行上限（check-layers 规模门禁）。它们与 .sr-* / .hs-*
+ * 完全不相交，拆出来不改变任何层叠关系。
+ *
+ * 登记在 session.css **之后**（main.tsx 最后一行）是必须的：
+ *   atmosphere.css 有一条 `.result .rs-say`（0,2,0），若本文件排在它前面，
+ *   同特异性的 position / 不透明底就会被那条压掉。
+ */
+
+/* ── 一、追问条常驻视口底部 ────────────────────────────────────────────
+ *
+ * 用户反馈"第一个问题问完就不能继续和 agent 说话了"。实测不是没有：
+ * 结果页末尾有一个 .rs-say（"想改这顿？说一句就行 →"），点了会展开完整书写面，
+ * 发送链路也是通的。问题是它的位置——量到的 y=972，而视口只有 900：
+ * 用户不把整页滚到底，就根本不知道那里有东西。
+ *
+ * 而它默认是收起态（一行小字），2026-10-15 的裁决理由是"摊开的表单太重"。
+ * 那条裁决针对的是"在页尾铺开一块面板"，和"钉在视口底的输入条"不是一件事：
+ * 后者是聊天界面的常态，重的是它的位置，不是它的形状。
+ *
+ * 处置：① 默认展开（ResultView 里 sayOpen 初值改 true，不必先找到那行小字）；
+ *      ② sticky 到视口底部，任何滚动位置都在；
+ *      ③ 不透明底 + 上边发丝线，压住滚上来的正文时读起来是"输入条"，
+ *         而不是"内容被切了一块"；
+ *      ④ 宽度收到 42em 与正文同列——正文 672、输入条若拉满 1055，就成了
+ *         "左边一列字 + 底下一条横条"两套对齐。这里用 width 而不是 max-width：
+ *         实测 max-width 在这个 sticky 元素上没吃到（computed 仍是 none），
+ *         width 能确定地收住。 */
+.rs-say,
+.rs-say-open {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  width: min(42em, 100%);
+  margin: 0 auto 0 0;
+  background: var(--bg-lo);
+  border-top: 1px solid var(--line);
+}
+
+.rs-say {
+  padding: 10px 0;
+}
+
+.rs-say-open {
+  padding: 10px 0 8px;
+}
+
+.rs-say-collapse {
+  margin: 2px 0 0;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.rs-say-collapse:hover {
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+/* ── 二、散文形态收成同一列 ───────────────────────────────────────────
+ *
+ * 一条 1055 宽的页眉 + 672 宽的正文 + 居中在 1055 里的动作条，一屏三种对齐，
+ * 这就是用户 2026-10-20 说的"不整齐"。收成 672 后：页眉的两端（返回 / 已完成）、
+ * 正文、动作条、追问条全部落在同一条 262–934 的列上。 */
+.result.is-prose > .result-head,
+.result.is-prose > .rs-foot {
+  width: min(42em, 100%);
+}

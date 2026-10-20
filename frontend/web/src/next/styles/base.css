@@ -173,13 +173,41 @@ body {
   grid-area: 1 / 2;
 }
 
-/* 与结果页同一个断点（result-v3.css L767），落回单列。
- * 不写这条的话窄屏两栏会并排挤——用户主用 Android，测不到不代表不存在。 */
-@media (max-width: 900px) {
+/* 2026-10-20：右栏下沉断点 900 → 1200。
+ * 1024 宽时左栏 234 + 右栏 276 把主栏压到 426，示例卡只剩 84px；
+ * 这一段是常见桌面工作宽度，先让主栏拿到整行，右栏在下方按 3/2/1 列排。 */
+@media (max-width: 1200px) {
   .ask-layout {
     display: block;
   }
 
+  .ask-layout > .ask-side {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 16px;
+    margin-top: 28px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .ask-layout > .ask-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ask-side > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .ask-layout > .ask-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ask-side > :last-child:nth-child(odd) {
+    grid-column: auto;
+  }
 }
 
 .ask-lead {

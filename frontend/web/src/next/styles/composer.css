@@ -134,7 +134,7 @@
   background: var(--entry-panel);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
-  padding: 20px 24px 18px;
+  padding: 16px 20px 14px;
   /* 2026-10-11：overflow 从 hidden 改回 visible。原注释说"让伸出面板的枝根被
      裁掉，只留探进来的那部分"——但**稿不是这样**：逐格墨迹图（assets-build.cjs
      map 950 200 1170 400 6）显示这枝叶的墨迹落在稿 x992..1100 / y232..335，
@@ -184,15 +184,12 @@
    文字带 y193..209（高 17px）、实拍 13px 只有 13px 级；带高比 17/40 ≈ 0.43，
    标题 34px ⇒ 副标题 ≈ 15px。原值小两号，所以"标题之下那行字像脚注"。
 
-   同一轮把**它与面板之间的间距**从 12px 放到 76px：稿的行图（.tmp-p2a/rowmap.ps1，
-   x330..1010 的"有墨行"）显示稿副标题带在 y193..208、面板内第一行字（标签）在
-   y301..318，之间只有右上一枝叶（x898..959），其余整片空白；实拍原来只隔 12px，
-   面板落在 y221。按稿的 76px 放，面板顶落到 y285 —— 与稿的 y≈280..285 对齐，
-   面板底 510+64-44（下面白面收高 44）= 530，与稿的面板底发丝线 y528 差 2px。
-   这不是"把留白调大"的审美偏好，是行图量出来的两处锚点（面板顶、面板底）。 */
+   2026-10-20：76 → 12。76px 是按 1366×900 设计稿排的锚点；在 720px 高的
+   笔记本半屏上，它会把输入面板整体推出去，主按钮掉到折叠线以下。这里优先
+   保证"输入框 + 开始按钮同屏"，设计稿的上下留白退居其次。 */
 .composer:not(.is-followup) .ask-hint-brief {
   display: block;
-  margin-bottom: 76px;
+  margin-bottom: 12px;
   font-size: var(--fs-body);
 }
 
@@ -256,7 +253,7 @@
 
 /* 动作行：面板内底部，按钮靠右（margin-left:auto 是 base 的 .ask-go 自带）。 */
 .composer:not(.is-followup) .ask-actions {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 /* 首屏按钮：全胶囊 + 比描边更实的量感（设计稿「开始 →」是面板里唯一的实心块）。 */

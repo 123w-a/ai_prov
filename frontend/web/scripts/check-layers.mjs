@@ -85,6 +85,14 @@ const STYLE_ORDER = [
   // 历史会话（2026-10-19）：.shell-session / .sr-* / .hs-* 三族新类名，
   // 与前面选择器不相交，登记末层（atmosphere 之后）。顺序与 main.tsx 一致。
   './styles/session.css',
+  // 结果页追问条与散文列对齐（2026-10-20）：从 session.css 拆出的 .rs-say* 与
+  // .result.is-prose 列宽规则（session.css 因它们涨到 1014 行、越过规模上限）。
+  // 必须排在 session.css 之后：atmosphere.css 有一条 `.result .rs-say`（0,2,0），
+  // 排在前头会把同特异性的 sticky 与不透明底压掉。顺序与 main.tsx 一致。
+  './styles/result-say.css',
+  // 滚动条纸色（2026-10-20）：只写 ::-webkit-scrollbar* 与四个滚动容器的
+  // scrollbar-* 标准属性，不与任何片的选择器相交，登记最后。顺序与 main.tsx 一致。
+  './styles/scrollbar.css',
 ]
 
 /** 方案第三节：依赖方向只允许 app → views → blocks → ui。 */

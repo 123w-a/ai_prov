@@ -65,12 +65,14 @@ export function SessionRow({
           <span className="sr-time">{fmtTime(s)}</span>
         </button>
       )}
-      <button type="button" className="sr-act" aria-label={`重命名会话：${name}`} disabled={editing} onClick={start}>
-        改名
-      </button>
-      <button type="button" className="sr-act is-del" aria-label={`删除会话：${name}`} onClick={() => onDelete(s.session_id)}>
-        删除
-      </button>
+      <span className="sr-acts">
+        <button type="button" className="sr-act" aria-label={`重命名会话：${name}`} disabled={editing} onClick={start}>
+          改名
+        </button>
+        <button type="button" className="sr-act is-del" aria-label={`删除会话：${name}`} onClick={() => onDelete(s.session_id)}>
+          删除
+        </button>
+      </span>
     </li>
   )
 }

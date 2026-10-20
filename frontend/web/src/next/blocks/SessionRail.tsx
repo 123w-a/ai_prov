@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { RailSession } from '../data/railTime.ts'
-import { lastMs } from '../data/railTime.ts'
+import { lastMs, titleOf } from '../data/railTime.ts'
 import { SessionRow } from './SessionRow.tsx'
 
 /**
@@ -21,6 +21,9 @@ import { SessionRow } from './SessionRow.tsx'
  *
  * slot 找不到（夹具台没挂 Shell）就整块不画——画在错的地方比不画更糟。
  */
+
+/** 默认铺开的会话条数。实测本机 318 个会话，全量铺进 240px 的滚动区等于不可用。 */
+const RAIL_LIMIT = 14
 
 export function SessionRail({
   sessions,
@@ -49,6 +52,11 @@ export function SessionRail({
   onDelete: (sid: string) => void
 }) {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
+  // 搜索与「显示全部」的状态必须声明在下面 `if (!slot) return null` **之前**：
+  // slot 首帧是 null（会在渲染后才有值），写在提前返回之后会让首帧少调两个
+  // hook、次帧多调两个，React 直接报 "change in the order of Hooks"。
+  const [q, setQ] = useState('')
+  const [all, setAll] = useState(false)
   // useLayoutEffect 而不是 useEffect：挂载当帧就位，不闪一帧空槽。
   useLayoutEffect(() => {
     setSlot(document.getElementById('session-rail-slot'))
@@ -61,15 +69,33 @@ export function SessionRail({
   const byLast = (a: RailSession, b: RailSession) => lastMs(b) - lastMs(a)
   const sorted = [...sessions].sort(byLast)
 
+  // 实测这台机器上有 318 个会话。原来它们全部塞进一个 240px 的滚动区——
+  // 滚动条只有两行高，等于不可用。现在默认只铺最近 14 个，其余靠搜索或「显示全部」。
+  const kw = q.trim()
+  const filtered = kw ? sorted.filter((s) => titleOf(s).includes(kw)) : sorted
+  const shown = all || kw ? filtered : filtered.slice(0, RAIL_LIMIT)
+  const rest = filtered.length - shown.length
+
   return createPortal(
     <div className="sr">
       <div className="sr-head">
         <h2 className="sr-h">历史会话</h2>
         <button type="button" className="sr-new" disabled={creating} onClick={onNewSession}>
-          {creating ? '创建中…' : '新建会话'}
+          {creating ? '创建中…' : '＋ 做一顿新的'}
         </button>
       </div>
       <p className="sr-sub">点一条进去看全部问答。改名 / 删除都在行内。</p>
+
+      {sorted.length > RAIL_LIMIT && (
+        <input
+          className="sr-search"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={`搜索 ${sorted.length} 个会话…`}
+          aria-label="搜索历史会话"
+        />
+      )}
 
       {notice && (
         <p className="sr-notice" role="status">
@@ -83,10 +109,11 @@ export function SessionRail({
         </p>
       )}
       {!loading && !error && sessions.length === 0 && <p className="sr-note">还没有任何会话。</p>}
+      {kw !== '' && filtered.length === 0 && <p className="sr-note">没有标题含「{kw}」的会话。</p>}
 
-      {sorted.length > 0 && (
+      {shown.length > 0 && (
         <ul className="sr-list">
-          {sorted.map((s) => (
+          {shown.map((s) => (
             <SessionRow
               key={s.session_id}
               s={s}
@@ -97,6 +124,17 @@ export function SessionRail({
             />
           ))}
         </ul>
+      )}
+
+      {kw === '' && rest > 0 && (
+        <button type="button" className="sr-more" onClick={() => setAll(true)}>
+          还有 {rest} 个会话 · 显示全部
+        </button>
+      )}
+      {kw === '' && all && filtered.length > RAIL_LIMIT && (
+        <button type="button" className="sr-more" onClick={() => setAll(false)}>
+          收起到最近 {RAIL_LIMIT} 个
+        </button>
       )}
     </div>,
     slot,

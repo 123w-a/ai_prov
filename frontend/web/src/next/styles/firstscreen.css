@@ -504,8 +504,11 @@
   list-style: none;
   /* 2026-10-10 第六轮：18 → 46px。行图（.tmp-p2a/rowmap.ps1）里稿的面板底发丝线
      在 y528、「试试这样问：」文字带在 y581..598（隔 53px）；实拍面板底 ≈530、
-     标签原在 553（隔 23px）。按稿放到 46px 后标签落在 581 —— 与稿同一行。 */
-  margin: 46px 0 0;
+     标签原在 553（隔 23px）。按稿放到 46px 后标签落在 581 —— 与稿同一行。
+     2026-10-20：46 → 32。上面那两处（虚线占位、附近条）压下来之后，这一节的
+     46px 变成了整列最大的一档间距，比主卡之间的 24px 还松——节奏反了：
+     越靠下的辅助区块不该比主区块分到更大的空白。 */
+  margin: 32px 0 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -540,13 +543,19 @@
   font-size: var(--fs-data);
   line-height: 1.6;
   color: var(--accent-ink);
-  background: var(--accent-soft);
+  /* 2026-10-20：底色 --accent-soft → --white，hover 才上米色。
+     四张 --accent-soft 实心卡在首屏是一整块暖色面积（4×200×160），
+     比上面那张主卡的视觉重量还高——"试试这样问"本该是辅助建议，
+     却成了整屏最亮的东西，还把陶色的「确认这几个人吃」压了下去。
+     改成白卡之后，整屏唯一的实心色块就是那枚主按钮。 */
+  background: var(--white);
   border: 1px solid var(--accent-line);
   border-radius: var(--radius-card);
   cursor: pointer;
 }
 
 .ask-example:hover {
+  background: var(--accent-soft);
   border-color: var(--accent);
 }
 
@@ -683,8 +692,8 @@
  * 专门标记"人"）。陶土 --accent 留给主行动「开始 →」，两者不抢同一处注意力。
  */
 .crew {
-  margin: 0 0 24px;
-  padding: 16px 20px 14px;
+  margin: 0 0 18px;
+  padding: 14px 18px 12px;
   background: var(--surface);
   border: 1px solid var(--tone-member-line);
   border-radius: var(--radius-lg);
@@ -769,7 +778,7 @@
 }
 
 .crew-note {
-  margin: 6px 0 14px;
+  margin: 4px 0 10px;
   font-size: var(--fs-note);
   line-height: 1.6;
   color: var(--ink-soft);
@@ -781,7 +790,7 @@
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 /* 每一行都是一个 button（可点、可键盘聚焦、aria-pressed 自带态）。
@@ -790,7 +799,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px 6px 8px;
+  padding: 5px 12px 5px 8px;
   background: var(--bg-raise);
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
@@ -882,7 +891,7 @@
 }
 
 .crew-confirm {
-  margin-top: 14px;
+  margin-top: 10px;
   padding: 9px 22px;
   background: var(--tone-member);
   border: 1px solid var(--tone-member);
@@ -935,7 +944,7 @@
 }
 
 .crew-foot {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-size: var(--fs-note);
   line-height: 1.6;
   color: var(--ink-faint);
@@ -947,10 +956,14 @@
    虚线框是"这里本该有个东西、现在还没轮到它"的语汇，不是错误提示。 */
 .ask-gate {
   margin: 0;
-  padding: 22px 20px;
+  /* 2026-10-20：22px 20px → 13px 18px，字号从 --fs-body 降到 --fs-note。
+     这一块只是"输入框还没轮到它"的占位，之前却撑到 72px 高、字号与正文同级，
+     视觉重量跟上面那张「今天谁一起吃」的主卡一样重——一屏里两张大卡平起平坐，
+     读的人不知道先看哪个。压到 50px 之后它退回"提示条"的层级。 */
+  padding: 13px 18px;
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-lg);
-  font-size: var(--fs-body);
+  font-size: var(--fs-note);
   line-height: 1.7;
   color: var(--ink-faint);
   text-align: center;

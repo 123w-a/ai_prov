@@ -98,6 +98,14 @@ import './styles/atmosphere.css'
    内容：左栏常驻会话块（SessionRail portal 落点）+ 历史轮次纵向列表 +
    滚动区/共享书写面/「回到底部」。顺序必须与 main.tsx 里的导入一致。 */
 import './styles/session.css'
+/* 结果页追问条与散文列对齐（2026-10-20）。从 session.css 拆出来是因为那文件
+   越过了 1000 行规模门禁；必须登记在 session.css 之后——atmosphere.css 里有一条
+   `.result .rs-say`（0,2,0），排在它前面会被压掉。 */
+import './styles/result-say.css'
+/* 滚动条换纸色（2026-10-20）：一条轨道透明的暖灰滑块，替代系统那套白滑块白轨道。
+   与所有片的选择器都不冲突（只写 ::-webkit-scrollbar* 与四个容器的 scrollbar-*），
+   登记最后。 */
+import './styles/scrollbar.css'
 
 import Shell from './app/Shell.tsx'
 import TonightApp from './app/TonightApp.tsx'

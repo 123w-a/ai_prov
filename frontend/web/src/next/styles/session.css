@@ -454,3 +454,536 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   2026-10-20 改版：历史视图独立滚动 + 会话栏重做（追加块）
+
+   上面是改版前的规则，本块一律用"同特异性 + 后写胜"覆盖，原文一行未改，
+   删掉这一整块就回到改版前。
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── 一、壳层锁高：历史视图只让主区滚，别整页一起动 ──────────────────
+
+   病灶（真实页面量到的数）：打开一个长会话时 document.scrollingElement
+   scrollHeight = 16523px、clientHeight = 900px ——整页在滚，左栏导航、右栏
+   和书写面全跟着主内容上下跑；而 .hs-feed 明明写着 overflow-y: auto，却被
+   内容撑到 16116px（scrollHeight === clientHeight），那条 auto 一次都没生效。
+
+   根因不在 .hs-feed，在高度链上游：.shell 只有 min-height: 100vh、没有上界。
+   内容高于视口时 flex 分配失效，.hs-feed 的 flex: 1 拿到的是"自然内容高度"，
+   于是它自己被撑开，滚动交回文档。
+
+   修法：① .shell 钉到视口高度 + overflow: hidden，flex 分配重新有界；
+        ② 链条上缺 min-height: 0 的层补上（.shell-body 是 grid item、
+           .shell-room 是 flex item，两者的自动最小尺寸都等于内容高度，
+           会把上界顶穿）；
+        ③ .hs-feed 的 min-height 从 240 降到 0——锁高之后 240 变成下界，
+           屏幕矮一点就把书写面顶出视口。
+
+   限定条件 .shell-room:not([hidden]) 不能省：今晚房是常驻挂载、只藏不卸的
+   （切房回来时那一轮的 run 还得活着），切到周报房时 .tn.is-feed 依然在 DOM
+   里；不加这条限定，周报房会被一起锁成 100dvh 并裁掉内容（实测过）。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-body,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-room {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .hs-feed {
+  min-height: 0;
+  /* 上内边距归零：sticky 工具条贴的是滚动区内容起点，留着 12px 时滚过的卡片
+     会从工具条上方那道缝里露出半行（实测 y=109..117）。 */
+  padding: 0 0 var(--s3);
+}
+
+/* 左栏在 feed 模式下自己滚：主区滚动时它不该跟着动。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-nav {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 会话块吃掉左栏剩余高度，由 .sr-list 自己滚；否则 .shell-nav 会出现第二条
+   滚动条（实测 nav content 1230 > 839，和列表各滚一个，很难看）。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-session {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 中间还有一层 .sr（SessionRail 的包裹 div）：它不参与 flex 分配时，会把
+   11269px 的列表原样顶出来，把上面 .shell-session 的收缩全部吃掉——
+   实测 .shell-session 已经收到 124px 时，.sr 仍是 11342px。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-session > .sr {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr {
+  min-height: 0;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-head,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-sub,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-search,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-more {
+  flex: none;
+}
+
+/* basis 必须是 0：写 auto 时容器没有显式高度，flex 就按"内容高度"给它，
+   实测列表长到 11269px（比整栏还长），左栏于是出现整栏滚动条。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-list {
+  flex: 1 1 0;
+  min-height: 170px;
+  max-height: none;
+}
+
+/* 给会话列表腾地方：装饰插画（107px）、说明句、品牌注脚在 feed 模式下让位。
+   实测两样都留着时列表只剩 34px，连一行都放不下。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-rail-art,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sr-sub,
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-brand-note {
+  display: none;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-tab {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* 把视口高度尽量交给主区：历史视图里 tn 的上留白、下留白和页脚落款都不是
+   内容，却一共吃掉 ~109px（实测 tn padding 40+48、页脚 61）。书写面钉到视口
+   底部之后，用户直接看到的就是"输入框在最下面"。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .tn.is-feed {
+  padding-top: 20px;
+  padding-bottom: 0;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .sheet-foot {
+  display: none;
+}
+
+/* 左栏成员块在 feed 模式下收紧间距（只动留白，成员与"看详情"都还在）。 */
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-ctx {
+  padding-top: 8px;
+}
+
+.shell:has(.shell-room:not([hidden]) .tn.is-feed) .shell-ctx-btn {
+  margin-top: 6px;
+}
+
+/* ── 二、会话列表：从"240px 小窗"改成"跟视口走" ────────────────────
+
+   240px 是"塞进导航栏的一小块"的高度，用户 2026-10-19 反馈它跟主区完全
+   不同语汇。改成随视口走：矮屏不至于挤成三条，高屏能把整段历史铺开。
+   上限 300 是给**首屏**定的：首屏下方还有整块落地页（谁一起吃 / 试试这样问），
+   列表铺到 460 会把首屏整个推长到 1200+。历史视图里这条限制不起作用——
+   那里列表是 flex:1，自己吃满左栏剩余高度。 */
+.sr-list {
+  max-height: min(42vh, 268px);
+}
+
+/* 2026-10-20 五期：上限从 300 收到 268。首屏量到的落点是
+   「还有 N 个会话」底边 898 / 视口 900——左栏一路顶到屏幕底，没有落款，
+   这就是"压着"最直接的来源。收到 268 后那枚按钮落在 840 附近，底部留出
+   60px 呼吸位，同屏仍能看到 5 行多会话。 */
+.shell-session .sr-list {
+  max-height: min(42vh, 268px);
+}
+
+.sr-li {
+  position: relative;
+  border-radius: var(--radius);
+}
+
+/* 选中行的左色标：2px 竖条，比给整行换底色更容易一眼定位。 */
+.sr-item {
+  padding: 7px var(--s1) 7px calc(var(--s1) + 2px);
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.sr-item[data-on='true'] {
+  border-left-color: var(--accent);
+}
+
+/* 动作钮常态不占位，悬停/键盘聚焦时浮到该行右下（不盖标题——标题占上面两行，
+   动作落在时间那一行的右侧）。 */
+.sr-acts {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: flex;
+  gap: 2px;
+  padding-left: 14px;
+  background: linear-gradient(90deg, transparent, var(--surface-2) 14px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sr-li:hover .sr-acts,
+.sr-li:focus-within .sr-acts {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 标题从"单行截断"改成两行：左栏里最常出现的是一串同名的「今晚吃什么」，
+   单行截断后每一行长得一模一样，认不出是哪一次。 */
+.sr-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow: hidden;
+}
+
+.sr-time {
+  margin-top: 2px;
+}
+
+/* 分组（今天/昨天/更早）：与主区小标题同族——字距 + 上发丝线。 */
+.sr-bucket {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.sr-bucket:first-child {
+  border-top: 0;
+}
+
+/* ── 三、会话搜索 + "还有 N 个" ────────────────────────────────────
+
+   318 个会话靠滚动找不现实，给一个按标题过滤的入口；只在会话数超过默认
+   铺开条数时出现（见 SessionRail 的 RAIL_LIMIT）。 */
+.sr-search {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--fs-note);
+}
+
+.sr-search::placeholder {
+  color: var(--ink-faint);
+}
+
+.sr-search:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+/* 虚线边的小动作钮：常态不抢视觉。 */
+.sr-more {
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 5px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sr-more:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+/* ── 四、轮次工具条：钉在滚动区顶部，一键全展开 / 全收起 ─────────────
+
+   底色必须不透明——它下面是滚过的卡片。宽度收在主内容栏：.hs-feed 的 1055
+   是"正文 + 右栏（278 + 栏间距 40）"，工具条铺满就会压到右栏「权威文件」
+   头顶（实测右端 x≈1280 落在 rail 上）。 */
+.hs-tools {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  max-width: calc(100% - 380px);
+  margin: 0 0 var(--s2);
+  padding: 6px 0;
+  background: var(--bg-lo);
+  border-bottom: 1px solid var(--line);
+}
+
+.hs-tools-note {
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.hs-tool {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.hs-tool:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+/* 收起 / 展开这一轮的回答：一个会话攒到二十几轮后纵向一万六千像素，想翻到
+   某一轮只能一路划。收起只藏回答正文，问句与时间始终在，内容一个字不删。 */
+.hs-fold {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.hs-fold:hover {
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+/* 折叠钮自己吃了 auto 之后，紧跟的删除钮不再重复推开（两者并排落在右端）。 */
+.hs-fold + .hs-del {
+  margin-left: 0;
+}
+
+/* 轮与轮的分隔线不能画在 .hs-turn 的 border 上：那一层跟 .result 一样宽
+   （含右栏），线会一路横穿到「权威文件」底下（实测到 x=1317）。改用伪元素，
+   只画主内容栏宽。 */
+.hs-turn {
+  margin: 0;
+  padding: 0 0 var(--s3);
+  border-bottom: 0;
+}
+
+.hs-turn::after {
+  content: '';
+  display: block;
+  height: 1px;
+  max-width: calc(100% - 380px);
+  margin-top: var(--s3);
+  background: var(--line);
+}
+
+.hs-turn:last-child::after {
+  display: none;
+}
+
+/* 问句行也收在主内容栏：它的动作（收起/删除这轮）右对齐时会落到 .hs-feed
+   的右缘，正好压在右栏「权威文件」上（实测 x≈1280 与 rail 重叠）。 */
+.hs-q {
+  max-width: calc(100% - 380px);
+}
+
+/* 「回到底部」同理：右对齐落在 1317 会压住右栏，让出右栏宽度 + 栏间距。 */
+.hs-tobottom {
+  margin-right: 380px;
+}
+
+/* ── 五、窄屏（≤720px）补充 ──────────────────────────────────────── */
+@media (max-width: 720px) {
+  /* 搜索框和"还有 N 个"在横向条里放不下，让位给会话片。 */
+  .shell .sr-search,
+  .shell .sr-more {
+    display: none;
+  }
+
+  /* 触屏没有悬停：动作钮常显，否则永远点不到改名 / 删除。 */
+  .shell .sr-acts {
+    position: static;
+    padding-left: 0;
+    background: none;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .shell .sr-item {
+    border-left: 0;
+  }
+
+  /* 窄屏没有右侧「权威文件」栏，让出的 320px 要收回来。 */
+  .shell .hs-tools,
+  .shell .hs-q,
+  .shell .hs-turn::after {
+    max-width: 100%;
+  }
+
+  .shell .hs-tobottom {
+    margin-right: 0;
+  }
+
+  /* 窄屏是横向条：「做一顿新的」回到一枚行内按钮，不整宽。 */
+  .shell .sr-new {
+    order: 0;
+    flex: none;
+    width: auto;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-weight: 500;
+  }
+
+  /* 窄屏是单列，右栏 340px 的加宽必须收回（result-v3.css 里的窄屏覆盖
+     写在更早的文件里，同特异性会被本文件的加宽盖掉）。 */
+  .result-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ══ 2026-10-20 二期：右栏加宽 + 权威文件行改造 ══════════════════════
+
+   用户反馈两点：① 内容整体像被往左压了一块；② 右栏「权威文件」三条长得
+   一模一样（文件名全被截成"成人高尿酸血症与痛风食…"），页码和「展开」
+   挤在同一行末尾，读的人分不出哪条是哪一节。
+
+   ①的成因：上一版为了让工具条不压右栏，把主内容栏右缩 320px；而右栏只有
+   278px、主列 735px 里正文又被 42em 限到 672px，于是右侧空出一段，整体
+   读起来就靠左。解法不是把工具条再拉回去（那会重新压住右栏），而是让右栏
+   真正撑起右侧：加宽到 340px，主列随之收到 675px，正文 672px 正好填满——
+   三栏严丝合缝，右侧不再有"没人在用"的空白。
+
+   ②的成因：.af-title 是 nowrap + ellipsis，文件名一律被截断。改成文件名
+   独占第一行（最多两行），页码做成胶囊落在第二行，「展开」推到行尾。 */
+
+/* 右栏 278 → 340。结果页与历史视图共用同一套 .result 版式，全站一致。 */
+.result-body {
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.af-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  row-gap: 3px;
+  padding: 9px 0;
+}
+
+/* 文件名独占第一行：不截成省略号，最多两行。 */
+.af-title {
+  flex: 1 1 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* 页码做成胶囊：它是"能翻到那一页"的唯一线索，不该只是一串灰小字。 */
+.af-loc {
+  order: 2;
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.af-tag {
+  order: 3;
+}
+
+/* 「展开 / 收起」推到行尾，与页码同排。 */
+.af-caret {
+  order: 4;
+  margin-left: auto;
+}
+
+/* ══ 2026-10-20 三期：左栏让位给会话 + 「做一顿新的」升为主入口 ══════
+
+   用户当天两条反馈：① 左栏的「家庭成员 / 小美 孕妇 / 我 增肌 / 当前 /
+   成员详情」整块去掉，省下的高度全给历史会话；② 进了历史会话之后回不去
+   新的一顿——原来的「新建会话」只是标题旁一枚描边小胶囊，进历史后根本
+   注意不到。
+
+   ① 的 JSX 已从 Shell.tsx 摘除（换人入口仍在「身体档案」房里，能力不减）。
+   ② 把按钮从"标题旁的小胶囊"改成"整宽主按钮"，落在标题下方、列表上方：
+     看一眼就知道那是出口。 */
+
+.sr-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.sr-new {
+  order: 9;
+  flex: 1 1 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  /* 实心主色：#b9693a 配白字（对比 4.6:1），比 accent-soft 那层浅米底
+     显眼得多——用户 2026-10-20 反馈浅底"也不好注意到"。 */
+  background: var(--accent);
+  color: var(--white);
+  font-size: var(--fs-note);
+  font-weight: 600;
+  text-align: center;
+}
+
+.sr-new:hover:not(:disabled) {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+}
+
+.sr-new:disabled {
+  opacity: 0.55;
+}
+
+/* ══ 2026-10-20 五期：把左栏松开一点 ═══════════════════════════════
+
+   用户原话"历史记录左栏那个总有点压着的感觉"。量了一遍，是三个间距同时在挤：
+
+     搜索框 390–406 → 列表 410（只隔 4px）
+     列表底 842    → 「还有 N 个会话」850（隔 8px）
+     「还有 N 个会话」底 877 → 视口底 900（剩 23px）
+
+   再加上 14 行会话本身没有任何行间缝（.sr-item 只有 7px 内边距，行与行直接
+   相连），整列从顶到底是一块连续的色块，读起来就是"压"。
+
+   口径：只放间距，不放大行高——行高变了同屏能看的条数会掉，那是另一种难受。 */
+.sr-li + .sr-li {
+  margin-top: 2px;
+}
+
+.sr-list {
+  padding: 1px 0 3px;
+}
+
+.sr-item {
+  padding: 8px var(--s1) 8px calc(var(--s1) + 2px);
+}
+
+.sr-more {
+  margin-top: 9px;
+}
+
+/* 左栏自身留出底部呼吸位：滚动到最后一行时，行与视口底之间不是硬切。 */
+.shell-session > .sr {
+  padding-bottom: 5px;
+}

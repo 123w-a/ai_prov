@@ -1,0 +1,52 @@
+/* 滚动条：换成这套纸色（2026-10-20，用户反馈默认白色不符合设计）。
+
+   用户原话"那个下滑条白色的不符合我们前端设计"。默认滚动条是系统配色：
+   一条近白的滑块躺在一条更白的轨道上，压在这套 #f8f2ea 的暖纸底上，
+   是整页唯一一块不属于这套调子的东西。
+
+   处置：轨道全透明（不画槽，纸底直接透出来），滑块用 --line-strong
+   （#c7ac9c，导航底线同色）做 6px 圆条，悬停压深到 --ink-faint，
+   按下到 --accent-ink。不用 --accent（#b9693a）：那是主操作色，
+   滚动条天天在视野里，用主色会跟"做一顿新的"那枚按钮抢眼。
+
+   background-clip: padding-box + 透明 border 是让滑块看起来比槽窄的标准写法：
+   直接设 width 会让它贴边，留 2px 透明边之后它在视觉上是"浮在纸上的一条"。 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background-color: var(--line-strong);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ink-faint);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--accent-ink);
+}
+
+/* 标准属性这一套必须**无条件**写，不能只给 Firefox：
+   Chrome 115+ / Edge 同样认 scrollbar-color，而且认了之后就以它为准。
+   实测（146.0）：只写 ::-webkit-scrollbar 时，容器仍是系统 overlay 细条
+   （offsetWidth−clientWidth = 0，滑块沿用系统色）；补上 scrollbar-color 后
+   计算值是 rgb(199,172,156) transparent，才真正吃到这套纸色。
+   所以两条路都给：标准属性服务 Chrome/Edge/Firefox，webkit 伪元素服务 Safari
+   与更老的 Chromium。 */
+.sr-list,
+.hs-feed,
+.shell-nav,
+.result-main {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}

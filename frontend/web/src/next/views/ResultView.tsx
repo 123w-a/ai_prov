@@ -308,7 +308,7 @@ export function RunResult({
   /* 2026-10-15：书写面默认收起，点开才展开（理由见页尾那段注释）。
      这只是一个 UI 开关，**不是 text 的副本**——正文仍由 app 层持有并在下方透传，
      所以"结果页打的字"和"首屏打的字"依旧是同一份。 */
-  const [sayOpen, setSayOpen] = useState(false)
+  const [sayOpen, setSayOpen] = useState(true)
 
   // 候选轮（两阶段点菜第一阶段）走的是**纯散文路径**：后端在推送前把结构化
   // candidates 丢掉了（chat_route.py:1561-1580），前端手上只有正文那串编号清单。
