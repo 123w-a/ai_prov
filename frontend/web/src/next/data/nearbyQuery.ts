@@ -17,6 +17,8 @@ export const NEARBY_EMPTY_TEXT = '这一带没查到，换个词试试。'
 /** 拿不到位置时的原话——**不假装已定位**。 */
 export const GEO_UNAVAILABLE_NOTE = '未获取到位置，仍按关键词查询。'
 export const GEO_UNSUPPORTED_NOTE = '这个浏览器没有定位能力，仍按关键词查询。'
+/** 这次定位失败、但上次的位置还记得：说清楚，不装作刚刚定位成功。 */
+export const GEO_KEEP_LAST_NOTE = '这次没拿到新位置，沿用上次定位。'
 
 /**
  * 第一次展开用的关键词：输入框里已有的话。没有就给空串——
@@ -27,10 +29,21 @@ export function nearbyKeyword(draft: string): string {
   return draft.trim().replace(/\s+/g, ' ')
 }
 
-export function keywordNote(keyword: string): string {
-  return keyword.length > 0
-    ? `按输入框里的关键词「${keyword}」查询（没有请求系统定位）`
-    : '输入框还没有内容，按默认查询（没有请求系统定位）'
+/**
+ * 关键词查询的自述。
+ *
+ * 2026-10-21 用户反馈「每次查减脂餐都不记得我的位置」后改口径：**定位过就记住**，
+ * 后续关键词查询沿用那组坐标（见 useNearby 的 origin 持久化）。
+ * 因此这里必须区分两种情形，不能一律说"没有请求系统定位"：
+ *   · 有坐标 → 「沿用上次定位」——这次确实没再弹定位，但查的是你上次的位置；
+ *   · 没坐标 → 保持原话「没有请求系统定位」，绝不暗示已经定位。
+ */
+export function keywordNote(keyword: string, hasOrigin = false): string {
+  const base =
+    keyword.length > 0
+      ? `按输入框里的关键词「${keyword}」查询`
+      : '输入框还没有内容，按默认查询'
+  return hasOrigin ? `${base}（沿用上次定位）` : `${base}（没有请求系统定位）`
 }
 
 /**

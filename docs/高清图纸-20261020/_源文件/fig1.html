@@ -1,0 +1,74 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;width:1400px;background:#FCF4E4;}
+body{font-family:"Microsoft YaHei","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;}
+.wrap{width:1400px;height:600px;padding:26px 30px;position:relative;}
+.title{display:flex;align-items:center;gap:14px;margin-bottom:22px;}
+.tbar{width:10px;height:34px;background:#C87A2B;border-radius:2px;}
+.title h1{margin:0;font-size:30px;color:#6B3A12;font-weight:800;}
+.cols{display:flex;gap:60px;align-items:stretch;}
+.panel{flex:1;background:#FDF9EF;border:1px solid #E8D6B4;border-radius:10px;overflow:hidden;}
+.phead{color:#fff;font-size:20px;font-weight:800;text-align:center;padding:10px 0;}
+.p1 .phead{background:#B0761F;}
+.p2 .phead{background:#A32D2D;}
+.pbody{padding:20px 26px 24px;position:relative;}
+.step{background:#fff;border:1.5px solid #D8B97E;border-radius:8px;text-align:center;
+      font-size:19px;font-weight:700;color:#4A2E0E;padding:14px 0;}
+.arrow-v{width:2px;height:22px;background:#C9A063;margin:4px auto;position:relative;}
+.arrow-v::after{content:"";position:absolute;left:-4px;bottom:-1px;border:5px solid transparent;border-top-color:#C9A063;}
+.note{font-size:15px;font-weight:700;color:#A33B2D;text-align:center;margin:8px 0 6px;}
+.demo{border:1.5px dashed #C9A063;border-radius:8px;background:#FDF9EF;margin-top:10px;
+      padding:14px 0;text-align:center;font-size:19px;font-weight:800;color:#4A2E0E;line-height:1.9;}
+.mid{width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding-top:60px;}
+.mid .lbl{font-size:20px;font-weight:800;color:#4A2E0E;}
+.mid .arr{font-size:30px;color:#B0761F;font-weight:800;line-height:1;}
+.mid .how{font-size:16px;font-weight:800;color:#A33B2D;}
+.pink{background:#FBEAEA;border:1.5px dashed #D98A8A;border-radius:8px;text-align:center;
+      padding:16px 0;margin-top:14px;}
+.pink .l1{font-size:19px;font-weight:800;color:#8F2424;}
+.pink .l2{font-size:15px;font-weight:800;color:#A33B2D;margin-top:6px;}
+.checks{font-size:15px;font-weight:700;color:#3B6D11;text-align:center;margin:8px 0 4px;}
+.foot{position:absolute;left:30px;right:30px;bottom:24px;background:#F7E9CE;border:1px solid #E4CFA4;
+      border-radius:8px;display:flex;align-items:center;gap:14px;padding:12px 18px;}
+.tag{background:#B0761F;color:#fff;font-size:15px;font-weight:800;border-radius:6px;padding:5px 12px;white-space:nowrap;}
+.foot .txt{font-size:17px;font-weight:700;color:#4A2E0E;}
+.foot .txt b{color:#8F5A16;}
+</style></head><body>
+<div class="wrap">
+  <div class="title"><div class="tbar"></div><h1>两阶段推荐交互：把「推荐」与「详情」拆成两跳</h1></div>
+  <div class="cols">
+    <div class="panel p1">
+      <div class="phead">一跳 · 候选清单</div>
+      <div class="pbody">
+        <div class="step">泛意图输入</div>
+        <div class="arrow-v"></div>
+        <div class="step">出编号候选清单（纯文字）</div>
+        <div class="note">× 不出卡片　× 不配图</div>
+        <div class="demo">① 番茄炒蛋<br>② 清炒时蔬<br>③ 冬瓜排骨汤</div>
+      </div>
+    </div>
+    <div class="mid">
+      <div class="lbl">用户选定</div>
+      <div class="arr">→</div>
+      <div class="how">序号 / 点击</div>
+    </div>
+    <div class="panel p2">
+      <div class="phead">二跳 · 单卡片</div>
+      <div class="pbody">
+        <div class="step">确定性序号解析</div>
+        <div class="arrow-v"></div>
+        <div class="step">单卡片 + 完整做法</div>
+        <div class="checks">✓ 卡内做法　✓ 配图（AI 生成强制标注）</div>
+        <div class="pink">
+          <div class="l1">一张卡片 + 一张配图</div>
+          <div class="l2">卡片与配图严格一一对应</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot">
+    <span class="tag">同源判据</span>
+    <span class="txt">意图判定 · 序号解析 · 候选锚点回溯 · 内部消息过滤 · 配图判定 —— <b>同一语义只保留一个确定性纯函数，被所有层同源引用</b></span>
+  </div>
+</div>
+</body></html>

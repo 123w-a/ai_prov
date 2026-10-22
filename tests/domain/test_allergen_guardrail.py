@@ -1177,9 +1177,14 @@ class TestStructuredReaudit(unittest.TestCase):
             chef_tip="",
         )
         state = {
+            # 2026-10-20：原输入「推荐一道面」是泛推荐轮。b6e105b 之后候选轮抠不出
+            # 候选名时直接返回纯文本、不再落 build_structured_answer，本用例因此
+            # 走不到结构化复核（KeyError: verify_status），测不到目标路径。
+            # 改用真实选定轮（候选清单 + 回复序号），让卡片确实被生成、再被复核拦下。
             "messages": [
                 HumanMessage(content="推荐一道面"),
-                AIMessage(content="推荐清汤面"),
+                AIMessage(content="1. 清汤面\n2. 花生拌面\n3. 牛肉面"),
+                HumanMessage(content="第2个"),
             ]
         }
         with (

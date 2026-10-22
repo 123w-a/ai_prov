@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>效果验证记录（素版）</title>
+<style>
+  @page { size: A4; margin: 45pt 45pt 45pt 45pt; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "SimSun", "宋体", serif; font-size: 12pt; color: #000; line-height: 1.29; }
+  h2 { font-size: 16pt; font-weight: 700; margin: 0 0 10pt; }
+  h3 { font-size: 14pt; font-weight: 700; margin: 14pt 0 6pt; }
+  p { margin: 0 0 6pt; text-indent: 24pt; text-align: justify; }
+  table { border-collapse: collapse; width: 100%; font-size: 10.5pt; margin: 4pt 0 8pt; border-top: 1.2pt solid #000; border-bottom: 1.2pt solid #000; page-break-inside: avoid; }
+  table tr:first-child td { border-bottom: 0.6pt solid #000; font-weight: 700; text-align: center; }
+  td { padding: 2.2pt 4pt; vertical-align: middle; }
+  td.c { text-align: center; }
+  p.mono { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; text-indent: 0; margin: 2pt 0 2pt 24pt; line-height: 1.45; }
+  p.item { text-indent: 24pt; }
+  h3 { break-after: avoid; page-break-after: avoid; }
+  .keep { page-break-inside: avoid; break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<h2>二、效果验证记录</h2>
+<p>第一节证明“有人需要、有人愿意用”，本节证明“护栏真的挡得住”。本节全部为确定性脚本输出，不调用大模型，任何人可在同一仓库按 2.5 的命令复跑，并逐行核对 CSV 原件；数字以 2026-10-20 本机实跑为准，与脚本输出一致，未作修饰。</p>
+
+<h3>2.1 过敏原硬护栏 A/B/C 对照</h3>
+<p>实验脚本为 experiments/ab_allergen_guardrail.py。设计为“同一批文本、开关护栏各跑一次”：A 组取 10 例真实违禁菜名（清蒸鲈鱼、蒜蓉粉丝虾、麻酱、豆豉、蛋糕等），检验关护栏是否漏拦；B 组取 10 例慢病文本，检验过敏原开关不会改变慢病语义；C 组取 10 例安全文本（鱼香肉丝、蟹柳、乳胶手套、核桃木餐桌等），检验是否误拦；外部语料为项目家常菜 20 例与公开菜名 20 例，只做确定性规则比对，不复制第三方正文。</p>
+<table>
+<tr><td>组</td><td>n</td><td>关护栏检出</td><td>开护栏检出</td><td>判定</td></tr>
+<tr><td>A 硬过敏原违禁</td><td class="c">10</td><td class="c">0</td><td class="c">10</td><td>关护栏全漏，开护栏全拦</td></tr>
+<tr><td>B 慢病规则开关一致性</td><td class="c">10</td><td class="c">9</td><td class="c">9</td><td>开关前后一致（1 例假阴性见 2.4）</td></tr>
+<tr><td>C 安全文本零误报</td><td class="c">10</td><td class="c">0</td><td class="c">0</td><td>零误拦</td></tr>
+<tr><td>外部语料·项目家常菜</td><td class="c">20</td><td class="c">0</td><td>命中即受限</td><td>通过</td></tr>
+<tr><td>外部语料·公开菜名</td><td class="c">20</td><td class="c">0</td><td>命中即受限</td><td>通过</td></tr>
+<tr><td>合计</td><td class="c">70</td><td class="c">—</td><td class="c">—</td><td>69 / 70 通过</td></tr>
+</table>
+<p>脚本直接打印的汇总指标为：过敏拦截率 100.0%、误拦率 0.0%、慢病回归一致率 100.0%、外部语料受限率 50.0%、A/B/C 慢病审计通过率 90.0%。</p>
+<p>这组数最关键的对比不是通过率高低，而是 A 组那一行——关掉护栏时 10 个违禁菜名一个都没拦住，打开后 10 个全部拦住；同时 C 组安全菜 0 误拦。说明拦截来自确定性规则本身，不是模型“碰巧说对了”。</p>
+
+<h3>2.2 语境判定与裸子串对照</h3>
+<p>实验脚本为 experiments/ab_context_qualifier.py。若用“关键词出现即拦截”的裸子串匹配，会把“这道菜不放盐，用柠檬汁提味”“本餐不含酒精”这类否定或限定语境误判成违规。本组对照检验语境层是否既消误报、又不牺牲检出。</p>
+<table>
+<tr><td>组</td><td>n</td><td>裸子串</td><td>语境判定</td><td>说明</td></tr>
+<tr><td>安全文本（否定／限定语境）</td><td class="c">8</td><td class="c">误报 7</td><td class="c">误报 0</td><td>语境层消掉子串式误报</td></tr>
+<tr><td>阳性对照（真实违禁）</td><td class="c">6</td><td class="c">检出 6</td><td class="c">检出 6</td><td>加语境不牺牲检出</td></tr>
+<tr><td>病种否定句（detect）</td><td class="c">3</td><td class="c">—</td><td class="c">正确不触发 3</td><td>“没有痛风”不激活护栏</td></tr>
+<tr><td>合计</td><td class="c">17</td><td class="c">—</td><td class="c">—</td><td>17 / 17 通过</td></tr>
+</table>
+
+<div class="keep">
+<h3>2.3 护栏审计耗时实测</h3>
+<p>方法：同一函数对 4 类样本文本各重复执行 3000 次，取中位数与 P90，本机 CPU、单线程、纯规则引擎，无网络与模型调用，实测于 2026-10-20。</p>
+<table>
+<colgroup><col style="width:27%"><col style="width:20%"><col style="width:14%"><col style="width:14%"><col style="width:25%"></colgroup>
+<tr><td>函数</td><td>样本</td><td>中位</td><td>P90</td><td>口径</td></tr>
+<tr><td>慢病禁忌 nutrition_rules.audit</td><td>合规家常菜（短文本）</td><td class="c">213.7 μs</td><td class="c">235.3 μs</td><td>短文本中位 0.21—0.26 ms；约 900 字长文 0.75 ms</td></tr>
+<tr><td>慢病禁忌 nutrition_rules.audit</td><td>长回答正文（约 900 字）</td><td class="c">753.8 μs</td><td class="c">1058.0 μs</td><td>同上</td></tr>
+<tr><td>过敏原 audit_allergens</td><td>四类样本（含长文）</td><td class="c">40.9—55.4 μs</td><td class="c">46.0—78.9 μs</td><td>跨样本中位 0.046 ms</td></tr>
+<tr><td>统一分派 audit_constraint</td><td>四类样本（含长文）</td><td class="c">0.82—1.32 ms</td><td class="c">1.04—1.94 ms</td><td>跨样本中位 0.93 ms</td></tr>
+</table>
+<p>结论口径：单函数 0.05—0.26 ms、统一分派约 0.93 ms，相对一次完整对话（十秒量级）可忽略，护栏的存在不以牺牲响应速度为代价。</p>
+</div>
+
+<h3>2.4 如实披露</h3>
+<p class="item">（1）慢病假阴性 1 例：B 组 chronic-hypertension-soy“酱油红烧肉”未被高血压规则命中，规则未覆盖“酱油调味带入钠”这一路径，脚本因此返回非零退出码。本材料如实报 69/70，不写作 70/70，该缺口已列入待修清单。</p>
+<p class="item">（2）外部语料受限率 50% 不等于误拦率：该指标统计“文本是否命中规则”，未命中的 20 例多为本就不含对应过敏原的菜（清炒西兰花、蒸南瓜等），仅作规则覆盖面参考。</p>
+<p class="item">（3）确定性样本，非真人测试：本节全部为规则引擎对文本的判定，样本由项目组构造，不构成临床或人群有效性证据，与第一节的用户主观反馈分属两类证据，不合并统计。</p>
+<p class="item">（4）本机口径：耗时为单机单线程实测，不同硬件会有差异，故只报量级与中位数，不宣称绝对性能。</p>
+
+<h3>2.5 复跑命令与原件</h3>
+<p class="mono"># 过敏原硬护栏 A/B/C（70 例，输出 experiments/ab_allergen_result.csv）</p>
+<p class="mono">.venv\Scripts\python.exe experiments\ab_allergen_guardrail.py</p>
+<p class="mono"># 语境判定与裸子串（17 例，输出 experiments/ab_context_qualifier_result.csv）</p>
+<p class="mono">.venv\Scripts\python.exe experiments\ab_context_qualifier.py</p>
+<p class="mono"># 真实菜名分层用例（30 例：15 hard + 5 notice + 10 safe）</p>
+<p class="mono">.venv\Scripts\python.exe -m pytest tests\domain\test_allergen_real_cases.py -q</p>
+<p>随材料提交的 CSV 原件为：ab_allergen_result.csv（70 行，含每例 case_id、group、expected、guard_off_hits、guard_on_hits、pass）、ab_context_qualifier_result.csv（17 行）、allergen_real_cases_result.csv（30 行逐例明细，30/30 通过）。每行都对应一条可复查的原始文本；前两份为 2026-10-20 本次实跑输出，第三份为同一用例集的历史导出，复跑 pytest 结果为 4 项测试全部通过。</p>
+
+</body>
+</html>

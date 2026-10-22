@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NearbyRestaurantMap } from '../../components/NearbyRestaurantMap.tsx'
 import { NearbyList } from './NearbyList.tsx'
+import { NearbyMore } from './NearbyMore.tsx'
 import { useNearbySearch } from '../data/useNearby.ts'
 import { NEARBY_EMPTY_TEXT, navUrlFor, nearbyKeyword } from '../data/nearbyQuery.ts'
 
@@ -30,6 +31,7 @@ export function OpenNearby({
     locating,
     origin,
     searchByKeyword,
+    nextPage,
     retry,
     useMyLocation,
   } = useNearbySearch(draft)
@@ -131,6 +133,10 @@ export function OpenNearby({
                 selectedIndex={selectedIndex}
                 onSelect={setSelectedIndex}
               />
+              {/* 只有真有结果才给「换一批」：空结果时按了也无处可换。 */}
+              {nb && nb.restaurants.length > 0 && !error && (
+                <NearbyMore onMore={() => void nextPage()} loading={loading} />
+              )}
             </div>
           </div>
         </div>

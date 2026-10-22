@@ -1,0 +1,145 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;width:920px;background:#F1ECE3;}
+body{font-family:"Microsoft YaHei","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;}
+.wrap{width:920px;height:1620px;position:relative;}
+.node{position:absolute;width:280px;border-radius:8px;color:#fff;text-align:center;
+      padding:9px 8px;box-shadow:0 1px 2px rgba(0,0,0,.12);}
+.node .n{font-size:17px;font-weight:800;line-height:1.25;}
+.node .d{font-size:12px;opacity:.92;margin-top:3px;line-height:1.3;}
+.node.w270{width:270px;}
+.gold{background:#C08A2E;}
+.red{background:#A32D2D;}
+.blue{background:#1D5FAD;}
+.navy{background:#1F2A44;border-radius:26px;padding:12px 8px;}
+.elbl{position:absolute;z-index:3;font-size:12.5px;color:#7A7A72;font-weight:600;}
+.elbl.redl{color:#A32D2D;font-weight:800;font-size:13.5px;}
+.dlbl{position:absolute;z-index:3;text-align:center;font-weight:800;color:#A32D2D;font-size:14px;}
+.dlbl .sub{font-weight:600;color:#8A8A80;font-size:11.5px;margin-top:2px;}
+.legend{position:absolute;left:595px;top:92px;width:262px;background:#FFFFFF;border:1px solid #D8D2C4;
+        border-radius:8px;padding:12px 16px;font-size:12.5px;color:#4A463E;}
+.legend .h{font-size:14px;font-weight:800;margin-bottom:6px;}
+.legend .li{display:flex;align-items:center;gap:8px;margin:5px 0;}
+.sw{width:16px;height:12px;border-radius:2px;flex:none;}
+.titlebar{position:absolute;left:40px;top:22px;display:flex;align-items:center;gap:12px;}
+.tbar{width:9px;height:30px;background:#C08A2E;border-radius:2px;}
+.titlebar h1{margin:0;font-size:27px;color:#3A3428;font-weight:800;}
+.subt{position:absolute;left:44px;top:62px;font-size:13.5px;color:#8A857A;font-weight:600;}
+svg{position:absolute;left:0;top:0;z-index:1;}
+</style></head><body>
+<div class="wrap">
+  <div class="titlebar"><div class="tbar"></div><h1>LangGraph 编排全景图</h1></div>
+  <div class="subt">13 节点 · 5 条件边 · 8 普通边 · 2 条回环 · 分支字符串已与 agent/graph.py 逐条核对（2026-10-15）</div>
+
+  <div class="legend">
+    <div class="h">图例</div>
+    <div class="li"><svg width="20" height="14"><polygon points="10,1 19,7 10,13 1,7" fill="#fff" stroke="#A32D2D" stroke-width="1.6"/></svg>条件边决策点（路由）</div>
+    <div class="li"><span class="sw" style="background:#A32D2D"></span>否决 / 门控节点</div>
+    <div class="li"><span class="sw" style="background:#1D5FAD"></span>确定型节点（零 LLM）</div>
+    <div class="li"><span class="sw" style="background:#C08A2E"></span>概率型节点（调大模型）</div>
+    <div class="li"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#8A8A82" stroke-width="1.6"/></svg>普通边 × 8</div>
+    <div class="li"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#9A9A90" stroke-width="1.6" stroke-dasharray="4 3"/></svg>条件 × 5</div>
+    <div class="li"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#A32D2D" stroke-width="2.4"/></svg>回环 × 2（标红加粗）</div>
+  </div>
+
+  <!-- main column nodes -->
+  <div class="node gold" style="left:190px;top:95px;"><div class="n">condense_history</div><div class="d">长对话压缩 · 图的入口节点</div></div>
+  <div class="node red"  style="left:190px;top:205px;"><div class="n">ingredient_gate</div><div class="d">图片食材确认门 · 零 LLM</div></div>
+  <div class="node red"  style="left:190px;top:420px;"><div class="n">profile_gate</div><div class="d">充分性门控 · 零 LLM</div></div>
+  <div class="node red"  style="left:190px;top:630px;"><div class="n">requested_dish_gate</div><div class="d">点名菜生成硬截断 · 零 LLM</div></div>
+  <div class="node gold" style="left:190px;top:860px;"><div class="n">chef_think</div><div class="d">语义决策 · 决定调用哪些工具</div></div>
+  <div class="node red"  style="left:190px;top:1120px;"><div class="n">verify_answer</div><div class="d">健康护栏审计 · 产出四态</div></div>
+  <div class="node gold" style="left:190px;top:1355px;"><div class="n">structure_answer</div><div class="d">结构化收口 · 含二次过敏复核</div></div>
+  <div class="node blue" style="left:190px;top:1455px;"><div class="n">profile_memory</div><div class="d">画像候选（已启用）</div></div>
+  <div class="node navy" style="left:190px;top:1542px;"><div class="n">END · 本轮结束</div></div>
+
+  <!-- right column nodes -->
+  <div class="node w270 blue" style="left:565px;top:299px;"><div class="n">ingredient_confirm</div><div class="d">确定性食材清单 · 零 LLM</div></div>
+  <div class="node w270 gold" style="left:565px;top:514px;"><div class="n">ask_user</div><div class="d">轻量追问句 · 调大模型</div></div>
+  <div class="node w270 blue" style="left:565px;top:954px;"><div class="n">run_tools</div><div class="d">工具执行（执行器，非决策）</div></div>
+  <div class="node w270 gold" style="left:565px;top:1040px;"><div class="n">tool_budget_finalize</div><div class="d">预算耗尽收口 · 调大模型</div></div>
+  <div class="node w270 red"  style="left:565px;top:1355px;"><div class="n">allergen_block</div><div class="d">过敏原硬拦截 · 零 LLM</div></div>
+
+  <!-- diamond labels -->
+  <div class="dlbl" style="left:255px;top:307px;width:150px;">ask / ready<div class="sub">请等待确认？</div></div>
+  <div class="dlbl" style="left:255px;top:522px;width:150px;">ask / ready<div class="sub">证据足吗？</div></div>
+  <div class="dlbl" style="left:255px;top:732px;width:150px;">pass / blocked<div class="sub">当前轮结束？</div></div>
+  <div class="dlbl" style="left:240px;top:977px;width:180px;">tools · verify · 预算<div class="sub">下一步干什么？</div></div>
+  <div class="dlbl" style="left:255px;top:1232px;width:150px;">verify · 四态<div class="sub">审计结果路由</div></div>
+
+  <!-- edge labels -->
+  <div class="elbl" style="left:342px;top:180px;">普通边</div>
+  <div class="elbl" style="left:470px;top:308px;">ask</div>
+  <div class="elbl" style="left:342px;top:390px;">ready</div>
+  <div class="elbl" style="left:470px;top:523px;">ask</div>
+  <div class="elbl" style="left:342px;top:605px;">ready</div>
+  <div class="elbl redl" style="left:630px;top:733px;">blocked</div>
+  <div class="elbl" style="left:342px;top:820px;">pass</div>
+  <div class="elbl" style="left:480px;top:962px;">tools</div>
+  <div class="elbl" style="left:432px;top:1018px;">预算耗尽</div>
+  <div class="elbl" style="left:342px;top:1078px;">verify · 直接审计</div>
+  <div class="elbl" style="left:512px;top:1100px;">普通边</div>
+  <div class="elbl redl" style="left:492px;top:868px;">回环① 工具循环 · 普通边</div>
+  <div class="elbl redl" style="left:14px;top:1264px;font-size:12.5px;">回环② retry 打回重生成 · 最多 3 次</div>
+  <div class="elbl redl" style="left:610px;top:1230px;">blocked</div>
+  <div class="elbl" style="left:600px;top:1138px;">plain · 纯问答直通 END</div>
+  <div class="elbl" style="left:342px;top:1315px;">ok / degraded</div>
+  <div class="elbl" style="left:342px;top:1424px;">普通边</div>
+  <div class="elbl" style="left:342px;top:1518px;">普通边</div>
+  <div class="elbl" style="left:840px;top:315px;">等确认</div>
+  <div class="elbl" style="left:840px;top:530px;">等回答</div>
+  <div class="elbl" style="left:640px;top:1556px;">全部汇入 END</div>
+
+  <svg width="920" height="1620">
+    <defs>
+      <marker id="ag" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8A8A82"/></marker>
+      <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#A32D2D"/></marker>
+    </defs>
+    <!-- diamonds -->
+    <polygon points="330,292 405,330 330,368 255,330" fill="#FFFFFF" stroke="#A32D2D" stroke-width="2"/>
+    <polygon points="330,507 405,545 330,583 255,545" fill="#FFFFFF" stroke="#A32D2D" stroke-width="2"/>
+    <polygon points="330,717 405,755 330,793 255,755" fill="#FFFFFF" stroke="#A32D2D" stroke-width="2"/>
+    <polygon points="330,958 495,1000 330,1042 165,1000" fill="#FFFFFF" stroke="#A32D2D" stroke-width="2"/>
+    <polygon points="330,1217 405,1255 330,1293 255,1255" fill="#FFFFFF" stroke="#A32D2D" stroke-width="2"/>
+    <!-- plain solid edges -->
+    <line x1="330" y1="157" x2="330" y2="202" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="267" x2="330" y2="289" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="368" x2="330" y2="417" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="482" x2="330" y2="504" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="583" x2="330" y2="627" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="692" x2="330" y2="714" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="793" x2="330" y2="857" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="922" x2="330" y2="959" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="1038" x2="330" y2="1117" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="1182" x2="330" y2="1214" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="1293" x2="330" y2="1352" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="1417" x2="330" y2="1452" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <line x1="330" y1="1517" x2="330" y2="1539" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <!-- tool_budget_finalize -> verify_answer -->
+    <polyline points="565,1071 508,1071 508,1151 473,1151" fill="none" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <!-- conditional dashed -->
+    <line x1="405" y1="330" x2="562" y2="330" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+    <line x1="405" y1="545" x2="562" y2="545" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+    <line x1="405" y1="755" x2="872" y2="755" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <polyline points="405,985 562,985" fill="none" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+    <polyline points="405,1012 700,1012 700,1037" fill="none" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+    <polyline points="405,1255 700,1255 700,1352" fill="none" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+    <polyline points="470,1160 872,1160" fill="none" stroke="#9A9A90" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <!-- right rail -->
+    <line x1="835" y1="330" x2="876" y2="330" stroke="#8A8A82" stroke-width="1.6"/>
+    <line x1="835" y1="545" x2="876" y2="545" stroke="#8A8A82" stroke-width="1.6"/>
+    <line x1="835" y1="1386" x2="876" y2="1386" stroke="#8A8A82" stroke-width="1.6"/>
+    <line x1="876" y1="330" x2="876" y2="1567" stroke="#8A8A82" stroke-width="1.6"/>
+    <line x1="876" y1="1567" x2="474" y2="1567" stroke="#8A8A82" stroke-width="1.6" marker-end="url(#ag)"/>
+    <circle cx="876" cy="330" r="3" fill="#6E6E66"/>
+    <circle cx="876" cy="545" r="3" fill="#6E6E66"/>
+    <circle cx="876" cy="755" r="3" fill="#6E6E66"/>
+    <circle cx="876" cy="1160" r="3" fill="#6E6E66"/>
+    <circle cx="876" cy="1386" r="3" fill="#6E6E66"/>
+    <!-- loop 1 red: run_tools -> chef_think -->
+    <polyline points="700,954 700,891 474,891" fill="none" stroke="#A32D2D" stroke-width="2.6" marker-end="url(#ar)"/>
+    <!-- loop 2 red: d5 -> chef_think -->
+    <polyline points="255,1255 80,1255 80,891 187,891" fill="none" stroke="#A32D2D" stroke-width="2.6" marker-end="url(#ar)"/>
+  </svg>
+</div>
+</body></html>

@@ -232,3 +232,7 @@ tmp-hello.cjs
 # 定稿另有 docs/参赛-*.md 与 docs/参赛-佐证材料.pdf 入库）
 docs/ppt-preview/
 docs/ppt-work/
+
+# 本地 git worktree 元数据与 WIP 补丁（2026-10-22 补：
+# 其中 3 项是嵌套仓库 gitlink，入库后会在 GitHub 变成无法访问的子模块引用）
+.worktrees/

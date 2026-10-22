@@ -750,3 +750,24 @@
   text-underline-offset: 2px;
 }
 
+/* ── 附近餐厅「换一批」（2026-10-21）────────────────────────────────
+   贴在列表滚动区底部：真实结果最多 8 条、容器 max-height 430px，
+   按钮若只是跟在列表尾巴后面就会落到折叠线以下，用户看不到它。
+   sticky 才能一直可见，滚到底时又自然归位，不额外占一屏。 */
+.nb-more {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0 6px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.nb-more-hint {
+  font-size: var(--fs-note);
+  color: var(--ink-faint);
+}
+

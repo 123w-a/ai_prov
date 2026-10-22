@@ -1,0 +1,59 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;width:1500px;background:#FBF3E6;}
+body{font-family:"Microsoft YaHei","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;}
+.wrap{width:1500px;height:460px;padding:26px 30px;position:relative;}
+.title{display:flex;align-items:center;gap:14px;margin-bottom:26px;}
+.tbar{width:10px;height:34px;background:#C87A2B;border-radius:2px;}
+.title h1{margin:0;font-size:30px;color:#7A3A10;font-weight:800;}
+.row{display:flex;align-items:center;gap:14px;margin-bottom:26px;}
+.tab{width:56px;align-self:stretch;display:flex;align-items:center;justify-content:center;
+     background:#9C2F2F;color:#fff;font-size:20px;font-weight:800;border-radius:8px;
+     writing-mode:vertical-lr;letter-spacing:8px;}
+.box{background:#fff;border:1.5px solid #C9A063;border-radius:8px;text-align:center;
+     padding:12px 14px;flex:1;}
+.box .t{font-size:18px;font-weight:800;color:#4A2E0E;line-height:1.35;}
+.box .s{font-size:12.5px;color:#8A6A3A;margin-top:6px;line-height:1.5;}
+.box.gold{background:#B4761F;border-color:#B4761F;}
+.box.gold .t{color:#fff;}
+.box.gold .s{color:#F7E3C4;}
+.harr{color:#B4761F;font-size:22px;font-weight:800;flex:none;}
+.foot{background:#fff;border:1.5px solid #C9A063;border-radius:8px;text-align:center;
+      padding:14px 0;font-size:19px;font-weight:800;color:#9C2F2F;}
+</style></head><body>
+<div class="wrap">
+  <div class="title"><div class="tbar"></div><h1>权威护栏 RAG 全链路（27 份国家权威文件 · 1435 个切片）</h1></div>
+
+  <div class="row">
+    <div class="tab">建库</div>
+    <div class="box"><div class="t">27 份权威文件 + 国际 PDF</div></div>
+    <div class="harr">→</div>
+    <div class="box"><div class="t">parser_router 确定性路由</div>
+      <div class="s">扫描件降级 / 双栏 / 图文混排 / 表格嵌套，<br>加权打分 ≥ 2.0 走 OCR</div></div>
+    <div class="harr">→</div>
+    <div class="box"><div class="t">切片 + 页码锚定前缀</div>
+      <div class="s">Markdown 段标题 / PDF 段落递归</div></div>
+    <div class="harr">→</div>
+    <div class="box gold"><div class="t">Chroma 向量库</div>
+      <div class="s">collection=dietary_kb · 1435 chunk</div></div>
+  </div>
+
+  <div class="row">
+    <div class="tab">检索</div>
+    <div class="box"><div class="t">用户查询</div></div>
+    <div class="harr">→</div>
+    <div class="box"><div class="t">查询转换</div>
+      <div class="s">多路同义改写</div></div>
+    <div class="harr">→</div>
+    <div class="box gold"><div class="t">混合检索 + RRF 融合</div>
+      <div class="s">bge-small-zh-v1.5 语义检索<br>+ BM25 补召回，倒排排名融合</div></div>
+    <div class="harr">→</div>
+    <div class="box"><div class="t">元数据过滤 → cross-<br>encoder 重排</div></div>
+    <div class="harr">→</div>
+    <div class="box"><div class="t">引用标注 → 消融评估</div>
+      <div class="s">保留可核验的出处</div></div>
+  </div>
+
+  <div class="foot">硬禁忌不依赖语义召回：L3 确定性规则（nutrition_rules）独立兜底，RAG 只做"证据支撑"</div>
+</div>
+</body></html>

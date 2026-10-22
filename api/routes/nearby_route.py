@@ -244,7 +244,8 @@ def _filter_and_sort(real, query: str, budget: int, page: int = 1, diag: dict | 
             )
         )
     if source == "amap":
-        return source, candidates[:5], warning
+        # 2026-10-21 由 5 条放宽到 8 条：配合前端「换一批」，一屏能看出更多选择。
+        return source, candidates[:8], warning
     # mock 分页：按 page 轮转 3 家，模拟“换一批”而不重复当前列表
     offset = ((max(1, int(page or 1)) - 1) * 3) % len(candidates)
     candidates = candidates[offset:] + candidates[:offset]

@@ -18,6 +18,13 @@ from rag.page_labels import printed_page  # 物理页 -> 文档印刷页码
 
 load_dotenv()
 
+# 高德是国内 API，直连既快又稳；显式禁用环境代理。
+# 为什么必须显式禁：本机若开着代理（Clash / 各类中转），代理端口一旦失效或换了号，
+# requests 走代理会抛 ProxyError / WinError 10013，POI 查询就**静默降级成 mock**——
+# 界面上只看到"连接高德失败，展示模拟参考餐厅"，很像"高德挂了"，其实是本机代理挡的。
+# 实测：坏代理下不加此参数 -> ProxyError；加此参数 -> restapi.amap.com 直连 200。
+AMAP_NO_PROXY = {"http": None, "https": None}
+
 
 def _tool_allergens() -> list:
     """读取当前家庭过敏原用于旁路工具过滤；延迟导入避免工具与图模块循环依赖。"""
@@ -585,6 +592,23 @@ _MOCK_RESTAURANTS = [
      "guardrail": "高血压/痛风避开啤酒+内脏+海鲜；多选烤蔬菜"},
     {"name": "幸福食堂快餐", "cuisine": "快餐", "avg_price": 25, "distance_km": 0.4,
      "guardrail": "选杂粮饭+清炒时蔬+蒸蛋；避开油炸窗口"},
+    # 2026-10-21 补 7 家：原来只有 5 家，默认 budget=50 一过滤只剩 3 家，
+    # 而 mock 分页是「按 page 轮转 3 家」——3 家、步长 3、取模 3 恒等于 0，
+    # 换一批永远转不动。补到 12 家（10 家在 50 元以内）才能真的换得动。
+    {"name": "巷口牛肉面", "cuisine": "面食", "avg_price": 28, "distance_km": 0.8,
+     "guardrail": "清汤少盐；面条减半换青菜；避开牛油辣子"},
+    {"name": "阿婆粥铺", "cuisine": "粥品", "avg_price": 16, "distance_km": 0.5,
+     "guardrail": "白粥升糖快，换成杂粮粥配鸡蛋与青菜"},
+    {"name": "悦轻食·能量碗", "cuisine": "轻食", "avg_price": 35, "distance_km": 0.7,
+     "guardrail": "选鸡胸或虾仁；酱汁分装只用一半"},
+    {"name": "江南小馆·蒸菜", "cuisine": "蒸菜", "avg_price": 42, "distance_km": 1.1,
+     "guardrail": "多选清蒸少选腌腊；米饭减半加一份时蔬"},
+    {"name": "川味小炒", "cuisine": "川菜", "avg_price": 48, "distance_km": 1.3,
+     "guardrail": "备注少油少盐免辣；避开干锅与回锅肉"},
+    {"name": "老广炖汤", "cuisine": "汤品", "avg_price": 52, "distance_km": 1.0,
+     "guardrail": "痛风避开老火汤与内脏；选清炖瘦肉"},
+    {"name": "晨光早点铺", "cuisine": "早餐", "avg_price": 12, "distance_km": 0.3,
+     "guardrail": "油条油炸少点；豆浆+鸡蛋+杂粮包更稳"},
 ]
 
 
@@ -693,6 +717,7 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
                         "sortrule": "distance",
                     },
                     timeout=5,
+                    proxies=AMAP_NO_PROXY,
                 )
                 data = resp.json()
             except Exception as exc:
@@ -717,6 +742,7 @@ def _amap_poi_search(city, district, query, budget, location="", page=1, radius=
                     "citylimit": "true" if city_param else "false",
                 },
                 timeout=5,
+                proxies=AMAP_NO_PROXY,
             )
             data = resp.json()
         except Exception as exc:

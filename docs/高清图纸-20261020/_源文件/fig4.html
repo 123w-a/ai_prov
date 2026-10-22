@@ -1,0 +1,94 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;width:1320px;background:#FFFFFF;}
+body{font-family:"Microsoft YaHei","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;}
+.wrap{width:1320px;height:920px;display:flex;}
+.left{width:1100px;padding:14px 16px;}
+.band{border:2px solid #4A7EBB;border-radius:10px;background:#EAF2FB;padding:14px 18px 18px;}
+.band h2{margin:0 0 12px;font-size:22px;color:#17376B;font-weight:800;}
+.cards{display:flex;gap:16px;}
+.card{flex:1;border-radius:8px;color:#fff;text-align:center;padding:16px 10px;}
+.card .t{font-size:20px;font-weight:800;}
+.card .s{font-size:14px;opacity:.95;margin-top:8px;line-height:1.55;}
+.green{background:#3B7D2E;}
+.blue{background:#1D5FAD;}
+.redc{background:#B01F24;}
+.grayc{background:#6E6E6E;}
+.divi{border-top:1px solid rgba(255,255,255,.4);margin:12px 20px;}
+.varrow{text-align:center;color:#17376B;font-size:14px;font-weight:700;padding:7px 0;}
+.varrow .a{color:#2E6DA4;font-size:18px;font-weight:800;margin-right:8px;}
+.b2 .card{padding:18px 10px 20px;}
+.line{font-size:15px;line-height:1.75;opacity:.97;}
+.line.b{font-weight:800;font-size:16.5px;}
+.line.dim{opacity:.8;font-size:14px;}
+.b3 .card{padding:16px 10px 18px;}
+.sidebar{flex:1;background:#9C1F1F;color:#fff;display:flex;flex-direction:column;
+         align-items:center;justify-content:center;gap:0;padding:0 14px;text-align:center;}
+.sidebar .big{font-size:24px;font-weight:800;line-height:1.5;}
+.sidebar .mid{font-size:18px;font-weight:700;margin-top:4px;}
+.sidebar .div{width:70%;border-top:1px solid rgba(255,255,255,.45);margin:26px 0;}
+.sidebar .sm{font-size:16px;font-weight:700;line-height:1.8;}
+.sidebar .gap{height:34px;}
+</style></head><body>
+<div class="wrap">
+  <div class="left">
+    <div class="band">
+      <h2>应用层（交互入口：页面 · 拍照 · 定位 · 文字 / 语音 · API）</h2>
+      <div class="cards">
+        <div class="card green"><div class="t">拍照识别冰箱</div><div class="s">零输入多模态</div></div>
+        <div class="card green"><div class="t">定位 / 商圈</div><div class="s">附近餐厅导航</div></div>
+        <div class="card green"><div class="t">文字 / 语音</div><div class="s">健康问答与模糊需求澄清</div></div>
+      </div>
+    </div>
+    <div class="varrow"><span class="a">↓</span>交互请求 / 结果返回</div>
+    <div class="band b2">
+      <h2>算法层（决策内核 · 工具编排 · 记忆与适配）</h2>
+      <div class="cards">
+        <div class="card blue">
+          <div class="t">chef_think</div>
+          <div class="s">LangGraph 循环 Agent<br>思考 + 工具选择 + 反思</div>
+          <div class="divi"></div>
+          <div class="line b">13 节点 · 5 条件边<br>8 普通边</div>
+          <div class="s" style="margin-top:8px;">含充分性门追问澄清</div>
+        </div>
+        <div class="card blue">
+          <div class="t">工具集 7 个</div>
+          <div class="s">RAG 检索 / 联网搜索<br>附近餐 / 冰箱缺口<br>健康化改造 / 文件 / 周报</div>
+          <div class="divi"></div>
+          <div class="s">budget 三旋钮控制</div>
+        </div>
+        <div class="card redc">
+          <div class="t">护栏审核 · 零 LLM</div>
+          <div class="s">nutrition_rules<br>allergen_rules<br>verify_answer</div>
+          <div class="divi"></div>
+          <div class="s">四态：ok / degraded<br>retry / blocked</div>
+        </div>
+      </div>
+    </div>
+    <div class="varrow"><span class="a">↓</span>读写数据 / 知识供给</div>
+    <div class="band b3">
+      <h2>数据层（知识 · 底表 · 画像 · 会话与运行数据）</h2>
+      <div class="cards">
+        <div class="card grayc">
+          <div class="t">权威护栏 RAG（Chroma）</div>
+          <div class="s">27 份权威文件（含 6 项食养指南）<br>1435 chunk + 页码锚定<br>parser router → ingest 入库</div>
+          <div class="line dim" style="margin-top:8px;">混合检索 · 重排 · 引用标注</div>
+        </div>
+        <div class="card grayc">
+          <div class="t">营养底表 CSV · 288 条记录</div>
+          <div class="s">nutrition_table 30<br>+ china_food_components 258<br>用户健康画像档案（profile.json）</div>
+          <div class="line dim" style="margin-top:8px;">会话与运行数据：checkpoint · sessions</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar">
+    <div class="big">确定性硬护栏</div>
+    <div class="mid">横切安全控制</div>
+    <div class="div"></div>
+    <div class="sm">贯穿算法层<br>至输出端</div>
+    <div class="gap"></div>
+    <div class="sm">不单独计为<br>架构层</div>
+  </div>
+</div>
+</body></html>
