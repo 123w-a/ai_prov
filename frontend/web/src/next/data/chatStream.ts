@@ -1,4 +1,5 @@
 import type { ChefAnswer, StreamStage } from '../../types.ts'
+import type { RecognizedItem } from './fridgeText.ts'
 
 /**
  * /api/chat 的真实流式事件。
@@ -49,6 +50,13 @@ export interface SendChatParams {
   mode?: string
   wantImage?: boolean
   locationContext?: string | null
+  /**
+   * 拍照识别出的结构化食材清单（2026-10-22）。只在本轮携带——后端据此把
+   * `ingredient_draft` 预置进 state，chef_think 会注入「只能基于这份清单」的
+   * 硬约束（不许补清单外食材、素菜只能用清单里的蔬菜）。
+   * 不传就退回靠自然语言读食材的老路，不会报错。
+   */
+  ingredients?: RecognizedItem[] | null
   /**
    * 「给这道菜配图 / 换一张图」专用：把这一轮钉到某条已存在的菜谱记录上。
    * 三项对应 /api/chat 的 Form 参数（api/routes/chat_route.py:941-943），
@@ -109,6 +117,11 @@ export async function* streamChat(
   body.append('mode', params.mode ?? 'home')
   body.append('want_image', params.wantImage ? '1' : '0')
   if (params.locationContext) body.append('location_context', params.locationContext)
+  // 食材清单只在本轮携带（见 SendChatParams.ingredients 注释）。空数组不发——
+  // 发了等于告诉后端「我确认过没有食材」，那是另一种结论。
+  if (params.ingredients && params.ingredients.length > 0) {
+    body.append('ingredients', JSON.stringify(params.ingredients))
+  }
   // 图片轮的三件套（缺哪项都退回按菜名找 → 钉不住就不该发这一轮，见调用处）。
   if (typeof params.targetRecordId === 'number') body.append('target_record_id', String(params.targetRecordId))
   if (typeof params.targetRecipeIndex === 'number') body.append('target_recipe_index', String(params.targetRecipeIndex))

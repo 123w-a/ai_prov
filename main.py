@@ -176,13 +176,24 @@ def describe_image(image_url: str, user_text: str = "") -> str:
     return _describe_image(image_url, user_text)
 
 
-def build_human_message(text, image_url=None, location_context=None, session_id=None):
+def build_human_message(
+    text,
+    image_url=None,
+    location_context=None,
+    session_id=None,
+    ingredient_items=None,
+):
     """统一的图文消息构造：有图就图文混排，没图就纯文本。
     所有 ask_*/stream_* 都复用它，消除 HumanMessage 重复拼装。
     偏好注入：每次请求都带上用户长期偏好（忌口/辣度/减脂/糖尿病忌糖），
     实现「记得你」的轻量长期记忆——文件持久化 + 会话初始化读取注入。
     反馈注入：近期被踩菜名作为推荐约束（换做法/给替代），反馈闭环落地。
-    location_context 只作为内部上下文注入，不写回前端可见文本。"""
+    location_context 只作为内部上下文注入，不写回前端可见文本。
+
+    ingredient_items（2026-10-22）：前端拍照识别后、用户在输入框里确认过的
+    结构化食材清单。它比图片分支算出来的草稿**更可信**——用户已经看过并改过，
+    所以优先采用；带上它就能让 chef_think 注入「只能基于这份清单」的硬约束。
+    不传就维持原行为（老纯文字轮不会被误判成"手上有食材"）。"""
     prefix_parts: list[str] = []
     prefs = load_preferences(session_id)
     if prefs:
@@ -215,7 +226,31 @@ def build_human_message(text, image_url=None, location_context=None, session_id=
             + "【以上为自动加载约束，以下是本次需求】\n"
             + text
         )
+    # 前端带了「用户已在输入框确认过的」清单：优先用它——它比下面从视觉文本
+    # 再猜一遍更可信（用户刚看过、也改过）。归一化失败就不采用，不阻断本轮。
+    confirmed_draft: list = []
+    if ingredient_items:
+        try:
+            from agent.graph import _normalize_ingredient_draft
+
+            # 只认「有非空 name 的 dict」，其余一律丢弃。防御性过滤要做两道：
+            # chat_route 里已过一次，这里再过一次——build_human_message 也可能
+            # 被别的调用方直接用，不能把 `'x'` 这种裸字符串当食材名吞进去。
+            clean_items = [
+                {
+                    "name": str(it.get("name") or "").strip(),
+                    "quantity": str(it.get("quantity") or "").strip(),
+                }
+                for it in (ingredient_items or [])
+                if isinstance(it, dict) and str(it.get("name") or "").strip()
+            ]
+            confirmed_draft = _normalize_ingredient_draft(clean_items) if clean_items else []
+        except Exception as exc:
+            print(f"[vision] 食材清单归一化失败，本次忽略清单：{exc}")
+            confirmed_draft = []
+
     if image_url:
+        ingredient_draft: list = list(confirmed_draft)
         try:
             # 视觉模型只在真的带图请求时加载；纯文字对话无需承担其导入成本。
             vision_text = describe_image(image_url, text)
@@ -224,6 +259,14 @@ def build_human_message(text, image_url=None, location_context=None, session_id=
                 "【视觉模型识别结果（客观事实，仅用于本轮推理）】\n"
                 f"{vision_text}"
             )
+            # 2026-10-22：食材清单在这里就定下来，不再进图里开确认门。
+            # 新版书写面早就是「拍照 → /api/fridge/vision → 结果填进输入框 → 发文字」，
+            # 只有旧版直发图这条老路会走到这里；把草稿挂在消息上带进 state，
+            # chef_think 内部照旧调 _ingredient_prompt_block 注入食材约束。
+            if not ingredient_draft:
+                from agent.graph import _extract_ingredient_draft
+
+                ingredient_draft = _extract_ingredient_draft(vision_text)
         except Exception as exc:
             print(f"[vision] 图片预处理失败，主脑改走文字降级：{exc}")
             text = (
@@ -231,8 +274,14 @@ def build_human_message(text, image_url=None, location_context=None, session_id=
                 "【图片识别未完成】当前视觉服务不可用，"
                 "请明确告诉我图片里的食材和数量，我再继续推荐。"
             )
-        return HumanMessage(content=text)
-    return HumanMessage(content=text)
+        return HumanMessage(
+            content=text,
+            additional_kwargs={"ingredient_draft": ingredient_draft},
+        )
+    return HumanMessage(
+        content=text,
+        additional_kwargs={"ingredient_draft": confirmed_draft} if confirmed_draft else {},
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -405,12 +454,23 @@ def _stream_agent(message, session_id):
     last_ai_content = ""
     stream_failed = False
     turn_seq = None  # 本轮轮序号，由 condense_history 的更新产出（观测用）
+    # 2026-10-22：拍照轮的食材草稿由 build_human_message 算好挂在消息上，
+    # 这里直接预置进 state——图里不再有食材确认节点，但 chef_think 的
+    # _ingredient_prompt_block（"只能基于这份清单"）照旧生效。
+    preset_draft = list(
+        (getattr(message, "additional_kwargs", None) or {}).get("ingredient_draft")
+        or []
+    )
+    initial_state: dict = {"messages": [message], "session_id": session_id}
+    if preset_draft:
+        initial_state["ingredient_draft"] = preset_draft
+        initial_state["ingredient_gate_ready"] = True
     # 双流模式：messages 给 token/阶段；updates 给节点最终返回值。
     # answer 必须从 updates 取——messages 流里 structure 的返回消息同样以
     # AIMessageChunk 形态流出，isinstance 过滤在官方端点流式正常后永远滤空。
     try:
         for mode, payload in agent.stream(
-            {"messages": [message], "session_id": session_id},
+            initial_state,
             config=config,
             stream_mode=["messages", "updates"],
         ):
@@ -426,18 +486,6 @@ def _stream_agent(message, session_id):
                         used = (update or {}).get("tool_calls_in_turn")
                         if used is not None:
                             print(f"[agent-metrics] tool_calls_in_turn={used}")
-                    elif node == "ingredient_confirm":
-                        msgs = (update or {}).get("messages") or []
-                        if msgs and type(msgs[-1]).__name__ == "AIMessage":
-                            content = _normalize_stream_content(
-                                msgs[-1].content
-                            ).strip()
-                            event = _stream_update_content(content)
-                            if event:
-                                emitted_output = True
-                                if event[0] == "token":
-                                    visible_text_emitted = True
-                                yield event
                         continue
                     elif node == "tool_budget_finalize":
                         print("[agent-metrics] tool_budget_exhausted=true")

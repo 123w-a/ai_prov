@@ -1,5 +1,5 @@
 import { Icon } from '../ui/Icon.tsx'
-import { fridgeDraftText } from '../data/fridgeText.ts'
+import { fridgeDraftText, type RecognizedItem } from '../data/fridgeText.ts'
 import { usePhotoInput } from '../data/photoInput.ts'
 
 /**
@@ -27,14 +27,29 @@ import { usePhotoInput } from '../data/photoInput.ts'
  *
  * 「识别的字只填回输入框、绝不自动发送」不在本组件里实现：
  * 它把纯文本交给 AskComposer 的插入回调，本组件**没有**任何通往 onSend 的路径。
+ *
+ * 2026-10-22：`onRecognized` 多带一个 `items`——结构化清单只作为**发送时的旁证**
+ * 交给后端，好让 chef_think 注入「只能基于这份清单」的约束。它同样不触发发送，
+ * 和文字走同一条 `onRecognized` 时序。
  */
-export function AskPhoto({ onRecognized }: { onRecognized: (text: string) => void }) {
+export function AskPhoto({
+  onRecognized,
+  onItems,
+}: {
+  onRecognized: (text: string) => void
+  /** 识别出的结构化清单（2026-10-22）：只作旁证随发送带回后端，**不参与输入框**。
+   *  两条都由本组件分流，调用方（AskComposer）就不用自己写包装函数占行数。 */
+  onItems?: (items: RecognizedItem[]) => void
+}) {
   // 落点是**提问框**：转写成一句人话（`fridgeDraftText`），提示也按"确认后再发"措辞。
   // 档案页那枚按钮落点是补货框，用 `fridgeItemsText` 与"再存"措辞——同一条链路、
   // 两个落点，措辞与写法都必须跟着落点走（见 photoInput.ts 的说明）。
   const { state, notice, inputRef, open, accept } = usePhotoInput({
     toText: fridgeDraftText,
-    onRecognized,
+    onRecognized: (text, items) => {
+      onRecognized(text)
+      if (items && items.length > 0) onItems?.(items)
+    },
   })
 
   const busy = state === 'recognizing'

@@ -152,11 +152,25 @@ class KnowledgeBaseRetriever:
             self._corpus_ids = []
 
     # ---- 重排器（惰性加载，失败则置空，后续不再重试） ----
+    def _rerank_enabled(self) -> bool:
+        """重排是否启用：环境变量 KB_ENABLE_RERANK 优先，其次 cfg。
+
+        2026-10-23 补：`.env.example` 早就写了 `KB_ENABLE_RERANK=0` 并写明实测结论
+        （开启后每次检索 22~26s、整轮 181s；关闭后热态 0.0s、整轮 4.5~6.5s，
+        39 条召回用例 recall=1.0 不降质），但**代码从来没读过这个变量** ——
+        默认 True 导致每次启动都去尝试加载 2.2GB 的 bge-reranker-v2-m3，
+        加载失败再降级，白等 12~50 秒。这里把开关接上，让文档承诺成真。
+        """
+        raw = os.getenv("KB_ENABLE_RERANK")
+        if raw is None or str(raw).strip() == "":
+            return bool(self.cfg.get("enable_rerank", True))
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
     def _ensure_reranker(self) -> None:
         if self._reranker_loaded:
             return
         self._reranker_loaded = True
-        if not self.cfg.get("enable_rerank", True):
+        if not self._rerank_enabled():
             return
         try:
             from sentence_transformers import CrossEncoder
@@ -240,9 +254,7 @@ class KnowledgeBaseRetriever:
                 fused = [h for h in fused if self._match_filter(h.metadata, meta_filter)]
 
             # 5) 重排（候选多于目标时才重排）
-            use_rerank = (
-                self.cfg.get("enable_rerank", True) if use_rerank is None else use_rerank
-            )
+            use_rerank = self._rerank_enabled() if use_rerank is None else use_rerank
             if use_rerank and len(fused) > n_results:
                 fused = self._rerank(query, fused)
 

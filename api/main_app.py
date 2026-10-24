@@ -47,7 +47,12 @@ def _warmup_knowledge_base() -> None:
 
         retriever = get_retriever()          # 打开 Chroma 并加载 bge 嵌入模型
         retriever._ensure_bm25()             # 构建 BM25 索引
-        retriever._ensure_reranker()         # 加载 bge-reranker 重排模型（失败自动跳过）
+        # 2026-10-23：预热阶段**不加载**重排模型，两条理由：
+        #   ① 报告写的是「重排模型在首次检索时由 CrossEncoder 自动缓存」，
+        #      预热不加载才与这句话一致（此前预热多做了一件报告没说要做的重活）；
+        #   ② bge-reranker-v2-m3 有 2.2GB，本地未部署，在这里加载等于每次启动都去
+        #      试下载、失败再降级 —— 实测白等 12~50 秒，是 72.4s 预热里的大头。
+        # 真要重排就设 KB_ENABLE_RERANK=1，它会在首次检索时惰性加载（见 retriever._rerank_enabled）。
         retriever.store.search("知识库预热", n_results=1)  # 走一次真实向量检索
         set_knowledge_base_status("ready")
         print(f"[warmup] 知识库预热完成，用时 {time.time() - started:.1f}s（reranker={'on' if retriever._reranker else 'off'}）", flush=True)

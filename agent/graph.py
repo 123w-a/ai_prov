@@ -1421,22 +1421,6 @@ _INGREDIENT_UNCERTAIN_MARKERS = (
     "疑似", "可能", "不确定", "看不清", "看不出来", "无法判断",
     "无法确认", "好像", "似乎", "大概是", "推测", "或许",
 )
-_INGREDIENT_GATE_CONFIRM_MARKERS = (
-    "同意", "确认", "准确", "没错", "对的", "是的", "可以", "没问题",
-    "就这些", "都这些", "都对", "好的", "好呀", "嗯",
-)
-_INGREDIENT_GATE_SKIP_MARKERS = (
-    "不用确认", "无需确认", "不用再确认", "跳过确认", "不用核对",
-    "直接推荐", "直接开始推荐", "直接给我推荐", "开始推荐",
-)
-_INGREDIENT_REMOVE_MARKERS = (
-    "没有", "没看到", "不是", "去掉", "删除", "不要", "不吃", "少了", "缺了",
-)
-_INGREDIENT_REPLACE_MARKERS = ("换成", "改成", "改为", "替换成")
-_INGREDIENT_ADD_MARKERS = (
-    "还有", "加上", "加个", "加一", "加两", "加几", "加些", "加份",
-    "补充", "漏了", "另外有", "多了一个", "多了", "有",
-)
 _INGREDIENT_DIRECTIVE_PREFIXES = (
     "不准确", "不正确", "不对", "有误", "错了", "认错了", "看错了",
     "我还想要", "还需要", "还要", "再要", "我想要", "我还想", "想要", "需要",
@@ -1606,54 +1590,6 @@ def _ingredient_segments(text):
     ]
 
 
-def _extract_ingredient_terms(text, *, allow_bare=False):
-    """从视觉描述或用户纠正句里抽出食材项（确定性、不调用 LLM）。"""
-    terms = []
-    for segment in _ingredient_segments(text):
-        clean = _clean_ingredient_segment(segment)
-        if not clean:
-            continue
-        if any(marker in clean for marker in _INGREDIENT_UNCERTAIN_MARKERS):
-            continue
-
-        matched = ""
-        for keyword in sorted(_INGREDIENT_KEYWORDS, key=len, reverse=True):
-            if keyword in clean:
-                matched = keyword
-                break
-
-        quantity_match = _INGREDIENT_QUANTITY_RE.search(clean)
-        quantity = quantity_match.group(0).strip() if quantity_match else ""
-
-        if not matched and quantity_match:
-            prefix = clean[: quantity_match.start()].strip()
-            prefix = re.sub(
-                r"^(?:图片(?:中|里)?|照片(?:中|里)?|冰箱(?:中|里)?|可见|看到|"
-                r"还包括|包括|包含|其中有|食材(?:有|为)?|库存(?:有|为)?|还有|有)+",
-                "",
-                prefix,
-            )
-            prefix = re.sub(r"[^\u4e00-\u9fff]", "", prefix)
-            if prefix:
-                matched = prefix[-6:]
-
-        if not matched and allow_bare:
-            bare = re.sub(r"[^\u4e00-\u9fff]", "", clean)
-            leading_quantity = _INGREDIENT_QUANTITY_RE.match(bare)
-            if leading_quantity:
-                bare = bare[leading_quantity.end():].strip()
-            if (
-                1 < len(bare) <= 8
-                and bare not in _INGREDIENT_BARE_STOPWORDS
-                and not _INGREDIENT_UNIT_RE.fullmatch(bare)
-            ):
-                matched = bare
-
-        if matched:
-            terms.append({"name": matched, "quantity": quantity})
-    return _normalize_ingredient_draft(terms)
-
-
 def _vision_ingredient_source(vision_text):
     """只截取视觉描述里的“可见食材”章节，排除数量、包装标签等章节。"""
     chunks = []
@@ -1710,35 +1646,6 @@ def _extract_ingredient_draft(vision_text):
     return _normalize_ingredient_draft(terms)
 
 
-def _is_ingredient_gate_confirmation(text) -> bool:
-    compact = re.sub(r"\s+", "", str(text or ""))
-    if not compact:
-        return False
-    # 带增删改动词的句子是在修正清单（如「可以加个鸡蛋」），不是纯确认。
-    if _has_ingredient_correction_marker(compact):
-        return False
-    return any(marker in compact for marker in _INGREDIENT_GATE_CONFIRM_MARKERS)
-
-
-def _is_ingredient_gate_skip(text) -> bool:
-    compact = re.sub(r"\s+", "", str(text or ""))
-    return bool(compact) and any(
-        marker in compact for marker in _INGREDIENT_GATE_SKIP_MARKERS
-    )
-
-
-def _has_ingredient_correction_marker(text) -> bool:
-    raw = str(text or "")
-    return any(
-        marker in raw
-        for marker in (
-            _INGREDIENT_REPLACE_MARKERS
-            + _INGREDIENT_REMOVE_MARKERS
-            + tuple(marker for marker in _INGREDIENT_ADD_MARKERS if marker != "有")
-        )
-    )
-
-
 def _strip_ingredient_correction_markers(segment):
     cleaned = str(segment or "")
     cleaned = re.sub(r"^(?:对|对的|是的|嗯|好|好的)[，,。；;]*", "", cleaned)
@@ -1752,88 +1659,6 @@ def _strip_ingredient_correction_markers(segment):
     return cleaned
 
 
-_INGREDIENT_REPLACEMENT_PATTERNS = (
-    re.compile(
-        r"(?:不是|没有)\s*(?P<old>[^，,；;。\n]+?)\s*[，,；;]\s*"
-        r"(?:是|有|换成|改成|改为|替换成)?\s*(?P<new>[^，,；;。\n]+)"
-    ),
-    re.compile(
-        r"(?:把)?\s*(?P<old>[^，,；;。\n]+?)\s*"
-        r"(?:换成|改成|改为|替换成)\s*(?P<new>[^，,；;。\n]+)"
-    ),
-)
-
-
-def _extract_replacement_pairs(text):
-    """提取「旧食材→新食材」替换对，供确定性修正复用。"""
-    raw = str(text or "")
-    pairs = []
-    spans = []
-    for pattern in _INGREDIENT_REPLACEMENT_PATTERNS:
-        for match in pattern.finditer(raw):
-            start, end = match.span()
-            if any(start < used_end and end > used_start for used_start, used_end in spans):
-                continue
-            old_terms = _extract_ingredient_terms(match.group("old"), allow_bare=True)
-            new_terms = _extract_ingredient_terms(match.group("new"), allow_bare=True)
-            if not old_terms or not new_terms:
-                continue
-            pairs.append((old_terms, new_terms))
-            spans.append((start, end))
-    return pairs, spans
-
-
-def _apply_ingredient_corrections(draft, text):
-    """按用户纠正更新食材草稿，返回 (新草稿, 是否发生变化)。"""
-    current = _normalize_ingredient_draft(draft)
-    before = _ingredient_names(current)
-    raw = str(text or "")
-    replacement_pairs, replacement_spans = _extract_replacement_pairs(raw)
-    for old_terms, new_terms in replacement_pairs:
-        old_names = set(_ingredient_names(old_terms))
-        current = [item for item in current if item["name"] not in old_names]
-        for item in new_terms:
-            if item["name"] not in _ingredient_names(current):
-                current.append(item)
-
-    remaining = raw
-    for start, end in sorted(replacement_spans, reverse=True):
-        remaining = remaining[:start] + "；" + remaining[end:]
-
-    for segment in _ingredient_segments(remaining):
-        stripped = _strip_ingredient_correction_markers(segment)
-        terms = _extract_ingredient_terms(stripped, allow_bare=True)
-        if not terms:
-            continue
-
-        is_remove = any(marker in segment for marker in _INGREDIENT_REMOVE_MARKERS)
-
-        if is_remove:
-            remove_names = {item["name"] for item in terms}
-            current = [item for item in current if item["name"] not in remove_names]
-            continue
-
-        for item in terms:
-            if item["name"] not in _ingredient_names(current):
-                current.append(item)
-
-    current = _normalize_ingredient_draft(current)
-    return current, _ingredient_names(current) != before
-
-
-def _ingredient_confirm_text(draft, *, updated=False):
-    draft = _normalize_ingredient_draft(draft)
-    if not draft:
-        return (
-            "我暂时没能从图片里确认出明确的食材。请直接告诉我冰箱里有哪些食材，"
-            "我整理成清单后再继续推荐。"
-        )
-    lead = "已按你的说明更新清单：" if updated else "我先根据图片整理出这些食材："
-    return (
-        f"{lead}\n\n{_format_ingredient_draft(draft)}\n\n"
-        "请确认是否准确。如果少了、多了或认错了，直接告诉我；"
-        "确认无误后我再推荐菜品。"
-    )
 
 
 # 「素菜/配菜」类目词表：只用于把已确认食材归类，判断清单里有没有能当素菜的项。
@@ -1909,16 +1734,6 @@ def _ingredient_prompt_block(draft):
         "【给出清单前自检一次】第一句若没有以「根据你已确认的」开头，先补上再输出。"
         + _ingredient_side_dish_rule(draft)
     )
-
-
-def _is_ingredient_gate_correction(text) -> bool:
-    """确认门开启时，判断用户是否在补充/删除/替换识别出的食材。"""
-    raw = str(text or "")
-    stripped = _strip_ingredient_correction_markers(raw)
-    terms = _extract_ingredient_terms(stripped, allow_bare=True)
-    if not terms:
-        return False
-    return _has_ingredient_correction_marker(raw)
 
 
 # 「按这个执行 / 就这个方案」这类**确认语**：用户已经接受了上一轮的结论，
@@ -5196,8 +5011,8 @@ class ChefState(MessagesState):
     tool_budget: int = 0  # 本轮工具「并发宽度」上限（选定轮收紧为 2，见 _turn_tool_budget）
     pick_turn_slot_granted: bool = False  # 选定轮第二圈是否已补过一格取证额度（每轮只补一次）
     retry_slot_granted: bool = False  # 本轮重试是否已补过一次取证额度（每轮只补一次，见 _retry_tool_slot_patch）
-    ingredient_gate_active: bool = False  # 图片食材确认门是否仍在追问用户
-    ingredient_gate_action: str = ""  # ask / corrected / confirmed / skip
+    # 2026-10-22：确认门已删除（识别在图前完成，结果直接填进输入框）。
+    # 下面两个字段改由 main.py 在构造 HumanMessage 时预置，供 chef_think 注入食材约束。
     ingredient_draft: list = []  # 视觉识别出的待确认食材草稿
     ingredient_gate_ready: bool = False  # 本轮已确认，可进入候选推荐
 
@@ -6226,108 +6041,6 @@ def profile_gate_route(state: ChefState) -> str:
     return "ask" if not state.get("profile_ready", True) else "ready"
 
 
-@trace_node("ingredient_gate")
-def ingredient_gate_node(state: ChefState):
-    """图片食材确认门：先整理识别草稿，用户确认后才允许候选推荐。
-
-    这条门只处理带视觉上下文的新图片及其后续确认/纠正轮；普通文字食材请求
-    不经过它，继续沿原基线直接进入候选清单。
-    """
-    messages = state.get("messages") or []
-    latest_text = _current_request_text(
-        _latest_user_text(messages, strip_internal=False)
-    )
-    has_image, vision_text = _latest_visual_context(messages)
-    previous_draft = _normalize_ingredient_draft(state.get("ingredient_draft"))
-    previous_active = bool(state.get("ingredient_gate_active"))
-
-    if has_image:
-        draft = _extract_ingredient_draft(vision_text)
-        return {
-            "ingredient_gate_active": True,
-            "ingredient_gate_action": "ask",
-            "ingredient_draft": draft,
-            "ingredient_gate_ready": False,
-        }
-
-    if previous_active:
-        if _is_ingredient_gate_skip(latest_text):
-            return {
-                "ingredient_gate_active": False,
-                "ingredient_gate_action": "skip",
-                "ingredient_draft": previous_draft,
-                "ingredient_gate_ready": True,
-            }
-
-        if _is_ingredient_gate_correction(latest_text):
-            draft, changed = _apply_ingredient_corrections(
-                previous_draft,
-                latest_text,
-            )
-            return {
-                "ingredient_gate_active": True,
-                "ingredient_gate_action": "corrected" if changed else "ask",
-                "ingredient_draft": draft,
-                "ingredient_gate_ready": False,
-            }
-
-        # 图片没识别出食材时，用户直接口述清单（如「鸡蛋、青菜、豆腐」）
-        # 也要能落成草稿，不能一直重复追问。
-        if not previous_draft:
-            supplement = _extract_ingredient_terms(latest_text, allow_bare=False)
-            if supplement:
-                return {
-                    "ingredient_gate_active": True,
-                    "ingredient_gate_action": "corrected",
-                    "ingredient_draft": supplement,
-                    "ingredient_gate_ready": False,
-                }
-
-        if _is_ingredient_gate_confirmation(latest_text):
-            return {
-                "ingredient_gate_active": False,
-                "ingredient_gate_action": "confirmed",
-                "ingredient_draft": previous_draft,
-                "ingredient_gate_ready": True,
-            }
-
-        # 确认门未结束前不把问题交给推荐模型，继续展示同一份清单等待确认。
-        return {
-            "ingredient_gate_active": True,
-            "ingredient_gate_action": "ask",
-            "ingredient_draft": previous_draft,
-            "ingredient_gate_ready": False,
-        }
-
-    return {
-        "ingredient_gate_active": False,
-        "ingredient_gate_action": "",
-        "ingredient_gate_ready": False,
-    }
-
-
-@trace_node("ingredient_confirm")
-def ingredient_confirm_node(state: ChefState):
-    """确定性输出图片食材草稿确认文案，不调用 LLM、不生成菜谱。"""
-    draft = _normalize_ingredient_draft(state.get("ingredient_draft"))
-    updated = state.get("ingredient_gate_action") == "corrected"
-    return {
-        "messages": [
-            AIMessage(content=_ingredient_confirm_text(draft, updated=updated))
-        ]
-    }
-
-
-def ingredient_gate_route(state: ChefState) -> str:
-    """确认门开启时先确认，确认完成后再进入健康画像门。"""
-    if (
-        state.get("ingredient_gate_active")
-        and not state.get("ingredient_gate_ready")
-    ):
-        return "ask"
-    return "ready"
-
-
 # --------------------------------------------------------------------------- #
 #  5. 构建图实例（状态图 + 条件边 + 回边 = LangGraph 循环 Agent）
 # --------------------------------------------------------------------------- #
@@ -6344,20 +6057,9 @@ workflow.add_node("allergen_block", allergen_block_node)# 过敏原硬拦截：�
 workflow.add_node("profile_gate", profile_gate_node)# 注册充分性门控节点（AgentMental 范式）
 workflow.add_node("ask_user", ask_user_node)# 注册健康画像追问节点
 workflow.add_node("tool_budget_finalize", tool_budget_finalize_node)# 工具预算耗尽后的优雅收尾节点
-workflow.add_node("ingredient_gate", ingredient_gate_node)# 图片食材确认门
-workflow.add_node("ingredient_confirm", ingredient_confirm_node)# 确定性输出食材确认清单
 workflow.add_node("requested_dish_gate", requested_dish_gate_node)# 生成前的点名菜过敏原硬拦截
 workflow.set_entry_point("condense_history")# 设置入口：先压缩历史
-workflow.add_edge("condense_history", "ingredient_gate")#连线长对话压缩→图片食材确认门
-workflow.add_conditional_edges(
-    "ingredient_gate",
-    ingredient_gate_route,
-    {
-        "ask": "ingredient_confirm",
-        "ready": "profile_gate",
-    },
-)
-workflow.add_edge("ingredient_confirm", END)
+workflow.add_edge("condense_history", "profile_gate")#连线长对话压缩→健康画像门
 workflow.add_conditional_edges(
     "profile_gate",
     profile_gate_route,

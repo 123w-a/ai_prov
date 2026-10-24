@@ -2,6 +2,7 @@ import { AskVoice } from './AskVoice.tsx'
 import { AskPhoto } from './AskPhoto.tsx'
 import { useCaretInsert } from '../data/caretInsert.ts'
 import { enterIntent } from '../data/enterToSend.ts'
+import type { RecognizedItem } from '../data/fridgeText.ts'
 
 /**
  * 书写面：输入框 + 提交按钮。
@@ -27,6 +28,7 @@ export function AskComposer({
   blocked,
   variant = 'starter',
   submitLabel,
+  onIngredients,
 }: {
   text: string
   onText: (next: string) => void
@@ -36,6 +38,8 @@ export function AskComposer({
   variant?: 'starter' | 'followup'
   /** 覆盖提交按钮文案。首屏失败态要写「重试」——同一个输入框，性质不同。 */
   submitLabel?: string
+  /** 拍照识别出的结构化清单，随本轮发送带回后端（2026-10-22）。 */
+  onIngredients?: (items: RecognizedItem[]) => void
 }) {
   const isFollowup = variant === 'followup'
   /* 语音识别的字落到光标处（不覆盖草稿）、落位后焦点回输入框。
@@ -125,9 +129,8 @@ export function AskComposer({
           <AskVoice onTranscript={insert} />
           {/* 拍照认食材（2026-10-12）：排在语音**右边**——放左边会让语音那行隐私说明
               读成相机的说明（见 AskPhoto.tsx 文件头与 styles/composer.css 的取证）。
-              它自己持文件 input 与上传状态，识别结果与语音走**同一条** insert 时序，
-              所以"落到光标处、不自动发送"对两种输入是同一个实现。 */}
-          <AskPhoto onRecognized={insert} />
+              文字落进输入框、清单只交给上层，两条都由 AskPhoto 自己分流。 */}
+          <AskPhoto onRecognized={insert} onItems={onIngredients} />
           <button
             className="ask-go"
             type="button"
@@ -143,5 +146,3 @@ export function AskComposer({
     </div>
   )
 }
-
-

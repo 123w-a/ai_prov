@@ -49,8 +49,6 @@ class TestNodeInputSchema(unittest.TestCase):
         "profile_memory",
         "profile_gate",
         "ask_user",
-        "ingredient_gate",
-        "ingredient_confirm",
         "requested_dish_gate",
         "structure_answer",
     ]

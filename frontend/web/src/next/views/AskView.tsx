@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { RunState } from '../data/model.ts'
+import type { RecognizedItem } from '../data/fridgeText.ts'
 import type { FamilyMemberRow, WeekView } from '../data/firstScreen.ts'
 import { leadBodyPhrase } from '../data/viewModel.ts'
 import { AskRail } from '../blocks/AskRail.tsx'
@@ -70,6 +71,7 @@ export function AskView({
   onSend,
   running,
   blocked,
+  onIngredients,
   fam,
   week,
   cand,
@@ -84,6 +86,10 @@ export function AskView({
   onSend: () => void
   running: boolean
   blocked: boolean
+  /** 拍照识别出的结构化清单，随本轮发送带回后端（2026-10-22）。
+   *  与 text/onText 同层传递——食材要跟着 /api/chat 发出去，状态必须待在
+   *  发起请求的那一层，本组件只接值与回调（边界同 crew）。 */
+  onIngredients?: (items: RecognizedItem[]) => void
   fam: { members: FamilyMemberRow[]; shared: string[] } | null
   week: WeekView | null
   cand: { member: string; source: string; severity: string } | null
@@ -175,6 +181,7 @@ export function AskView({
               onSend={onSend}
               running={running}
               blocked={blocked}
+              onIngredients={onIngredients}
               submitLabel={run.status === 'failed' ? '重试' : undefined}
             />
           )}

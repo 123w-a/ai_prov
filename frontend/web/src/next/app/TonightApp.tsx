@@ -18,6 +18,7 @@ import {
   weekView,
 } from '../data/firstScreen.ts'
 import { streamChat, ChatStreamError } from '../data/chatStream.ts'
+import type { RecognizedItem } from '../data/fridgeText.ts'
 import type { ChefAnswer, Session, StreamStage } from '../../types.ts'
 import type { RunState, TraceEvent } from '../data/model.ts'
 import { EMPTY_RUN } from '../data/model.ts'
@@ -198,6 +199,10 @@ export default function TonightApp() {
   const runRef = useRef(run)
   const textRef = useRef(text)
   const crewRef = useRef(crewPicked)
+  /** 拍照识别出的结构化食材清单（2026-10-22）。用 ref 与 crewRef 同一套理由：
+   *  send 不该因为识别出一批新食材就变成新函数。**只对这一轮有效**，取走即清，
+   *  否则用户下一句闲聊会把上一轮的清单一起发回去，凭空变成"手上有这些"。 */
+  const ingredientsRef = useRef<RecognizedItem[] | null>(null)
   runRef.current = run
   textRef.current = text
   crewRef.current = crewPicked
@@ -409,11 +414,17 @@ export default function TonightApp() {
       return true
     }
 
+    /* 食材清单只对这一轮有效：取走即清。不清的话，用户下一句「今晚吃点别的」
+       会把上一轮的库存一起发回去，凭空变成"手上有这些"。 */
+    const thisIngredients = ingredientsRef.current
+    ingredientsRef.current = null
+
     try {
       for await (const ev of streamChat(
         {
           sessionId,
           message,
+          ingredients: thisIngredients ?? undefined,
           // 本轮 turn_id：取消时用同一个 id 才能让后端把记录标成「已取消」。
           turnId: turnRef,
           wantImage: false,
@@ -1023,6 +1034,9 @@ export default function TonightApp() {
               onSend={() => void send()}
               running={running}
               blocked={blocked}
+              onIngredients={(items) => {
+                ingredientsRef.current = items
+              }}
             />
           </div>
         </>
@@ -1036,6 +1050,9 @@ export default function TonightApp() {
           onSend={() => void send()}
           running={running}
           blocked={blocked}
+          onIngredients={(items) => {
+            ingredientsRef.current = items
+          }}
           fam={fam}
           week={week}
           cand={cand}

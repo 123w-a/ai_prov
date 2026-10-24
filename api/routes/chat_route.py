@@ -1271,6 +1271,9 @@ async def chat(
     target_recipe_index: int | None = Form(None),
     target_dish_name: str | None = Form(None),
     members: str | None = Form(None),
+    # 拍照识别、且用户已在输入框确认过的结构化食材清单（2026-10-22）。
+    # 形如 [{"name":"番茄","quantity":"2个"}]。不传 = 老行为，不报错。
+    ingredients: str | None = Form(None),
 ):
     """统一聊天入口：仅流式分支。
     - SSE 逐事件推：正文 token -> 打字机；'structuring' -> 卡片占位动画；'answer' -> 整包 ChefAnswer JSON 渲染卡片
@@ -1329,11 +1332,27 @@ async def chat(
         memory_candidate_ids = [str(item.get("id") or "") for item in candidates]
     except Exception:
         pass
+    # 食材清单：解析失败或条目缺 name 就整批丢弃，退回靠自然语言读食材——
+    # 不让一条坏数据把整轮对话打掉（2026-10-22）。
+    ingredient_items = None
+    if ingredients:
+        try:
+            parsed_items = json.loads(ingredients)
+            if isinstance(parsed_items, list):
+                ingredient_items = [
+                    it
+                    for it in parsed_items
+                    if isinstance(it, dict) and str(it.get("name") or "").strip()
+                ] or None
+        except Exception:
+            ingredient_items = None
+
     human_message = build_human_message(
         _apply_mode_prompt(effective_message, mode),
         save_img_url,
         location_context,
         session_id,
+        ingredient_items,
     )
     config = {"configurable": {"thread_id": session_id}}
 

@@ -50,8 +50,11 @@ export interface PhotoInputConfig {
   /** 识别结果 → 要落进那个输入框的文本。返回 null = 清单为空，不动输入框。
    *  两个落点各有一个实现：`fridgeDraftText`（提问框）/ `fridgeItemsText`（补货框）。 */
   toText: (items: RecognizedItem[]) => string | null
-  /** 拿到文本后往哪儿放（插进提问框 / 填进补货框）。 */
-  onRecognized: (text: string) => void
+  /** 拿到文本后往哪儿放（插进提问框 / 填进补货框）。
+   *  2026-10-22：同时把结构化清单交给调用方——提问框那条路会把它随 `/api/chat`
+   *  一起发回后端，让 chef_think 注入「只能基于这份清单」的硬约束；补货框那条
+   *  路径用不上这个参数（存的是文本），忽略即可。 */
+  onRecognized: (text: string, items?: RecognizedItem[]) => void
   /** 成功提示的措辞。落点不同措辞就得不同——提问框是"发"、补货框是"存"，
    *  共用一句会把用户带到错的下一步。 */
   successNote?: (count: number) => string
@@ -94,7 +97,7 @@ export function usePhotoInput({ toText, onRecognized, successNote }: PhotoInputC
         setNotice(NOTHING_RECOGNIZED_NOTE)
         return
       }
-      cbRef.current(draft)
+      cbRef.current(draft, items)
       setNotice(noteRef.current(items.length))
     } catch (err) {
       if (!aliveRef.current) return
